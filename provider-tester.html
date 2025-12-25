@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Provider Tester</title>
+  <link rel="stylesheet" href="provider-tester.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>Video Provider Tester</h1>
+      <p class="subtitle">Test all video providers to find the best one</p>
+    </header>
+
+    <section class="controls">
+      <div class="control-group">
+        <label for="media-type">Type</label>
+        <select id="media-type">
+          <option value="movie">Movie</option>
+          <option value="tv">TV Show</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="media-id">TMDB ID</label>
+        <input type="number" id="media-id" placeholder="Auto-fetch popular">
+      </div>
+
+      <div class="control-group" id="tv-controls" style="display: none;">
+        <label for="season">Season</label>
+        <input type="number" id="season" value="1" min="1">
+        <label for="episode">Episode</label>
+        <input type="number" id="episode" value="1" min="1">
+      </div>
+
+      <div class="control-group">
+        <label for="duration">Test Duration</label>
+        <select id="duration">
+          <option value="30000">30 seconds</option>
+          <option value="60000">1 minute</option>
+          <option value="180000">3 minutes</option>
+          <option value="300000" selected>5 minutes</option>
+        </select>
+      </div>
+
+      <button id="start-btn" class="btn btn-primary">Start Test</button>
+      <button id="stop-btn" class="btn btn-danger" disabled>Stop Test</button>
+      <button id="export-btn" class="btn btn-secondary" disabled>Export Results</button>
+    </section>
+
+    <section class="status-section">
+      <div class="progress-container">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <div class="status-text">
+        <span id="status-text">Ready to test</span>
+        <span id="timer">00:00</span>
+      </div>
+      <div class="test-info" id="test-info"></div>
+    </section>
+
+    <section class="results-summary" id="results-summary" style="display: none;">
+      <h2>Best Provider</h2>
+      <div class="best-provider" id="best-provider"></div>
+    </section>
+
+    <section class="providers-grid" id="providers-grid">
+      <!-- Provider cards will be dynamically inserted here -->
+    </section>
+
+    <section class="results-table-section" id="results-table-section" style="display: none;">
+      <h2>Full Results</h2>
+      <table class="results-table" id="results-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Provider</th>
+            <th>Status</th>
+            <th>Load Time</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody id="results-tbody">
+        </tbody>
+      </table>
+    </section>
+
+    <section class="history-section" id="history-section" style="display: none;">
+      <div class="history-header-bar">
+        <h2>Test History</h2>
+        <button class="btn btn-small btn-danger" onclick="clearAllHistory()">Clear All</button>
+      </div>
+      <p class="history-note">Last 10 test results are saved automatically</p>
+      <div class="history-list" id="history-list">
+        <!-- History items will be dynamically inserted here -->
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="provider-tester.js"></script>
+</body>
+</html>

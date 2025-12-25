@@ -1,27 +1,293 @@
 <!DOCTYPE html>
-<!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
-<!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
-<!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
-<!--[if gt IE 8]>      <html class="no-js"> <!--<![endif]-->
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-
-    <title>Movie App</title>
-    <meta name="description" content="" />
+    <title>Discovery App</title>
+    <meta name="description" content="Browse trending movies, TV shows, and YouTube videos" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <header>
-      <h1>Movie App</h1>
-      <form id="form">
-        <input type="text" id="search" class="search" placeholder="search" />
+      <div class="header-top">
+        <h1>Discovery App</h1>
+        <div class="app-tabs">
+          <button id="tab-movies" class="app-tab active" data-tab="movies">Movies</button>
+          <button id="tab-youtube" class="app-tab" data-tab="youtube">YouTube</button>
+          <a href="provider-tester.html" class="app-tab" data-tab="test">Test</a>
+        </div>
+        <button id="top250-btn" class="top250-btn">Top 250</button>
+      </div>
+      <!-- Movie Filters -->
+      <div id="movie-filters" class="filters">
+        <div class="filter-group">
+          <label for="media-type" class="visually-hidden">Media Type</label>
+          <select id="media-type" class="filter-select" aria-label="Select media type">
+            <option value="all">All</option>
+            <option value="movie">Movies</option>
+            <option value="tv">TV Shows</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="genre" class="visually-hidden">Genre</label>
+          <select id="genre" class="filter-select" aria-label="Select genre">
+            <option value="0">All Genres</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="min-rating" class="visually-hidden">Minimum Rating</label>
+          <select id="min-rating" class="filter-select" aria-label="Select minimum rating">
+            <option value="0" selected>All Ratings</option>
+            <option value="6">6+ Rating</option>
+            <option value="7">7+ Rating</option>
+            <option value="8">8+ Rating</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="min-votes" class="visually-hidden">Minimum Votes</label>
+          <select id="min-votes" class="filter-select" aria-label="Select minimum votes">
+            <option value="0" selected>All Votes</option>
+            <option value="100">100+ Votes</option>
+            <option value="500">500+ Votes</option>
+            <option value="1000">1K+ Votes</option>
+            <option value="5000">5K+ Votes</option>
+            <option value="10000">10K+ Votes</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="year-filter" class="visually-hidden">Year</label>
+          <select id="year-filter" class="filter-select" aria-label="Select year filter">
+            <option value="all" selected>All Years</option>
+            <option value="2025">2025+</option>
+            <option value="2024">2024+</option>
+            <option value="2023">2023+</option>
+            <option value="2020">2020+</option>
+            <option value="2015">2015+</option>
+            <option value="2010">2010+</option>
+            <option value="2000">2000+</option>
+            <option value="1990">1990+</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="language" class="visually-hidden">Language</label>
+          <select id="language" class="filter-select" aria-label="Select language">
+            <option value="" selected>All Languages</option>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="zh">Chinese</option>
+            <option value="hi">Hindi</option>
+            <option value="ru">Russian</option>
+            <option value="ar">Arabic</option>
+            <option value="tr">Turkish</option>
+            <option value="th">Thai</option>
+            <option value="pl">Polish</option>
+            <option value="nl">Dutch</option>
+            <option value="sv">Swedish</option>
+            <option value="da">Danish</option>
+            <option value="no">Norwegian</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="sort-by" class="visually-hidden">Sort By</label>
+          <select id="sort-by" class="filter-select" aria-label="Sort by">
+            <option value="weighted" selected>Weighted Score</option>
+            <option value="newest-weighted">Newest + Weighted</option>
+            <option value="rating">Rating</option>
+            <option value="votes">Votes</option>
+            <option value="year-new">Newest</option>
+            <option value="year-old">Oldest</option>
+            <option value="title">Title (A-Z)</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="theme" class="visually-hidden">Theme</label>
+          <select id="theme" class="filter-select" aria-label="Select theme">
+            <option value="0">All Themes</option>
+          </select>
+        </div>
+        <div class="filter-group exclude-dropdown">
+          <button type="button" id="exclude-genres-btn" class="filter-select exclude-btn" aria-haspopup="true" aria-expanded="false">
+            Exclude Genres
+          </button>
+          <div id="exclude-genres-dropdown" class="exclude-menu" style="display: none;">
+            <label class="exclude-option"><input type="checkbox" value="16"> Animation</label>
+            <label class="exclude-option"><input type="checkbox" value="878"> Sci-Fi</label>
+            <label class="exclude-option"><input type="checkbox" value="27"> Horror</label>
+            <label class="exclude-option"><input type="checkbox" value="99"> Documentary</label>
+            <label class="exclude-option"><input type="checkbox" value="10402"> Music</label>
+            <label class="exclude-option"><input type="checkbox" value="10749"> Romance</label>
+            <label class="exclude-option"><input type="checkbox" value="10751"> Family</label>
+            <label class="exclude-option"><input type="checkbox" value="10770"> TV Movie</label>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label for="provider" class="visually-hidden">Streaming Provider</label>
+          <select id="provider" class="filter-select" aria-label="Select streaming provider">
+            <option value="0">All Providers</option>
+            <option value="8">Netflix</option>
+            <option value="9">Amazon Prime</option>
+            <option value="384">HBO Max</option>
+            <option value="337">Disney+</option>
+            <option value="350">Apple TV+</option>
+            <option value="15">Hulu</option>
+            <option value="531">Paramount+</option>
+            <option value="387">Peacock</option>
+            <option value="283">Crunchyroll</option>
+          </select>
+        </div>
+        <div class="filter-group actor-filter">
+          <label for="actor-search" class="visually-hidden">Filter by Actor</label>
+          <input type="text" id="actor-search" class="filter-input" placeholder="Filter by actor..." autocomplete="off" aria-label="Search for actor">
+          <div id="actor-suggestions" class="actor-suggestions"></div>
+          <input type="hidden" id="actor-id" value="">
+          <button id="clear-actor" class="clear-actor-btn" style="display: none;" aria-label="Clear actor filter">&times;</button>
+        </div>
+      </div>
+      <!-- YouTube Filters (hidden by default) -->
+      <div id="youtube-filters" class="filters" style="display: none;">
+        <div class="filter-group">
+          <label for="yt-category" class="visually-hidden">Category</label>
+          <select id="yt-category" class="filter-select" aria-label="Select category">
+            <option value="0">All Categories</option>
+            <option value="28">Science & Tech</option>
+            <option value="27">Education</option>
+            <option value="24">Entertainment</option>
+            <option value="20">Gaming</option>
+            <option value="10">Music</option>
+            <option value="22">People & Blogs</option>
+            <option value="26">Howto & Style</option>
+            <option value="1">Film & Animation</option>
+            <option value="17">Sports</option>
+            <option value="23">Comedy</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="yt-duration" class="visually-hidden">Duration</label>
+          <select id="yt-duration" class="filter-select" aria-label="Select duration">
+            <option value="any">Any Duration</option>
+            <option value="short">Short (&lt; 4 min)</option>
+            <option value="medium">Medium (4-20 min)</option>
+            <option value="long">Long (&gt; 20 min)</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="yt-upload-date" class="visually-hidden">Upload Date</label>
+          <select id="yt-upload-date" class="filter-select" aria-label="Select upload date">
+            <option value="any">Any Time</option>
+            <option value="hour">Last Hour</option>
+            <option value="day">Last 24 Hours</option>
+            <option value="week" selected>This Week</option>
+            <option value="month">This Month</option>
+            <option value="year">This Year</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="yt-min-views" class="visually-hidden">Min Views</label>
+          <select id="yt-min-views" class="filter-select" aria-label="Select minimum views">
+            <option value="0">Any Views</option>
+            <option value="1000" selected>1K+ Views</option>
+            <option value="10000">10K+ Views</option>
+            <option value="50000">50K+ Views</option>
+            <option value="100000">100K+ Views</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="yt-max-views" class="visually-hidden">Max Views (Hidden Gems)</label>
+          <select id="yt-max-views" class="filter-select" aria-label="Select maximum views">
+            <option value="0">No Limit</option>
+            <option value="100000">100K Max</option>
+            <option value="500000" selected>500K Max</option>
+            <option value="1000000">1M Max</option>
+            <option value="5000000">5M Max</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="yt-sort" class="visually-hidden">Sort By</label>
+          <select id="yt-sort" class="filter-select" aria-label="Sort by">
+            <option value="gem" selected>Gem Score</option>
+            <option value="likeRatio">Like Ratio</option>
+            <option value="commentRatio">Comment Ratio</option>
+            <option value="date">Newest</option>
+            <option value="viewCount">Most Views</option>
+          </select>
+        </div>
+      </div>
+      <!-- Search Forms -->
+      <form id="form" role="search">
+        <label for="search" class="visually-hidden">Search movies</label>
+        <input
+          type="search"
+          id="search"
+          class="search"
+          placeholder="Search movies..."
+          aria-label="Search movies"
+          autocomplete="off"
+        />
+      </form>
+      <form id="yt-form" role="search" style="display: none;">
+        <label for="yt-search" class="visually-hidden">Search YouTube</label>
+        <input
+          type="search"
+          id="yt-search"
+          class="search"
+          placeholder="Search YouTube videos..."
+          aria-label="Search YouTube"
+          autocomplete="off"
+        />
       </form>
     </header>
 
-    <main  id="main"></main>
+    <div id="loading" class="loading" aria-live="polite" style="display: none;">
+      <div class="spinner"></div>
+      <p>Loading movies...</p>
+    </div>
+
+    <div id="error" class="error" role="alert" style="display: none;"></div>
+
+    <main id="main" aria-live="polite"></main>
+
+    <!-- Video Player Modal -->
+    <div id="player-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <button id="close-modal" class="close-btn" aria-label="Close player">&times;</button>
+        <div class="player-header">
+          <h2 id="player-title">Now Playing</h2>
+          <div class="player-controls">
+            <select id="source-select" class="source-select" aria-label="Select video source">
+              <!-- Populated by JavaScript -->
+            </select>
+            <div id="episode-controls" class="episode-controls" style="display: none;">
+              <select id="season-select" class="episode-select" aria-label="Select season">
+                <!-- Populated by JavaScript -->
+              </select>
+              <select id="episode-select" class="episode-select" aria-label="Select episode">
+                <!-- Populated by JavaScript -->
+              </select>
+              <button id="prev-episode" class="nav-btn" aria-label="Previous episode" title="Previous Episode">&lt;</button>
+              <button id="next-episode" class="nav-btn" aria-label="Next episode" title="Next Episode">&gt;</button>
+            </div>
+            <div class="player-tabs">
+              <button id="tab-watch" class="tab-btn active" data-tab="watch">Watch</button>
+              <button id="tab-trailer" class="tab-btn" data-tab="trailer">Trailer</button>
+            </div>
+          </div>
+        </div>
+        <div class="player-container" id="watch-container">
+          <iframe id="player-iframe" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write" referrerpolicy="origin"></iframe>
+        </div>
+        <div class="player-container" id="trailer-container" style="display: none;">
+          <iframe id="trailer-iframe" allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="script.js"></script>
+    <script type="module" src="youtube.js"></script>
   </body>
 </html>
