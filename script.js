@@ -58,17 +58,19 @@ const trailerContainer = document.getElementById('trailer-container');
 const tabWatch = document.getElementById('tab-watch');
 const tabTrailer = document.getElementById('tab-trailer');
 
-// Video embed sources - Deep tested Dec 2025 via Puppeteer + Screenshot verification
+// Video embed sources - Updated Dec 2025
 const EMBED_SOURCES = [
-  // ✅ VERIFIED WORKING (screenshot confirmed Dec 2025)
+  // ✅ VERIFIED WORKING (tested Dec 2025)
+  { name: 'Videasy', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.videasy.net/tv/${id}/${s}/${e}` : `https://player.videasy.net/${type}/${id}` },
+  { name: 'VidSrc.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.cc/v2/embed/tv/${id}/${s}/${e}` : `https://vidsrc.cc/v2/embed/${type}/${id}` },
   { name: 'VidLink', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidlink.pro/tv/${id}/${s}/${e}` : `https://vidlink.pro/${type}/${id}` },
   { name: 'Vidfast.pro', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidfast.pro/tv/${id}/${s}/${e}` : `https://vidfast.pro/${type}/${id}` },
   { name: 'SmashyStream', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.smashy.stream/tv/${id}?s=${s}&e=${e}` : `https://player.smashy.stream/${type}/${id}` },
   { name: 'Nontongo', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.nontongo.win/embed/tv/${id}/${s}/${e}` : `https://www.nontongo.win/embed/${type}/${id}` },
   { name: 'MoviesAPI', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://moviesapi.club/tv/${id}-${s}-${e}` : `https://moviesapi.club/${type}/${id}` },
   { name: 'GoDrivePlayer', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://godriveplayer.com/player.php?type=series&tmdb=${id}&season=${s}&episode=${e}` : `https://godriveplayer.com/player.php?tmdb=${id}` },
-  { name: 'VidSrc.me', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.me/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc.me/embed/${type}?tmdb=${id}` },
-  // Fallback sources (may work)
+  { name: 'VidSrcEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-embed.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-embed.ru/embed/${type}?tmdb=${id}` },
+  // Fallback sources
   { name: 'MultiEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://multiembed.mov/?video_id=${id}&tmdb=1` },
   { name: '2Embed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}` : `https://www.2embed.cc/embed/${id}` },
   { name: 'VidSrc.icu', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.icu/embed/tv/${id}/${s}/${e}` : `https://vidsrc.icu/embed/${type}/${id}` },
@@ -217,7 +219,7 @@ function populateSourceSelector() {
   }
 
   // Providers to always include regardless of test results
-  const alwaysInclude = ['VidLink', 'Vidfast.pro', 'SmashyStream', 'Nontongo', 'MoviesAPI', 'GoDrivePlayer', 'VidSrc.me'];
+  const alwaysInclude = ['Videasy', 'VidSrc.cc', 'VidLink', 'Vidfast.pro', 'SmashyStream', 'Nontongo', 'MoviesAPI', 'GoDrivePlayer', 'VidSrcEmbed'];
 
   sourcesWithResults.forEach(({ source, index, percentage }) => {
     // Skip completely blocked providers
