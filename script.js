@@ -58,28 +58,22 @@ const trailerContainer = document.getElementById('trailer-container');
 const tabWatch = document.getElementById('tab-watch');
 const tabTrailer = document.getElementById('tab-trailer');
 
-// Video embed sources - Updated Dec 2025
+// Video embed sources - Updated Dec 26, 2025
 const EMBED_SOURCES = [
-  // ✅ VERIFIED WORKING (tested Dec 2025)
   { name: 'Videasy', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.videasy.net/tv/${id}/${s}/${e}` : `https://player.videasy.net/${type}/${id}` },
-  { name: 'VidSrc.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.cc/v2/embed/tv/${id}/${s}/${e}` : `https://vidsrc.cc/v2/embed/${type}/${id}` },
   { name: 'VidLink', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidlink.pro/tv/${id}/${s}/${e}` : `https://vidlink.pro/${type}/${id}` },
   { name: 'Vidfast.pro', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidfast.pro/tv/${id}/${s}/${e}` : `https://vidfast.pro/${type}/${id}` },
   { name: 'SmashyStream', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.smashy.stream/tv/${id}?s=${s}&e=${e}` : `https://player.smashy.stream/${type}/${id}` },
   { name: 'Nontongo', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.nontongo.win/embed/tv/${id}/${s}/${e}` : `https://www.nontongo.win/embed/${type}/${id}` },
   { name: 'MoviesAPI', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://moviesapi.club/tv/${id}-${s}-${e}` : `https://moviesapi.club/${type}/${id}` },
-  { name: 'GoDrivePlayer', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://godriveplayer.com/player.php?type=series&tmdb=${id}&season=${s}&episode=${e}` : `https://godriveplayer.com/player.php?tmdb=${id}` },
-  { name: 'VidSrcEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-embed.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-embed.ru/embed/${type}?tmdb=${id}` },
-  // Fallback sources
   { name: 'MultiEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://multiembed.mov/?video_id=${id}&tmdb=1` },
   { name: '2Embed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}` : `https://www.2embed.cc/embed/${id}` },
-  { name: 'VidSrc.icu', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.icu/embed/tv/${id}/${s}/${e}` : `https://vidsrc.icu/embed/${type}/${id}` },
 ];
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
 // Providers that block iframe embedding - will open in new tab instead
-const IFRAME_BLOCKED_PROVIDERS = ['VidLink'];
+const IFRAME_BLOCKED_PROVIDERS = [];
 // Providers that are completely blocked/down - exclude from list
 const BLOCKED_PROVIDERS = [];
 
@@ -219,7 +213,7 @@ function populateSourceSelector() {
   }
 
   // Providers to always include regardless of test results
-  const alwaysInclude = ['Videasy', 'VidSrc.cc', 'VidLink', 'Vidfast.pro', 'SmashyStream', 'Nontongo', 'MoviesAPI', 'GoDrivePlayer', 'VidSrcEmbed'];
+  const alwaysInclude = ['Videasy', 'VidLink', 'Vidfast.pro', 'SmashyStream', 'Nontongo', 'MoviesAPI', 'MultiEmbed', '2Embed.cc'];
 
   sourcesWithResults.forEach(({ source, index, percentage }) => {
     // Skip completely blocked providers
@@ -800,12 +794,33 @@ function getEmbedUrl(type, id, season = null, episode = null) {
   return source.getUrl(type, id, season, episode);
 }
 
+// Load URL into iframe (handles blocked providers)
+function loadIframeSrc(url) {
+  const source = EMBED_SOURCES[currentSourceIndex];
+  if (IFRAME_BLOCKED_PROVIDERS.includes(source.name)) {
+    window.open(url, '_blank');
+    playerIframe.srcdoc = `
+      <html>
+        <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e;color:#fff;font-family:sans-serif;text-align:center;">
+          <div>
+            <p style="font-size:1.2rem;">Opened in new tab ↗</p>
+            <p style="color:#888;font-size:0.9rem;">${source.name} doesn't allow embedding</p>
+          </div>
+        </body>
+      </html>
+    `;
+  } else {
+    playerIframe.src = url;
+  }
+}
+
 // Change video source
 function changeSource(newIndex) {
   currentSourceIndex = newIndex;
+  sourceSelect.value = newIndex; // Keep dropdown in sync
+
   if (currentPlayingMovie) {
     const type = currentPlayingMovie.media_type === 'tv' ? 'tv' : 'movie';
-    const source = EMBED_SOURCES[newIndex];
     let url;
 
     if (type === 'tv' && currentTvData) {
@@ -814,29 +829,11 @@ function changeSource(newIndex) {
       url = getEmbedUrl(type, currentPlayingMovie.id);
     }
 
-    // Add cache-busting parameter to force reload
-    const separator = url.includes('?') ? '&' : '?';
-    const cacheBustUrl = `${url}${separator}_t=${Date.now()}`;
+    console.log('Switching to source:', EMBED_SOURCES[newIndex].name, 'URL:', url);
 
-    // Check if provider blocks iframe embedding - open in new tab instead
-    if (IFRAME_BLOCKED_PROVIDERS.includes(source.name)) {
-      window.open(url, '_blank');
-      // Keep iframe showing a message
-      playerIframe.srcdoc = `
-        <html>
-          <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e;color:#fff;font-family:sans-serif;text-align:center;">
-            <div>
-              <p style="font-size:1.2rem;">Opened in new tab ↗</p>
-              <p style="color:#888;font-size:0.9rem;">${source.name} doesn't allow embedding</p>
-            </div>
-          </body>
-        </html>
-      `;
-    } else {
-      // Clear and reload to force refresh
-      playerIframe.src = '';
-      playerIframe.src = cacheBustUrl;
-    }
+    // Clear and reload
+    playerIframe.src = '';
+    setTimeout(() => loadIframeSrc(url), 50);
   }
 }
 
@@ -919,7 +916,7 @@ function playEpisode(season, episode) {
   episodeSelect.value = episode;
 
   const embedUrl = getEmbedUrl('tv', currentPlayingMovie.id, season, episode);
-  playerIframe.src = embedUrl;
+  loadIframeSrc(embedUrl);
 
   // Update title
   const showName = currentPlayingMovie.name || currentPlayingMovie.title || 'Unknown';
@@ -1061,14 +1058,14 @@ async function openPlayer(movie) {
 
       // Play the episode
       const embedUrl = getEmbedUrl(type, movie.id, currentSeason, currentEpisode);
-      playerIframe.src = embedUrl;
+      loadIframeSrc(embedUrl);
       playerTitle.textContent = `${title} - S${currentSeason}E${currentEpisode}`;
 
       updateNavButtons();
     } else {
       // Fallback if no season data
       const embedUrl = getEmbedUrl(type, movie.id);
-      playerIframe.src = embedUrl;
+      loadIframeSrc(embedUrl);
       playerTitle.textContent = title;
       episodeControls.style.display = 'none';
     }
@@ -1076,7 +1073,7 @@ async function openPlayer(movie) {
     // Movie - no episode controls
     episodeControls.style.display = 'none';
     const embedUrl = getEmbedUrl(type, movie.id);
-    playerIframe.src = embedUrl;
+    loadIframeSrc(embedUrl);
     playerTitle.textContent = title;
   }
 

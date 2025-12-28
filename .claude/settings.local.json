@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:movies-discovery.vercel.app)",
+      "WebFetch(domain:player.videasy.net)",
+      "WebFetch(domain:vidlink.pro)",
+      "WebFetch(domain:vidfast.pro)",
+      "WebFetch(domain:player.smashy.stream)",
+      "WebFetch(domain:moviesapi.club)"
+    ]
+  }
+}
