@@ -20,6 +20,7 @@ const EMBED_SOURCES = [
   { name: 'VidSrc.in', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.in/embed/tv/${id}/${s}/${e}` : `https://vidsrc.in/embed/${type}/${id}` },
   { name: 'Embed.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://embed.su/embed/tv/${id}/${s}/${e}` : `https://embed.su/embed/${type}/${id}` },
   { name: 'VidLink', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidlink.pro/tv/${id}/${s}/${e}` : `https://vidlink.pro/${type}/${id}` },
+  { name: 'Nontongo', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.nontongo.win/embed/tv/${id}/${s}/${e}` : `https://www.nontongo.win/embed/${type}/${id}` },
   { name: 'SuperEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://streamingnow.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://streamingnow.mov/?video_id=${id}&tmdb=1` },
   { name: 'Autoembed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.autoembed.cc/embed/tv/${id}/${s}/${e}` : `https://player.autoembed.cc/embed/${type}/${id}` },
   { name: '2Embed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}` : `https://www.2embed.cc/embed/${id}` },
