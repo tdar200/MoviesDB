@@ -77,26 +77,48 @@ export const MEDIA_TYPES = [
 ];
 
 // Movie genres (from TMDB)
+// Some entries use keyword IDs (type: 'keyword') for sub-genre filtering
 export const MOVIE_GENRES = [
   { id: 0, name: 'All Genres' },
   { id: 28, name: 'Action' },
+  { id: 10759, name: 'Action & Adventure' },
   { id: 12, name: 'Adventure' },
+  { id: 9951, name: 'Alien', type: 'keyword' },
   { id: 16, name: 'Animation' },
+  { id: 818, name: 'Based on Novel', type: 'keyword' },
+  { id: 9672, name: 'Based on True Story', type: 'keyword' },
   { id: 35, name: 'Comedy' },
+  { id: 10683, name: 'Coming of Age', type: 'keyword' },
   { id: 80, name: 'Crime' },
   { id: 99, name: 'Documentary' },
   { id: 18, name: 'Drama' },
+  { id: 4565, name: 'Dystopia', type: 'keyword' },
   { id: 10751, name: 'Family' },
   { id: 14, name: 'Fantasy' },
   { id: 36, name: 'History' },
   { id: 27, name: 'Horror' },
+  { id: 10762, name: 'Kids' },
   { id: 10402, name: 'Music' },
   { id: 9648, name: 'Mystery' },
+  { id: 10763, name: 'News' },
+  { id: 10764, name: 'Reality' },
+  { id: 9748, name: 'Revenge', type: 'keyword' },
+  { id: 14544, name: 'Robot', type: 'keyword' },
   { id: 10749, name: 'Romance' },
   { id: 878, name: 'Sci-Fi' },
+  { id: 10765, name: 'Sci-Fi & Fantasy' },
+  { id: 10766, name: 'Soap' },
+  { id: 9882, name: 'Space', type: 'keyword' },
+  { id: 9715, name: 'Superhero', type: 'keyword' },
+  { id: 10349, name: 'Survival', type: 'keyword' },
+  { id: 10767, name: 'Talk' },
   { id: 53, name: 'Thriller' },
+  { id: 4379, name: 'Time Travel', type: 'keyword' },
+  { id: 10770, name: 'TV Movie' },
   { id: 10752, name: 'War' },
-  { id: 37, name: 'Western' }
+  { id: 10768, name: 'War & Politics' },
+  { id: 37, name: 'Western' },
+  { id: 12377, name: 'Zombie', type: 'keyword' }
 ];
 
 // Theme keywords (from TMDB) - for filtering by specific themes

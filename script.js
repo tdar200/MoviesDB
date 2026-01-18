@@ -70,6 +70,13 @@ const EMBED_SOURCES = [
   { name: 'Embed.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://embed.su/embed/tv/${id}/${s}/${e}` : `https://embed.su/embed/${type}/${id}` },
   { name: 'Autoembed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.autoembed.cc/embed/tv/${id}/${s}/${e}` : `https://player.autoembed.cc/embed/${type}/${id}` },
   { name: 'SuperEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://multiembed.mov/?video_id=${id}&tmdb=1` },
+  { name: 'VidSrcMe.ru', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrcme.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrcme.ru/embed/movie?tmdb=${id}` },
+  { name: 'VidSrcMe.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrcme.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrcme.su/embed/movie?tmdb=${id}` },
+  { name: 'VidSrc-Me.ru', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-me.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-me.ru/embed/movie?tmdb=${id}` },
+  { name: 'VidSrc-Me.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-me.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-me.su/embed/movie?tmdb=${id}` },
+  { name: 'VidSrc-Embed.ru', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-embed.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-embed.ru/embed/movie?tmdb=${id}` },
+  { name: 'VidSrc-Embed.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-embed.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-embed.su/embed/movie?tmdb=${id}` },
+  { name: 'Vsrc.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vsrc.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vsrc.su/embed/movie?tmdb=${id}` },
 ];
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
@@ -187,6 +194,42 @@ function getWatchProgress(showId) {
   }
 }
 
+// Watched history storage key
+const WATCHED_HISTORY_KEY = 'watchedHistory';
+
+// Add movie/show to watched history
+function addToWatchedHistory(movie) {
+  try {
+    const history = JSON.parse(localStorage.getItem(WATCHED_HISTORY_KEY) || '[]');
+    // Remove if already exists (to update timestamp and move to top)
+    const filtered = history.filter(m => m.id !== movie.id);
+    // Add to beginning with timestamp
+    filtered.unshift({
+      ...movie,
+      watchedAt: Date.now()
+    });
+    // Keep max 100 items
+    localStorage.setItem(WATCHED_HISTORY_KEY, JSON.stringify(filtered.slice(0, 100)));
+  } catch (error) {
+    console.error('Error saving to watched history:', error);
+  }
+}
+
+// Get watched history
+function getWatchedHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(WATCHED_HISTORY_KEY) || '[]');
+  } catch (error) {
+    console.error('Error loading watched history:', error);
+    return [];
+  }
+}
+
+// Clear watched history
+function clearWatchedHistory() {
+  localStorage.removeItem(WATCHED_HISTORY_KEY);
+}
+
 // Populate source selector with test results percentages
 function populateSourceSelector() {
   sourceSelect.innerHTML = '';
@@ -215,7 +258,7 @@ function populateSourceSelector() {
   }
 
   // Providers to always include regardless of test results
-  const alwaysInclude = ['VidSrc.cc', 'Videasy', 'VidLink', 'Nontongo', 'VidSrc.to', 'Embed.su', 'Autoembed.cc', 'SuperEmbed'];
+  const alwaysInclude = ['VidSrc.cc', 'Videasy', 'VidLink', 'Nontongo', 'VidSrc.to', 'Embed.su', 'Autoembed.cc', 'SuperEmbed', 'VidSrcMe.ru', 'VidSrcMe.su', 'VidSrc-Me.ru', 'VidSrc-Me.su', 'VidSrc-Embed.ru', 'VidSrc-Embed.su', 'Vsrc.su'];
 
   sourcesWithResults.forEach(({ source, index, percentage }) => {
     // Skip completely blocked providers
@@ -270,6 +313,7 @@ const seenIds = new Set(); // Track seen movie IDs to prevent duplicates
 let currentFilters = {
   mediaType: 'all',
   genre: 0,
+  genreIsKeyword: false,  // True if selected genre is actually a keyword filter
   minRating: 0,  // Default to all ratings
   minVotes: 0,   // Default to all votes
   yearFilter: 'all',  // 'all', 'newest', 'oldest', or year number like '2024'
@@ -281,6 +325,9 @@ let currentFilters = {
   actorId: 0,    // TMDB person ID for actor filter
   actorName: ''  // Actor name for display
 };
+
+// Store genre metadata for keyword detection
+let genreMetadata = new Map();
 
 let isSearchMode = false; // Track if we're showing search results
 let isTop250Mode = false; // Track if we're showing Top 250
@@ -996,6 +1043,9 @@ function handleEpisodeChange(episodeNum) {
 }
 
 async function openPlayer(movie) {
+  // Add to watched history
+  addToWatchedHistory(movie);
+
   const title = movie.title || movie.name || 'Unknown';
   const type = movie.media_type === 'tv' ? 'tv' : 'movie';
 
@@ -1154,6 +1204,7 @@ async function fetchWithErrorHandling(url) {
 // Populate genre dropdown based on media type
 function populateGenres(mediaType) {
   genreSelect.innerHTML = '';
+  genreMetadata.clear();
 
   let genres;
   if (mediaType === 'movie') {
@@ -1178,10 +1229,13 @@ function populateGenres(mediaType) {
     option.value = genre.id;
     option.textContent = genre.name;
     genreSelect.appendChild(option);
+    // Store metadata for keyword detection
+    genreMetadata.set(genre.id, { isKeyword: genre.type === 'keyword' });
   });
 
   // Reset genre selection
   currentFilters.genre = 0;
+  currentFilters.genreIsKeyword = false;
   genreSelect.value = '0';
 }
 
@@ -1212,8 +1266,8 @@ function applyFilters(movies, isSearch = false) {
       return false;
     }
 
-    // Genre filter
-    if (currentFilters.genre !== 0 && !movie.genre_ids?.includes(currentFilters.genre)) {
+    // Genre filter (skip if genre is keyword-based, as it's filtered server-side)
+    if (currentFilters.genre !== 0 && !currentFilters.genreIsKeyword && !movie.genre_ids?.includes(currentFilters.genre)) {
       return false;
     }
 
@@ -1386,20 +1440,27 @@ async function fetchMoreTrending(pagesToFetch = 5) {
   const language = currentFilters.language || null;
   const mediaType = currentFilters.mediaType;
 
+  // Combine keyword IDs: theme + genre (if genre is keyword-based)
+  let keywordId = themeId;
+  if (currentFilters.genreIsKeyword && currentFilters.genre > 0) {
+    // TMDB supports multiple keywords separated by comma (OR) or pipe (AND)
+    keywordId = themeId > 0 ? `${themeId},${currentFilters.genre}` : currentFilters.genre;
+  }
+
   for (let i = 0; i < pagesToFetch; i++) {
     const page = startPage + i;
     if (page > 500) break; // TMDB max pages
 
-    // If provider, theme, exclude genres, or language filter is active, use discover API
-    if (providerId > 0 || themeId > 0 || excludeGenres || language) {
+    // If provider, keyword, exclude genres, or language filter is active, use discover API
+    if (providerId > 0 || keywordId || excludeGenres || language) {
       if (mediaType === 'movie') {
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, themeId, excludeGenres, language)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
       } else if (mediaType === 'tv') {
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, themeId, excludeGenres, language)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
       } else {
         // For 'all', fetch both movies and TV
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, themeId, excludeGenres, language)).catch(() => null));
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, themeId, excludeGenres, language)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
       }
     } else {
       promises.push(fetchWithErrorHandling(ENDPOINTS.trending(page)).catch(() => null));
@@ -1861,8 +1922,18 @@ mediaTypeSelect.addEventListener('change', (e) => {
 
 // Genre change
 genreSelect.addEventListener('change', (e) => {
-  currentFilters.genre = parseInt(e.target.value, 10);
-  handleFilterChange();
+  const genreId = parseInt(e.target.value, 10);
+  const wasKeyword = currentFilters.genreIsKeyword;
+  currentFilters.genre = genreId;
+  const metadata = genreMetadata.get(genreId);
+  currentFilters.genreIsKeyword = metadata?.isKeyword || false;
+
+  // Keyword-based genres require API reload (also reload when switching away from keyword)
+  if ((currentFilters.genreIsKeyword || wasKeyword) && !isSearchMode && !isTop250Mode && !currentFilters.actorId) {
+    loadTrending();
+  } else {
+    handleFilterChange();
+  }
 });
 
 // Min rating change
@@ -2140,6 +2211,7 @@ initYouTube();
 
 // Tab switching logic
 const tabMovies = document.getElementById('tab-movies');
+const tabWatched = document.getElementById('tab-watched');
 const tabYouTube = document.getElementById('tab-youtube');
 const movieFilters = document.getElementById('movie-filters');
 const youtubeFilters = document.getElementById('youtube-filters');
@@ -2147,9 +2219,13 @@ const movieSearchForm = document.getElementById('form');
 const youtubeSearchForm = document.getElementById('yt-form');
 const top250Button = document.getElementById('top250-btn');
 
+let isWatchedMode = false;
+
 function switchToMovies() {
   currentApp = 'movies';
+  isWatchedMode = false;
   tabMovies.classList.add('active');
+  tabWatched.classList.remove('active');
   tabYouTube.classList.remove('active');
   movieFilters.style.display = 'flex';
   youtubeFilters.style.display = 'none';
@@ -2162,8 +2238,10 @@ function switchToMovies() {
 
 function switchToYouTube() {
   currentApp = 'youtube';
+  isWatchedMode = false;
   tabYouTube.classList.add('active');
   tabMovies.classList.remove('active');
+  tabWatched.classList.remove('active');
   youtubeFilters.style.display = 'flex';
   movieFilters.style.display = 'none';
   youtubeSearchForm.style.display = 'flex';
@@ -2173,5 +2251,58 @@ function switchToYouTube() {
   activateYouTube();
 }
 
+function switchToWatched() {
+  currentApp = 'movies';
+  isWatchedMode = true;
+  isSearchMode = false;
+  isTop250Mode = false;
+
+  // Update tab active states
+  tabMovies.classList.remove('active');
+  tabWatched.classList.add('active');
+  tabYouTube.classList.remove('active');
+  top250Btn.classList.remove('active');
+
+  // Show movie UI elements but hide filters for watched
+  movieFilters.style.display = 'none';
+  youtubeFilters.style.display = 'none';
+  movieSearchForm.style.display = 'none';
+  youtubeSearchForm.style.display = 'none';
+  top250Button.style.display = 'none';
+
+  // Load watched movies
+  loadWatchedHistory();
+}
+
+async function loadWatchedHistory() {
+  setLoading(true);
+  hideError();
+
+  const watched = getWatchedHistory();
+
+  if (watched.length === 0) {
+    main.innerHTML = '<p class="no-results">No watched movies yet. Start watching to build your history!</p>';
+    setLoading(false);
+    return;
+  }
+
+  allMovies = watched;
+  filteredMovies = watched;
+  displayedCount = 0;
+  hasMorePages = false;
+
+  // Clear and display
+  main.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  watched.forEach((movie, index) => {
+    fragment.appendChild(createMovieCard(movie, index));
+  });
+  main.appendChild(fragment);
+  displayedCount = watched.length;
+
+  setLoading(false);
+}
+
 tabMovies?.addEventListener('click', switchToMovies);
+tabWatched?.addEventListener('click', switchToWatched);
 tabYouTube?.addEventListener('click', switchToYouTube);
