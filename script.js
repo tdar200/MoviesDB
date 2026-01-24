@@ -1398,13 +1398,22 @@ function sortMovies(movies, stats) {
         return (b.vote_count || 0) - (a.vote_count || 0);
 
       case 'newest-weighted':
-        // Sort by year first (newest), then by weighted score within each year
+        // Sort by weighted score with strong recency multiplier
+        const currentYearNW = new Date().getFullYear();
         const yearANW = parseInt((a.release_date || a.first_air_date || '0').split('-')[0]) || 0;
         const yearBNW = parseInt((b.release_date || b.first_air_date || '0').split('-')[0]) || 0;
-        if (yearBNW !== yearANW) {
-          return yearBNW - yearANW;
-        }
-        return b.weightedScore - a.weightedScore;
+        // Strong recency boost: current year = 5x, -1yr = 4x, -2yr = 3x, -3yr = 2x, older = 1x
+        const getBoost = (year) => {
+          const diff = currentYearNW - year;
+          if (diff <= 0) return 5;
+          if (diff === 1) return 4;
+          if (diff === 2) return 3;
+          if (diff === 3) return 2;
+          return 1;
+        };
+        const adjustedScoreA = a.weightedScore * getBoost(yearANW);
+        const adjustedScoreB = b.weightedScore * getBoost(yearBNW);
+        return adjustedScoreB - adjustedScoreA;
 
       case 'year-new':
         const yearA = parseInt((a.release_date || a.first_air_date || '0').split('-')[0]) || 0;
