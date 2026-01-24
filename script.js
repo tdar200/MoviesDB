@@ -1402,13 +1402,15 @@ function sortMovies(movies, stats) {
         const currentYearNW = new Date().getFullYear();
         const yearANW = parseInt((a.release_date || a.first_air_date || '0').split('-')[0]) || 0;
         const yearBNW = parseInt((b.release_date || b.first_air_date || '0').split('-')[0]) || 0;
-        // Strong recency boost: current year = 5x, -1yr = 4x, -2yr = 3x, -3yr = 2x, older = 1x
+        // Recency boost: 2020=3x, 2021=5x, 2022=7x, 2023=9x, 2024=11x, 2025=13x, 2026=15x, older=1x
         const getBoost = (year) => {
-          const diff = currentYearNW - year;
-          if (diff <= 0) return 5;
-          if (diff === 1) return 4;
-          if (diff === 2) return 3;
-          if (diff === 3) return 2;
+          if (year >= 2026) return 15;
+          if (year === 2025) return 13;
+          if (year === 2024) return 11;
+          if (year === 2023) return 9;
+          if (year === 2022) return 7;
+          if (year === 2021) return 5;
+          if (year === 2020) return 3;
           return 1;
         };
         const adjustedScoreA = a.weightedScore * getBoost(yearANW);
