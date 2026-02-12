@@ -1440,11 +1440,14 @@ function sortMovies(movies, stats) {
 }
 
 // Fetch more trending pages from API (or discover API if provider/theme/exclude filter is active)
+// Helper function to delay execution
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function fetchMoreTrending(pagesToFetch = 5) {
   if (!hasMorePages) return [];
 
-  const promises = [];
-  const startPage = currentApiPage + 1;
   const providerId = currentFilters.provider;
   const themeId = currentFilters.theme;
   const excludeGenres = currentFilters.excludeGenres.length > 0 ? currentFilters.excludeGenres.join(',') : null;
@@ -1455,54 +1458,78 @@ async function fetchMoreTrending(pagesToFetch = 5) {
   // Combine keyword IDs: theme + genre (if genre is keyword-based)
   let keywordId = themeId;
   if (currentFilters.genreIsKeyword && currentFilters.genre > 0) {
-    // TMDB supports multiple keywords separated by comma (OR) or pipe (AND)
     keywordId = themeId > 0 ? `${themeId},${currentFilters.genre}` : currentFilters.genre;
   }
 
-  for (let i = 0; i < pagesToFetch; i++) {
-    const page = startPage + i;
-    if (page > 500) break; // TMDB max pages
+  // Use discover API if any filter is active
+  const useDiscoverApi = providerId > 0 || keywordId || excludeGenres || language || minVotes;
 
-    // If provider, keyword, exclude genres, language, or minVotes filter is active, use discover API
-    if (providerId > 0 || keywordId || excludeGenres || language || minVotes) {
-      if (mediaType === 'movie') {
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
-      } else if (mediaType === 'tv') {
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+  // Fetch in batches to avoid TMDB rate limiting (40 req/10s)
+  const BATCH_SIZE = 10; // Requests per batch
+  const BATCH_DELAY = 300; // ms between batches
+  const allNewMovies = [];
+  let totalPagesAvailable = Infinity;
+
+  for (let batchStart = 0; batchStart < pagesToFetch && hasMorePages; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, pagesToFetch);
+    const promises = [];
+
+    for (let i = batchStart; i < batchEnd; i++) {
+      const page = currentApiPage + 1 + i;
+      if (page > 500 || page > totalPagesAvailable) break; // TMDB max pages or no more data
+
+      if (useDiscoverApi) {
+        if (mediaType === 'movie') {
+          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+        } else if (mediaType === 'tv') {
+          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+        } else {
+          // For 'all', fetch both movies and TV
+          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+        }
       } else {
-        // For 'all', fetch both movies and TV
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.trending(page)).catch(() => null));
       }
-    } else {
-      promises.push(fetchWithErrorHandling(ENDPOINTS.trending(page)).catch(() => null));
+    }
+
+    if (promises.length === 0) break;
+
+    const responses = await Promise.all(promises);
+
+    responses.forEach(data => {
+      if (!data?.results) return;
+      // Track total pages to stop early
+      if (data.total_pages) {
+        totalPagesAvailable = Math.min(totalPagesAvailable, data.total_pages);
+      }
+      data.results.forEach(movie => {
+        if (!seenIds.has(movie.id)) {
+          seenIds.add(movie.id);
+          if (!movie.media_type) {
+            movie.media_type = movie.title ? 'movie' : 'tv';
+          }
+          allNewMovies.push(movie);
+        }
+      });
+    });
+
+    currentApiPage += (batchEnd - batchStart);
+
+    // Check if we've fetched all available pages
+    if (currentApiPage >= totalPagesAvailable) {
+      hasMorePages = false;
+      break;
+    }
+
+    // Add delay between batches to avoid rate limiting (skip delay on last batch)
+    if (batchEnd < pagesToFetch && hasMorePages) {
+      await delay(BATCH_DELAY);
     }
   }
 
-  const responses = await Promise.all(promises);
-  currentApiPage = startPage + pagesToFetch - 1;
-
-  const newMovies = [];
-  responses.forEach(data => {
-    if (!data?.results) return;
-    if (data.total_pages && currentApiPage >= data.total_pages) {
-      hasMorePages = false;
-    }
-    data.results.forEach(movie => {
-      // Deduplicate by ID
-      if (!seenIds.has(movie.id)) {
-        seenIds.add(movie.id);
-        // Add media_type if not present (discover API doesn't include it)
-        if (!movie.media_type) {
-          movie.media_type = movie.title ? 'movie' : 'tv';
-        }
-        newMovies.push(movie);
-      }
-    });
-  });
-
-  allMovies = [...allMovies, ...newMovies];
-  return newMovies;
+  allMovies = [...allMovies, ...allNewMovies];
+  return allNewMovies;
 }
 
 // Reset fetch state
@@ -1848,7 +1875,19 @@ async function loadTrending() {
     isTop250Mode = false;
     top250Btn.classList.remove('active');
     updateQueryParams();
-    await fetchMoreTrending(250); // Fetch first 250 pages (~5000 movies)
+    
+    // Determine how many pages to fetch based on filters
+    // High vote filters have limited results, so fetch fewer pages
+    let pagesToFetch = 250; // Default for trending
+    if (currentFilters.minVotes >= 10000) {
+      pagesToFetch = 25; // ~500 results max for 10k+ votes
+    } else if (currentFilters.minVotes >= 5000) {
+      pagesToFetch = 50; // More results for 5k+ votes
+    } else if (currentFilters.minVotes >= 1000) {
+      pagesToFetch = 100; // Even more for 1k+ votes
+    }
+    
+    await fetchMoreTrending(pagesToFetch);
     await processAndDisplayMovies(allMovies);
   } catch (error) {
     console.error('Error loading trending movies:', error);
