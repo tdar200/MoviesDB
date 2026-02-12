@@ -1369,7 +1369,7 @@ function calculateScore(movie) {
   // score = (rating - 6.0) * log10(voteCount)^1.5
   // The 1.5 exponent gives more weight to higher vote counts
   const ratingFactor = Math.max(0, combinedRating - 6.0);
-  const voteWeight = Math.pow(Math.log10(voteCount + 1), 1.5);
+  const voteWeight = Math.pow(Math.log10(voteCount + 1), 2.0);
   return ratingFactor * voteWeight;
 }
 
