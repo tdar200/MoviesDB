@@ -63,10 +63,10 @@ export const ENDPOINTS = {
   personTvCredits: (personId) => `${CONFIG.BASE_URL}/person/${personId}/tv_credits?api_key=${CONFIG.API_KEY}`,
   // Top rated movies (IMDB Top 250 equivalent)
   topRatedMovies: (page = 1) => `${CONFIG.BASE_URL}/movie/top_rated?api_key=${CONFIG.API_KEY}&page=${page}`,
-  // Discover movies with provider, keyword, exclude genres, and language filter
-  discoverMovies: (page, providerId, keywordId, excludeGenres, language) => `${CONFIG.BASE_URL}/discover/movie?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=popularity.desc&watch_region=US${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}`,
-  // Discover TV with provider, keyword, exclude genres, and language filter
-  discoverTv: (page, providerId, keywordId, excludeGenres, language) => `${CONFIG.BASE_URL}/discover/tv?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=popularity.desc&watch_region=US${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}`
+// Discover movies with provider, keyword, exclude genres, language, and vote count filter
+  discoverMovies: (page, providerId, keywordId, excludeGenres, language, minVotes) => `${CONFIG.BASE_URL}/discover/movie?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=popularity.desc&watch_region=US${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}${minVotes ? `&vote_count.gte=${minVotes}` : ''}`,
+  // Discover TV with provider, keyword, exclude genres, language, and vote count filter
+  discoverTv: (page, providerId, keywordId, excludeGenres, language, minVotes) => `${CONFIG.BASE_URL}/discover/tv?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=popularity.desc&watch_region=US${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}${minVotes ? `&vote_count.gte=${minVotes}` : ''}`
 };
 
 // Media types

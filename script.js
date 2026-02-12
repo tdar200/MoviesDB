@@ -1450,6 +1450,7 @@ async function fetchMoreTrending(pagesToFetch = 5) {
   const excludeGenres = currentFilters.excludeGenres.length > 0 ? currentFilters.excludeGenres.join(',') : null;
   const language = currentFilters.language || null;
   const mediaType = currentFilters.mediaType;
+  const minVotes = currentFilters.minVotes || null;
 
   // Combine keyword IDs: theme + genre (if genre is keyword-based)
   let keywordId = themeId;
@@ -1462,16 +1463,16 @@ async function fetchMoreTrending(pagesToFetch = 5) {
     const page = startPage + i;
     if (page > 500) break; // TMDB max pages
 
-    // If provider, keyword, exclude genres, or language filter is active, use discover API
-    if (providerId > 0 || keywordId || excludeGenres || language) {
+    // If provider, keyword, exclude genres, language, or minVotes filter is active, use discover API
+    if (providerId > 0 || keywordId || excludeGenres || language || minVotes) {
       if (mediaType === 'movie') {
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
       } else if (mediaType === 'tv') {
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
       } else {
         // For 'all', fetch both movies and TV
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
-        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+        promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
       }
     } else {
       promises.push(fetchWithErrorHandling(ENDPOINTS.trending(page)).catch(() => null));
@@ -1744,7 +1745,10 @@ async function loadMoreMovies() {
 
   // If we've shown all filtered movies, try to fetch more from API
   if (displayedCount >= filteredMovies.length) {
-    if (!hasMorePages) return; // No more API pages
+    if (!hasMorePages) {
+      updateLoadMoreIndicator(false); // Remove loader when no more pages
+      return;
+    }
 
     isLoadingMore = true;
     updateLoadMoreIndicator(true); // Show loading
@@ -1953,10 +1957,15 @@ minRatingSelect.addEventListener('change', (e) => {
   handleFilterChange();
 });
 
-// Min votes change
+// Min votes change - needs to reload from API since we use discover endpoint with vote_count.gte
 minVotesSelect.addEventListener('change', (e) => {
   currentFilters.minVotes = parseInt(e.target.value, 10);
-  handleFilterChange();
+  // minVotes filter requires API reload for server-side filtering
+  if (!isSearchMode && !isTop250Mode && !currentFilters.actorId) {
+    loadTrending();
+  } else {
+    handleFilterChange();
+  }
 });
 
 // Year filter change
