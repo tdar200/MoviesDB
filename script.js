@@ -61,8 +61,8 @@ const tabTrailer = document.getElementById('tab-trailer');
 // Video embed sources - Updated Jan 18, 2026
 // Only includes providers that passed testing (see provider-results.json)
 const EMBED_SOURCES = [
-  { name: 'VidSrc.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.cc/v2/embed/tv/${id}/${s}/${e}` : `https://vidsrc.cc/v2/embed/${type}/${id}` },
   { name: 'Videasy', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.videasy.net/tv/${id}/${s}/${e}` : `https://player.videasy.net/${type}/${id}` },
+  { name: 'VidSrc.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.cc/v2/embed/tv/${id}/${s}/${e}` : `https://vidsrc.cc/v2/embed/${type}/${id}` },
   { name: 'VidLink', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidlink.pro/tv/${id}/${s}/${e}` : `https://vidlink.pro/${type}/${id}` },
   { name: 'Nontongo', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.nontongo.win/embed/tv/${id}/${s}/${e}` : `https://www.nontongo.win/embed/${type}/${id}` },
   // The providers below failed testing but kept as fallbacks
@@ -82,7 +82,7 @@ let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
 // Providers that block iframe embedding - will open in new tab instead
-const IFRAME_BLOCKED_PROVIDERS = [];
+const IFRAME_BLOCKED_PROVIDERS = ['VidSrc.cc'];
 // Providers that are completely blocked/down - exclude from list
 const BLOCKED_PROVIDERS = [];
 
@@ -293,9 +293,14 @@ function populateSourceSelector() {
     sourceSelect.appendChild(option);
   });
 
-  // Set to first option (best provider) if results exist, otherwise keep current
-  if (testResults.size > 0 && sourcesWithResults[0].percentage !== undefined) {
-    currentSourceIndex = sourcesWithResults[0].index;
+  // Set default to highest-scoring provider that is iframe-loadable
+  if (testResults.size > 0) {
+    const firstUsable = sourcesWithResults.find(s =>
+      s.percentage !== undefined &&
+      !BLOCKED_PROVIDERS.includes(s.source.name) &&
+      !IFRAME_BLOCKED_PROVIDERS.includes(s.source.name)
+    );
+    if (firstUsable) currentSourceIndex = firstUsable.index;
   }
   sourceSelect.value = currentSourceIndex;
 }
@@ -560,7 +565,7 @@ function displayActorSuggestions(actors) {
 
   actorSuggestions.innerHTML = actors.map(actor => `
     <div class="actor-suggestion" data-id="${actor.id}" data-name="${actor.name}">
-      <img src="${actor.profile_path ? 'https://image.tmdb.org/t/p/w45' + actor.profile_path : 'https://via.placeholder.com/40x40?text=?'}" alt="${actor.name}">
+      <img src="${actor.profile_path ? 'https://image.tmdb.org/t/p/w45' + actor.profile_path : "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><rect width='40' height='40' fill='%23333'/><text x='50%25' y='55%25' fill='%23aaa' font-size='18' text-anchor='middle' font-family='sans-serif'>?</text></svg>"}" alt="${actor.name}">
       <div class="actor-suggestion-info">
         <span class="actor-suggestion-name">${actor.name}</span>
         <span class="actor-suggestion-known">${actor.known_for}</span>
@@ -859,6 +864,7 @@ function loadIframeSrc(url) {
       </html>
     `;
   } else {
+    playerIframe.removeAttribute('srcdoc');
     playerIframe.src = url;
   }
 }
@@ -928,10 +934,17 @@ function populateSeasonSelect(seasons) {
 // Populate episode dropdown
 function populateEpisodeSelect(episodes) {
   episodeSelect.innerHTML = '';
+  const todayIso = new Date().toISOString().slice(0, 10);
   episodes.forEach(ep => {
     const option = document.createElement('option');
     option.value = ep.episode_number;
-    option.textContent = `E${ep.episode_number}: ${ep.name || 'Episode ' + ep.episode_number}`;
+    const baseLabel = `E${ep.episode_number}: ${ep.name || 'Episode ' + ep.episode_number}`;
+    if (ep.air_date) option.dataset.airDate = ep.air_date;
+    if (ep.air_date && ep.air_date > todayIso) {
+      option.textContent = `${baseLabel} — airs ${ep.air_date}`;
+    } else {
+      option.textContent = baseLabel;
+    }
     episodeSelect.appendChild(option);
   });
 }
@@ -964,16 +977,29 @@ function playEpisode(season, episode) {
   seasonSelect.value = season;
   episodeSelect.value = episode;
 
-  const embedUrl = getEmbedUrl('tv', currentPlayingMovie.id, season, episode);
-  loadIframeSrc(embedUrl);
-
-  // Update title
   const showName = currentPlayingMovie.name || currentPlayingMovie.title || 'Unknown';
   playerTitle.textContent = `${showName} - S${season}E${episode}`;
 
-  // Save watch progress
-  saveWatchProgress(currentPlayingMovie.id, season, episode);
+  const epData = currentSeasonData?.episodes?.find(e => e.episode_number === episode);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (epData?.air_date && epData.air_date > todayIso) {
+    playerIframe.src = '';
+    playerIframe.srcdoc = `
+      <html>
+        <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e;color:#fff;font-family:sans-serif;text-align:center;padding:1rem;">
+          <div>
+            <p style="font-size:1.4rem;margin:0 0 .5rem;">Not yet aired</p>
+            <p style="color:#aaa;font-size:1rem;margin:0;">${epData.name || 'Episode ' + episode} airs on ${epData.air_date}</p>
+          </div>
+        </body>
+      </html>
+    `;
+  } else {
+    const embedUrl = getEmbedUrl('tv', currentPlayingMovie.id, season, episode);
+    loadIframeSrc(embedUrl);
+  }
 
+  saveWatchProgress(currentPlayingMovie.id, season, episode);
   updateNavButtons();
 }
 
@@ -1109,8 +1135,24 @@ async function openPlayer(movie) {
       }
 
       // Play the episode
-      const embedUrl = getEmbedUrl(type, movie.id, currentSeason, currentEpisode);
-      loadIframeSrc(embedUrl);
+      const epData = currentSeasonData?.episodes?.find(e => e.episode_number === currentEpisode);
+      const todayIso = new Date().toISOString().slice(0, 10);
+      if (epData?.air_date && epData.air_date > todayIso) {
+        playerIframe.src = '';
+        playerIframe.srcdoc = `
+          <html>
+            <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e;color:#fff;font-family:sans-serif;text-align:center;padding:1rem;">
+              <div>
+                <p style="font-size:1.4rem;margin:0 0 .5rem;">Not yet aired</p>
+                <p style="color:#aaa;font-size:1rem;margin:0;">${epData.name || 'Episode ' + currentEpisode} airs on ${epData.air_date}</p>
+              </div>
+            </body>
+          </html>
+        `;
+      } else {
+        const embedUrl = getEmbedUrl(type, movie.id, currentSeason, currentEpisode);
+        loadIframeSrc(embedUrl);
+      }
       playerTitle.textContent = `${title} - S${currentSeason}E${currentEpisode}`;
 
       updateNavButtons();
@@ -1605,7 +1647,7 @@ function createMovieCard(movie, index) {
   imageDiv.className = 'image';
 
   const img = document.createElement('img');
-  img.src = poster_path ? CONFIG.IMAGE_URL + poster_path : 'https://via.placeholder.com/300x450?text=No+Image';
+  img.src = poster_path ? CONFIG.IMAGE_URL + poster_path : "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='450'><rect width='300' height='450' fill='%23222'/><text x='50%25' y='50%25' fill='%23888' font-size='22' text-anchor='middle' font-family='sans-serif'>No Image</text></svg>";
   img.alt = `${displayTitle} poster`;
   img.loading = 'lazy';
   imageDiv.appendChild(img);
