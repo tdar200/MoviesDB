@@ -266,7 +266,10 @@
       <div class="modal-content">
         <button id="close-modal" class="close-btn" aria-label="Close player">&times;</button>
         <div class="player-header">
-          <h2 id="player-title">Now Playing</h2>
+          <div class="player-title-row">
+            <h2 id="player-title">Now Playing</h2>
+            <button id="player-star" type="button" class="star-btn player-star" aria-label="Add to favorites" title="Add to favorites"></button>
+          </div>
           <div class="player-controls">
             <select id="source-select" class="source-select" aria-label="Select video source">
               <!-- Populated by JavaScript -->

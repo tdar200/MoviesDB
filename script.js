@@ -51,6 +51,7 @@ const top250Btn = document.getElementById('top250-btn');
 // Player Modal Elements
 const playerModal = document.getElementById('player-modal');
 const playerIframe = document.getElementById('player-iframe');
+const playerStarBtn = document.getElementById('player-star');
 const trailerIframe = document.getElementById('trailer-iframe');
 const playerTitle = document.getElementById('player-title');
 const closeModalBtn = document.getElementById('close-modal');
@@ -1201,6 +1202,19 @@ async function openPlayer(movie) {
   // Store current movie for source switching
   currentPlayingMovie = movie;
 
+  // Sync the player-header star to this title.
+  if (playerStarBtn) {
+    const syncPlayerStar = () => {
+      const on = isStarred(movie.id);
+      playerStarBtn.classList.toggle('starred', on);
+      playerStarBtn.setAttribute('aria-pressed', String(on));
+      playerStarBtn.title = on ? 'Remove from favorites' : 'Add to favorites';
+      playerStarBtn.innerHTML = on ? STAR_FILLED_SVG : STAR_OUTLINE_SVG;
+    };
+    syncPlayerStar();
+    playerStarBtn.onclick = (e) => { e.stopPropagation(); toggleStar(movie); syncPlayerStar(); };
+  }
+
   // Reset TV state
   currentTvData = null;
   currentSeasonData = null;
@@ -1807,6 +1821,7 @@ function createRecommendationCard(rec, index) {
   }
   scrim.appendChild(sub);
   poster.appendChild(scrim);
+  poster.appendChild(createStarButton(movie));
   card.appendChild(poster);
 
   // The "why" — theme-led, with an optional dominant title.
@@ -1886,6 +1901,32 @@ async function renderRecommendationsRow() {
   // Insert above the main grid (remove again to close any async double-render race).
   document.getElementById('recommendations-row')?.remove();
   main.parentNode.insertBefore(section, main);
+}
+
+const STAR_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.3 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';
+const STAR_OUTLINE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3.2l2.6 5.7 6.2.6-4.7 4.1 1.4 6.1L12 16.6 6.5 19.8l1.4-6.1L3.2 9.5l6.2-.6z"/></svg>';
+
+// A star toggle bound to a movie. Stops click propagation so it never triggers play.
+function createStarButton(movie) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'star-btn';
+  const sync = () => {
+    const on = isStarred(movie.id);
+    btn.classList.toggle('starred', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
+    btn.title = on ? 'Remove from favorites' : 'Add to favorites';
+    btn.innerHTML = on ? STAR_FILLED_SVG : STAR_OUTLINE_SVG;
+  };
+  sync();
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleStar(movie);
+    sync();
+    if (isFavoritesMode) loadFavorites(); // un-starring removes it from the favorites grid
+  });
+  return btn;
 }
 
 // Create movie card element
@@ -2055,6 +2096,7 @@ function createMovieCard(movie, index) {
   overviewDiv.appendChild(overviewText);
 
   // Assemble card
+  imageDiv.appendChild(createStarButton(movie));
   card.appendChild(imageDiv);
   card.appendChild(infoDiv);
   card.appendChild(overviewDiv);
