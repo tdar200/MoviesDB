@@ -175,7 +175,9 @@ function readMetaCache() {
   }
 }
 
-function writeMetaCache(cache) {
+function writeMetaEntry(cacheKey, meta) {
+  const cache = readMetaCache();
+  cache[cacheKey] = meta;
   try {
     localStorage.setItem(META_CACHE_KEY, JSON.stringify(cache));
   } catch (e) {
@@ -212,8 +214,7 @@ async function fetchTitleMeta(type, id) {
     console.warn(`credits fetch failed for ${cacheKey}:`, e.message);
   }
 
-  cache[cacheKey] = meta;
-  writeMetaCache(cache);
+  writeMetaEntry(cacheKey, meta);
   return meta;
 }
 
