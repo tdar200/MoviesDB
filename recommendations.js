@@ -135,6 +135,26 @@ export function mergeCandidates(taggedCandidates) {
   return [...byId.values()];
 }
 
+// Count how many distinct watched/starred titles a candidate aligns with, via
+// its seed provenance (shared keyword/person) and shared genres.
+function contributingTitleCount(candidate, profile) {
+  const seedKw = new Set();
+  const seedPp = new Set();
+  for (const s of candidate._seeds || []) {
+    if (s.type === 'keyword') seedKw.add(s.id);
+    else if (s.type === 'person') seedPp.add(s.id);
+  }
+  const candGenres = new Set((candidate.genre_ids || []).map(Number));
+  const ids = new Set();
+  for (const t of profile.topTitles || []) {
+    const kwHit = (t.keywordIds || []).some((k) => seedKw.has(k));
+    const ppHit = (t.peopleIds || []).some((p) => seedPp.has(p));
+    const gnHit = (t.genreIds || []).some((g) => candGenres.has(Number(g)));
+    if (kwHit || ppHit || gnHit) ids.add(t.id);
+  }
+  return ids.size;
+}
+
 // Score a candidate: seed provenance + profile genre overlap + light popularity prior.
 export function scoreCandidate(candidate, profile) {
   let score = 0;
@@ -145,7 +165,8 @@ export function scoreCandidate(candidate, profile) {
   }
   const pop = candidate.popularity || 0;
   score += Math.log10(pop + 1) * 0.1;
-  return score;
+  const contributors = contributingTitleCount(candidate, profile);
+  return score * (1 + COVERAGE_WEIGHT * Math.log2(1 + contributors));
 }
 
 // Up to 2 human-readable reasons. Prefers "Because you watched <title>" when the

@@ -131,3 +131,29 @@ test('buildTasteProfile: legacy items (no _engagement/_starred) unchanged', () =
   const w = buildTasteProfile([item], NOW).genres['18'];
   assert.ok(Math.abs(w - 1.1) < 1e-9);
 });
+
+test('scoreCandidate rewards aligning with more distinct watched titles', () => {
+  const profile = {
+    genres: { '878': 1 },
+    keywords: {},
+    people: {},
+    mediaTypeBias: { movie: 5, tv: 0 },
+    topTitles: [
+      { id: 1, title: 'A', weight: 1, genreIds: [], keywordIds: [9], peopleIds: [] },
+      { id: 2, title: 'B', weight: 1, genreIds: [], keywordIds: [12], peopleIds: [] },
+      { id: 3, title: 'C', weight: 1, genreIds: [], keywordIds: [13], peopleIds: [] },
+    ],
+  };
+  // Identical base score (same genres, popularity, total seed weight = 3);
+  // they differ ONLY in collection breadth: broad spans 3 titles, narrow spans 1.
+  const broad = { id: 100, genre_ids: [878], popularity: 10, _seeds: [
+    { type: 'keyword', id: 9, name: 'a', weight: 1 },
+    { type: 'keyword', id: 12, name: 'b', weight: 1 },
+    { type: 'keyword', id: 13, name: 'c', weight: 1 },
+  ] };
+  const narrow = { id: 200, genre_ids: [878], popularity: 10, _seeds: [
+    { type: 'keyword', id: 9, name: 'a', weight: 3 },
+  ] };
+  assert.ok(scoreCandidate(broad, profile) > scoreCandidate(narrow, profile),
+    'breadth across the collection should break the tie at equal base score');
+});
