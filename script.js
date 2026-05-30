@@ -1,5 +1,6 @@
 import { CONFIG, ENDPOINTS, MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './config.js';
 import { initYouTube, activateYouTube } from './youtube.js';
+import { getRecommendations, clearRecommendationCache } from './recommendations.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -210,6 +211,7 @@ function addToWatchedHistory(movie) {
     });
     // Keep max 100 items
     localStorage.setItem(WATCHED_HISTORY_KEY, JSON.stringify(filtered.slice(0, 100)));
+    clearRecommendationCache();
   } catch (error) {
     console.error('Error saving to watched history:', error);
   }
@@ -1613,6 +1615,55 @@ async function searchMovies(query) {
   return data.results || [];
 }
 
+// Render the "Recommended for you" row at the top of the Movies home view.
+async function renderRecommendationsRow() {
+  // Remove any existing row first (avoids duplicates on re-render).
+  document.getElementById('recommendations-row')?.remove();
+
+  // Only show on the Movies home/browse view — not search, Top 250, or Watched.
+  if (isSearchMode || isTop250Mode || isWatchedMode) return;
+
+  const watched = getWatchedHistory();
+  if (!watched || watched.length === 0) return; // cold-start: show nothing
+
+  let recs = [];
+  try {
+    recs = await getRecommendations(watched, { limit: 20 });
+  } catch (e) {
+    console.warn('Recommendations failed:', e);
+    return;
+  }
+  if (recs.length === 0) return;
+
+  const section = document.createElement('section');
+  section.id = 'recommendations-row';
+  section.className = 'recommendations-row';
+
+  const heading = document.createElement('h2');
+  heading.className = 'recommendations-heading';
+  heading.textContent = 'Recommended for you';
+  section.appendChild(heading);
+
+  const scroller = document.createElement('div');
+  scroller.className = 'recommendations-scroller';
+
+  recs.forEach((rec, index) => {
+    const card = createMovieCard(rec.movie, index);
+    card.classList.add('recommendation-card');
+    if (rec.reasons.length) {
+      const badge = document.createElement('div');
+      badge.className = 'recommendation-reason';
+      badge.textContent = rec.reasons.join(' · ');
+      card.appendChild(badge);
+    }
+    scroller.appendChild(card);
+  });
+
+  section.appendChild(scroller);
+  // Insert above the main grid.
+  main.parentNode.insertBefore(section, main);
+}
+
 // Create movie card element
 function createMovieCard(movie, index) {
   const {
@@ -1936,6 +1987,9 @@ async function loadTrending() {
   } finally {
     setLoading(false);
   }
+
+  // Refresh the personalized row whenever the browse view (re)renders.
+  renderRecommendationsRow();
 }
 
 // Handle filter changes
@@ -2337,6 +2391,7 @@ function switchToMovies() {
 }
 
 function switchToYouTube() {
+  document.getElementById('recommendations-row')?.remove();
   currentApp = 'youtube';
   isWatchedMode = false;
   tabYouTube.classList.add('active');
@@ -2352,6 +2407,7 @@ function switchToYouTube() {
 }
 
 function switchToWatched() {
+  document.getElementById('recommendations-row')?.remove();
   currentApp = 'movies';
   isWatchedMode = true;
   isSearchMode = false;
