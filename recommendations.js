@@ -169,32 +169,46 @@ export function scoreCandidate(candidate, profile) {
   return score * (1 + COVERAGE_WEIGHT * Math.log2(1 + contributors));
 }
 
-// Up to 2 human-readable reasons. Prefers "Because you watched <title>" when the
-// candidate's strongest seed (person/keyword) is shared with a watched title.
+// Up to 2 reasons, collection-aware. Leads with a taste theme (top matched
+// genre and/or strongest matched person/keyword); appends "esp. <Title>" when a
+// single watched/starred title dominates the match.
 export function generateReasons(candidate, profile) {
-  const reasons = [];
+  // Matched genres, strongest first by profile weight.
+  const matchedGenres = (candidate.genre_ids || [])
+    .map(Number)
+    .filter((id) => profile.genres[String(id)])
+    .sort((a, b) => profile.genres[String(b)] - profile.genres[String(a)])
+    .map((id) => GENRE_NAMES.get(id))
+    .filter(Boolean);
+
+  // Strongest matched person/keyword seed.
   const seeds = [...(candidate._seeds || [])].sort((a, b) => b.weight - a.weight);
   const topSeed = seeds.find((s) => s.type === 'person' || s.type === 'keyword');
 
+  // Dominant contributing title: a watched/starred title sharing the top seed.
+  let dominantTitle = null;
   if (topSeed) {
-    const shared = profile.topTitles.find((t) =>
+    const shared = (profile.topTitles || []).find((t) =>
       topSeed.type === 'person'
-        ? t.peopleIds.includes(topSeed.id)
-        : t.keywordIds.includes(topSeed.id)
+        ? (t.peopleIds || []).includes(topSeed.id)
+        : (t.keywordIds || []).includes(topSeed.id)
     );
-    if (shared && shared.title) reasons.push(`Because you watched ${shared.title}`);
-    else if (topSeed.type === 'person') reasons.push(`Features ${topSeed.name}`);
-    else reasons.push(capitalize(topSeed.name));
+    if (shared && shared.title) dominantTitle = shared.title;
   }
 
-  if (reasons.length < 2) {
-    const matchedGenres = (candidate.genre_ids || [])
-      .filter((id) => profile.genres[String(id)])
-      .map((id) => GENRE_NAMES.get(id))
-      .filter(Boolean);
-    if (matchedGenres.length) reasons.push(matchedGenres.slice(0, 2).join(' · '));
-  }
+  // Build the theme.
+  const themeParts = [];
+  if (matchedGenres[0]) themeParts.push(matchedGenres[0]);
+  if (topSeed) themeParts.push(topSeed.type === 'person' ? topSeed.name : capitalize(topSeed.name));
+  else if (matchedGenres[1]) themeParts.push(matchedGenres[1]);
 
+  let theme;
+  if (themeParts.length >= 2) theme = `Matches your love of ${themeParts[0]} & ${themeParts[1]}`;
+  else if (themeParts.length === 1) theme = `From your most-watched genre: ${themeParts[0]}`;
+  else theme = 'Picked for your taste';
+
+  const reasons = [theme];
+  if (dominantTitle && theme !== 'Picked for your taste') reasons.push(`esp. ${dominantTitle}`);
   return reasons.slice(0, 2);
 }
 

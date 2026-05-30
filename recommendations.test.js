@@ -69,12 +69,24 @@ test('scoreCandidate rewards seed weight, genre overlap, popularity', () => {
   assert.ok(scoreCandidate(strong, PROFILE) > scoreCandidate(weak, PROFILE));
 });
 
-test('generateReasons links to a watched title and falls back to genre', () => {
+test('generateReasons leads with a taste theme and adds dominant title', () => {
   const cand = { id: 100, genre_ids: [878], popularity: 50,
     _seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 2 }] };
   const reasons = generateReasons(cand, PROFILE);
   assert.ok(reasons.length >= 1 && reasons.length <= 2);
-  assert.ok(reasons[0].includes('Inception'));
+  assert.match(reasons[0], /Sci-Fi|Nolan|most-watched/);
+  assert.ok(reasons.join(' ').includes('Inception'));
+});
+
+test('generateReasons falls back to genre-only theme without person/keyword', () => {
+  const cand = { id: 101, genre_ids: [878], popularity: 5, _seeds: [] };
+  const reasons = generateReasons(cand, PROFILE);
+  assert.match(reasons[0], /Sci-Fi/);
+});
+
+test('generateReasons falls back to generic when nothing matches', () => {
+  const cand = { id: 102, genre_ids: [99], popularity: 1, _seeds: [] };
+  assert.deepEqual(generateReasons(cand, PROFILE), ['Picked for your taste']);
 });
 
 test('rankCandidates drops already-watched and sorts by score', () => {
