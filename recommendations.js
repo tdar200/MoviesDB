@@ -158,7 +158,7 @@ export function rankCandidates(candidates, profile, watchedIds, limit = 20) {
 // ---------------------------------------------------------------------------
 // Network + cache layer (browser only)
 // ---------------------------------------------------------------------------
-import { CONFIG, ENDPOINTS } from './config.js';
+import { ENDPOINTS } from './config.js';
 
 const META_CACHE_KEY = 'recMetaCache';     // permanent per-title keywords/credits
 const RECS_CACHE_KEY = 'recResultsCache';  // session recommendations cache
