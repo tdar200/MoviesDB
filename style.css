@@ -1130,3 +1130,37 @@ main {
     order: -1;
   }
 }
+
+/* Recommendations row */
+.recommendations-row {
+  margin: 1rem auto;
+  max-width: 1400px;
+  padding: 0 1rem;
+}
+.recommendations-heading {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.recommendations-scroller {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  scroll-snap-type: x proximity;
+}
+.recommendations-scroller .recommendation-card {
+  flex: 0 0 300px;
+  scroll-snap-align: start;
+  position: relative;
+}
+.recommendation-reason {
+  margin-top: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  display: inline-block;
+}
