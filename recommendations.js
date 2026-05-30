@@ -154,3 +154,160 @@ export function rankCandidates(candidates, profile, watchedIds, limit = 20) {
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 }
+
+// ---------------------------------------------------------------------------
+// Network + cache layer (browser only)
+// ---------------------------------------------------------------------------
+import { CONFIG, ENDPOINTS } from './config.js';
+
+const META_CACHE_KEY = 'recMetaCache';     // permanent per-title keywords/credits
+const RECS_CACHE_KEY = 'recResultsCache';  // session recommendations cache
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readMetaCache() {
+  try {
+    return JSON.parse(localStorage.getItem(META_CACHE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function writeMetaCache(cache) {
+  try {
+    localStorage.setItem(META_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {
+    console.error('recMetaCache write failed:', e);
+  }
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`TMDB ${res.status} for ${url}`);
+  return res.json();
+}
+
+// Fetch keywords + top cast/director for one title, caching permanently.
+async function fetchTitleMeta(type, id) {
+  const cache = readMetaCache();
+  const cacheKey = `${type}:${id}`;
+  if (cache[cacheKey]) return cache[cacheKey];
+
+  const meta = { keywords: [], people: [] };
+  try {
+    const kw = await fetchJson(ENDPOINTS.keywords(type, id));
+    const list = kw.keywords || kw.results || []; // movie vs tv shape
+    meta.keywords = list.slice(0, 12).map((k) => ({ id: k.id, name: k.name }));
+  } catch (e) {
+    console.warn(`keywords fetch failed for ${cacheKey}:`, e.message);
+  }
+  try {
+    const credits = await fetchJson(ENDPOINTS.credits(type, id));
+    const cast = (credits.cast || []).slice(0, 5).map((c) => ({ id: c.id, name: c.name }));
+    const director = (credits.crew || []).find((c) => c.job === 'Director');
+    meta.people = director ? [...cast, { id: director.id, name: director.name }] : cast;
+  } catch (e) {
+    console.warn(`credits fetch failed for ${cacheKey}:`, e.message);
+  }
+
+  cache[cacheKey] = meta;
+  writeMetaCache(cache);
+  return meta;
+}
+
+// Attach _keywords/_people to each watched item. Batched to respect rate limits.
+async function enrichWatchedTitles(watched) {
+  const BATCH = 8;
+  const enriched = [];
+  for (let i = 0; i < watched.length; i += BATCH) {
+    const slice = watched.slice(i, i + BATCH);
+    const metas = await Promise.all(
+      slice.map((m) => fetchTitleMeta(m.media_type === 'tv' ? 'tv' : 'movie', m.id))
+    );
+    slice.forEach((m, j) => {
+      enriched.push({ ...m, _keywords: metas[j].keywords, _people: metas[j].people });
+    });
+    if (i + BATCH < watched.length) await delay(300);
+  }
+  return enriched;
+}
+
+// Pull Discover candidates seeded by the profile's top keywords/people/genres.
+async function generateCandidates(profile) {
+  const preferTv = profile.mediaTypeBias.tv > profile.mediaTypeBias.movie;
+  const types = preferTv ? ['tv', 'movie'] : ['movie', 'tv'];
+  const primaryType = types[0];
+
+  const topKeywords = Object.entries(profile.keywords)
+    .sort((a, b) => b[1].weight - a[1].weight).slice(0, 6);
+  const topPeople = Object.entries(profile.people)
+    .sort((a, b) => b[1].weight - a[1].weight).slice(0, 6);
+  const topGenres = Object.entries(profile.genres)
+    .sort((a, b) => b[1] - a[1]).slice(0, 4).map(([id]) => id);
+
+  const requests = [];
+  for (const [id, { name, weight }] of topKeywords) {
+    requests.push({ url: ENDPOINTS.discoverByKeyword(primaryType, id), seed: { type: 'keyword', id: Number(id), name, weight } });
+  }
+  for (const [id, { name, weight }] of topPeople) {
+    requests.push({ url: ENDPOINTS.discoverByCast(primaryType, id), seed: { type: 'person', id: Number(id), name, weight } });
+  }
+  if (topGenres.length) {
+    const csv = topGenres.join('|'); // OR
+    requests.push({ url: ENDPOINTS.discoverByGenres(primaryType, csv), seed: { type: 'genre', id: Number(topGenres[0]), name: GENRE_NAMES.get(Number(topGenres[0])) || 'genre', weight: profile.genres[topGenres[0]] } });
+  }
+
+  const tagged = [];
+  const BATCH = 6;
+  for (let i = 0; i < requests.length; i += BATCH) {
+    const slice = requests.slice(i, i + BATCH);
+    const results = await Promise.all(
+      slice.map((r) => fetchJson(r.url).then((d) => ({ d, seed: r.seed })).catch(() => null))
+    );
+    for (const r of results) {
+      if (!r) continue;
+      for (const movie of (r.d.results || []).slice(0, 10)) {
+        tagged.push({ ...movie, media_type: primaryType, _seeds: [r.seed] });
+      }
+    }
+    if (i + BATCH < requests.length) await delay(300);
+  }
+  return mergeCandidates(tagged);
+}
+
+// Stable signature of the watched set so we can cache results per session.
+function watchedSignature(watched) {
+  return watched.map((m) => `${m.id}:${m.watchedAt || 0}`).join(',');
+}
+
+// Top-level orchestrator. Returns [{ movie, score, reasons }]. `now` injectable for tests.
+export async function getRecommendations(watched, opts = {}) {
+  const { limit = 20, now = Date.now() } = opts;
+  if (!watched || watched.length === 0) return [];
+
+  const sig = watchedSignature(watched);
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(RECS_CACHE_KEY) || 'null');
+    if (cached && cached.sig === sig) return cached.recs;
+  } catch { /* ignore cache read errors */ }
+
+  const enriched = await enrichWatchedTitles(watched);
+  const profile = buildTasteProfile(enriched, now);
+  const candidates = await generateCandidates(profile);
+  const watchedIds = new Set(watched.map((m) => m.id));
+  const recs = rankCandidates(candidates, profile, watchedIds, limit);
+
+  try {
+    sessionStorage.setItem(RECS_CACHE_KEY, JSON.stringify({ sig, recs }));
+  } catch { /* ignore quota errors */ }
+  return recs;
+}
+
+// Clear the session results cache (call after a new title is watched).
+export function clearRecommendationCache() {
+  try {
+    sessionStorage.removeItem(RECS_CACHE_KEY);
+  } catch { /* ignore */ }
+}
