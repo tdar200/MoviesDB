@@ -14,6 +14,33 @@ const GENRE_NAMES = new Map();
 
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30-day half-life
 
+// --- Engagement & star tuning ---
+const ENGAGEMENT_MIN = 0.4;
+const ENGAGEMENT_MAX = 2.5;
+const QUICK_BAIL_MS = 120000;       // < 2 min dwell = sampled-and-dropped
+const FULL_ENGAGE_MS = 5400000;     // ~90 min dwell = fully engaged
+const EPISODE_SATURATION = 20;      // episodes reached for max episode signal
+const STAR_BONUS = 2.5;             // multiplier for starred items
+const COVERAGE_WEIGHT = 0.5;        // strength of collection-breadth bonus
+
+// Map a title's measured engagement to a weight multiplier in [0.4 .. 2.5].
+// Callers pass a real engagement record; absence of a record is handled by the
+// profile builder (neutral 1.0), not here.
+export function engagementBoost(dwellMs, episodes) {
+  const d = dwellMs || 0;
+  const ep = episodes || 0;
+  // Below the bail threshold with no episodes watched: downweight toward MIN.
+  if (d < QUICK_BAIL_MS && ep === 0) {
+    return ENGAGEMENT_MIN + (1 - ENGAGEMENT_MIN) * (d / QUICK_BAIL_MS);
+  }
+  // Otherwise interpolate 1.0 -> MAX by the stronger of dwell / episode signal.
+  const engage = Math.max(
+    Math.min(d / FULL_ENGAGE_MS, 1),
+    Math.min(ep / EPISODE_SATURATION, 1)
+  );
+  return 1 + (ENGAGEMENT_MAX - 1) * engage;
+}
+
 // Newer watched items count more. Returns 1.0 at now, ~0.5 after 30 days.
 export function recencyWeight(watchedAt, now) {
   if (!watchedAt) return 0.5;

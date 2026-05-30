@@ -88,3 +88,24 @@ test('rankCandidates drops already-watched and sorts by score', () => {
   assert.equal(recs[0].movie.id, 100);
   assert.ok(recs[0].score >= recs[1].score);
 });
+
+import { engagementBoost } from './recommendations.js';
+
+test('engagementBoost: quick bail trends to minimum', () => {
+  assert.equal(engagementBoost(0, 0), 0.4);            // opened, closed instantly
+  assert.ok(engagementBoost(60000, 0) > 0.4 && engagementBoost(60000, 0) < 1.0); // 1 min
+});
+
+test('engagementBoost: long dwell trends to max', () => {
+  assert.equal(engagementBoost(5400000, 0), 2.5);      // 90 min
+  assert.ok(engagementBoost(2700000, 0) > 1.5 && engagementBoost(2700000, 0) < 2.5); // 45 min
+});
+
+test('engagementBoost: episode depth is a strong signal', () => {
+  assert.equal(engagementBoost(0, 20), 2.5);           // 20 episodes saturates
+  assert.ok(engagementBoost(0, 5) > 1.0);              // some episodes => above neutral
+});
+
+test('engagementBoost: monotonic non-decreasing in dwell past the bail point', () => {
+  assert.ok(engagementBoost(3000000, 0) >= engagementBoost(2000000, 0));
+});
