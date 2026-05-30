@@ -117,6 +117,29 @@ export function buildTasteProfile(enrichedWatched, now) {
   };
 }
 
+// Union watched history with starred titles and annotate each item with its
+// engagement record and star flag. Pure: caller supplies the three raw stores.
+export function mergeSignalItems(watched, starredMap, engagementMap) {
+  const starred = starredMap || {};
+  const engagement = engagementMap || {};
+  const byId = new Map();
+  for (const m of watched || []) byId.set(m.id, { ...m });
+  for (const key of Object.keys(starred)) {
+    const s = starred[key];
+    byId.set(s.id, byId.has(s.id) ? { ...byId.get(s.id), ...s } : { ...s });
+  }
+  const items = [];
+  for (const m of byId.values()) {
+    const e = engagement[m.id];
+    items.push({
+      ...m,
+      _starred: Object.prototype.hasOwnProperty.call(starred, m.id),
+      _engagement: e ? { dwellMs: e.dwellMs || 0, episodes: e.episodes || 0, opens: e.opens || 0 } : null,
+    });
+  }
+  return items;
+}
+
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
@@ -345,27 +368,30 @@ async function generateCandidates(profile) {
   return mergeCandidates(tagged);
 }
 
-// Stable signature of the watched set so we can cache results per session.
-function watchedSignature(watched) {
-  return watched.map((m) => `${m.id}:${m.watchedAt || 0}`).join(',');
+// Stable signature of the signal set so we can cache results per session.
+// Includes star + engagement so toggling a star or finishing a long watch busts it.
+function signalSignature(items) {
+  return items
+    .map((m) => `${m.id}:${m.watchedAt || 0}:${m._starred ? 1 : 0}:${m._engagement?.dwellMs || 0}:${m._engagement?.episodes || 0}`)
+    .join(',');
 }
 
 // Top-level orchestrator. Returns [{ movie, score, reasons }]. `now` injectable for tests.
-export async function getRecommendations(watched, opts = {}) {
+export async function getRecommendations(items, opts = {}) {
   const { limit = 20, now = Date.now() } = opts;
-  if (!watched || watched.length === 0) return [];
+  if (!items || items.length === 0) return [];
 
-  const sig = watchedSignature(watched);
+  const sig = signalSignature(items);
   try {
     const cached = JSON.parse(sessionStorage.getItem(RECS_CACHE_KEY) || 'null');
     if (cached && cached.sig === sig) return cached.recs;
   } catch { /* ignore cache read errors */ }
 
-  const enriched = await enrichWatchedTitles(watched);
+  const enriched = await enrichWatchedTitles(items);
   const profile = buildTasteProfile(enriched, now);
   const candidates = await generateCandidates(profile);
-  const watchedIds = new Set(watched.map((m) => m.id));
-  const recs = rankCandidates(candidates, profile, watchedIds, limit);
+  const excludeIds = new Set(items.map((m) => m.id));
+  const recs = rankCandidates(candidates, profile, excludeIds, limit);
 
   try {
     sessionStorage.setItem(RECS_CACHE_KEY, JSON.stringify({ sig, recs }));

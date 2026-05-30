@@ -169,3 +169,25 @@ test('scoreCandidate rewards aligning with more distinct watched titles', () => 
   assert.ok(scoreCandidate(broad, profile) > scoreCandidate(narrow, profile),
     'breadth across the collection should break the tie at equal base score');
 });
+
+import { mergeSignalItems } from './recommendations.js';
+
+test('mergeSignalItems unions watched + starred and annotates each', () => {
+  const watched = [
+    { id: 1, media_type: 'movie', title: 'A', genre_ids: [878], vote_average: 8, watchedAt: 111 },
+    { id: 2, media_type: 'tv', name: 'B', genre_ids: [18], vote_average: 7, watchedAt: 222 },
+  ];
+  const starred = {
+    2: { id: 2, media_type: 'tv', name: 'B', genre_ids: [18], vote_average: 7, starredAt: 9 },
+    3: { id: 3, media_type: 'movie', title: 'C', genre_ids: [28], vote_average: 6, starredAt: 9 },
+  };
+  const engagement = { 1: { dwellMs: 5000, episodes: 0, opens: 1 } };
+  const items = mergeSignalItems(watched, starred, engagement);
+  const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+  assert.equal(items.length, 3);
+  assert.equal(byId[1]._starred, false);
+  assert.deepEqual(byId[1]._engagement, { dwellMs: 5000, episodes: 0, opens: 1 });
+  assert.equal(byId[2]._starred, true);
+  assert.equal(byId[3]._starred, true);
+  assert.equal(byId[3]._engagement, null);
+});
