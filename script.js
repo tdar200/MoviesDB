@@ -1,6 +1,6 @@
 import { CONFIG, ENDPOINTS, MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './config.js';
 import { initYouTube, activateYouTube } from './youtube.js';
-import { getRecommendations, clearRecommendationCache } from './recommendations.js';
+import { getRecommendations, clearRecommendationCache, mergeSignalItems } from './recommendations.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -230,6 +230,97 @@ function getWatchedHistory() {
 // Clear watched history
 function clearWatchedHistory() {
   localStorage.removeItem(WATCHED_HISTORY_KEY);
+}
+
+// ---- Engagement + star signal stores ----
+const TITLE_ENGAGEMENT_KEY = 'titleEngagement';
+const STARRED_TITLES_KEY = 'starredTitles';
+const SESSION_DWELL_CAP_MS = 10800000; // 3h per session
+const TOTAL_DWELL_CAP_MS = 86400000;   // 24h lifetime per title
+
+function getEngagementStore() {
+  try { return JSON.parse(localStorage.getItem(TITLE_ENGAGEMENT_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveEngagementStore(store) {
+  try { localStorage.setItem(TITLE_ENGAGEMENT_KEY, JSON.stringify(store)); }
+  catch (e) { console.error('engagement save failed:', e); }
+}
+function recordOpen(id) {
+  const s = getEngagementStore();
+  const e = s[id] || { dwellMs: 0, episodes: 0, opens: 0, _eps: [] };
+  e.opens = (e.opens || 0) + 1;
+  e.lastAt = Date.now();
+  s[id] = e;
+  saveEngagementStore(s);
+}
+function recordDwell(id, ms) {
+  if (!id || !ms || ms <= 0) return;
+  const capped = Math.min(ms, SESSION_DWELL_CAP_MS);
+  const s = getEngagementStore();
+  const e = s[id] || { dwellMs: 0, episodes: 0, opens: 0, _eps: [] };
+  e.dwellMs = Math.min((e.dwellMs || 0) + capped, TOTAL_DWELL_CAP_MS);
+  e.lastAt = Date.now();
+  s[id] = e;
+  saveEngagementStore(s);
+}
+function recordEpisode(id, season, episode) {
+  const s = getEngagementStore();
+  const e = s[id] || { dwellMs: 0, episodes: 0, opens: 0, _eps: [] };
+  const key = `${season}:${episode}`;
+  e._eps = e._eps || [];
+  if (!e._eps.includes(key)) e._eps.push(key);
+  e.episodes = e._eps.length;
+  e.lastAt = Date.now();
+  s[id] = e;
+  saveEngagementStore(s);
+}
+
+function getStarredStore() {
+  try { return JSON.parse(localStorage.getItem(STARRED_TITLES_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveStarredStore(store) {
+  try { localStorage.setItem(STARRED_TITLES_KEY, JSON.stringify(store)); }
+  catch (e) { console.error('starred save failed:', e); }
+}
+function isStarred(id) {
+  return Object.prototype.hasOwnProperty.call(getStarredStore(), id);
+}
+// Toggle star for a movie; returns the new starred state.
+function toggleStar(movie) {
+  const store = getStarredStore();
+  if (Object.prototype.hasOwnProperty.call(store, movie.id)) {
+    delete store[movie.id];
+    saveStarredStore(store);
+    clearRecommendationCache();
+    return false;
+  }
+  store[movie.id] = {
+    id: movie.id,
+    media_type: movie.media_type || (movie.title ? 'movie' : 'tv'),
+    genre_ids: movie.genre_ids || [],
+    vote_average: movie.vote_average,
+    title: movie.title,
+    name: movie.name,
+    poster_path: movie.poster_path,
+    release_date: movie.release_date,
+    first_air_date: movie.first_air_date,
+    overview: movie.overview,
+    starredAt: Date.now(),
+  };
+  saveStarredStore(store);
+  clearRecommendationCache();
+  return true;
+}
+function getStarredList() {
+  const store = getStarredStore();
+  return Object.values(store).sort((a, b) => (b.starredAt || 0) - (a.starredAt || 0));
+}
+
+// Assemble the unified, annotated input the engine consumes.
+function buildSignalItems() {
+  return mergeSignalItems(getWatchedHistory(), getStarredStore(), getEngagementStore());
 }
 
 // Populate source selector with test results percentages
@@ -1689,20 +1780,19 @@ function createRecommendationCard(rec, index) {
   poster.appendChild(scrim);
   card.appendChild(poster);
 
-  // The "why" — the hero of a recommendation. Emphasize the matched title in gold.
+  // The "why" — theme-led, with an optional dominant title.
   const because = document.createElement('p');
   because.className = 'rec-because';
-  const primary = rec.reasons[0] || '';
-  const watchedMatch = primary.match(/^Because you watched (.+)$/);
-  if (watchedMatch) {
-    because.innerHTML =
-      '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>' +
-      'Because you watched <b></b>';
-    because.querySelector('b').textContent = watchedMatch[1];
-  } else {
-    because.innerHTML =
-      '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>';
-    because.appendChild(document.createTextNode(primary || 'Picked for your taste'));
+  because.innerHTML =
+    '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>';
+  const theme = rec.reasons[0] || 'Picked for your taste';
+  because.appendChild(document.createTextNode(theme));
+  const espMatch = (rec.reasons[1] || '').match(/^esp\. (.+)$/);
+  if (espMatch) {
+    because.appendChild(document.createTextNode(' · esp. '));
+    const b = document.createElement('b');
+    b.textContent = espMatch[1];
+    because.appendChild(b);
   }
   card.appendChild(because);
 
@@ -1722,12 +1812,12 @@ async function renderRecommendationsRow() {
   // Only show on the Movies home/browse view — not search, Top 250, or Watched.
   if (isSearchMode || isTop250Mode || isWatchedMode) return;
 
-  const watched = getWatchedHistory();
-  if (!watched || watched.length === 0) return; // cold-start: show nothing
+  const items = buildSignalItems();
+  if (items.length === 0) return; // cold-start: show nothing
 
   let recs = [];
   try {
-    recs = await getRecommendations(watched, { limit: 20 });
+    recs = await getRecommendations(items, { limit: 20 });
   } catch (e) {
     console.warn('Recommendations failed:', e);
     return;
