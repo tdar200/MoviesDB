@@ -66,7 +66,14 @@ export const ENDPOINTS = {
 // Discover movies with provider, keyword, exclude genres, language, and vote count filter
   discoverMovies: (page, providerId, keywordId, excludeGenres, language, minVotes) => `${CONFIG.BASE_URL}/discover/movie?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=popularity.desc&watch_region=US${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}${minVotes ? `&vote_count.gte=${minVotes}` : ''}`,
   // Discover TV with provider, keyword, exclude genres, language, and vote count filter
-  discoverTv: (page, providerId, keywordId, excludeGenres, language, minVotes) => `${CONFIG.BASE_URL}/discover/tv?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=popularity.desc&watch_region=US${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}${minVotes ? `&vote_count.gte=${minVotes}` : ''}`
+  discoverTv: (page, providerId, keywordId, excludeGenres, language, minVotes) => `${CONFIG.BASE_URL}/discover/tv?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=popularity.desc&watch_region=US${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}${minVotes ? `&vote_count.gte=${minVotes}` : ''}`,
+  // Keywords for a title. NOTE: /movie/{id}/keywords returns { keywords: [...] };
+  // /tv/{id}/keywords returns { results: [...] }. Caller normalizes both.
+  keywords: (type, id) => `${CONFIG.BASE_URL}/${type}/${id}/keywords?api_key=${CONFIG.API_KEY}`,
+  // Recommendation candidate generation via Discover (type = 'movie' | 'tv').
+  discoverByGenres: (type, genreIdsCsv, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=50&with_genres=${genreIdsCsv}`,
+  discoverByKeyword: (type, keywordId, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=50&with_keywords=${keywordId}`,
+  discoverByCast: (type, personId, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=20&with_cast=${personId}`
 };
 
 // Media types
