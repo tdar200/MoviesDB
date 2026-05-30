@@ -1131,36 +1131,270 @@ main {
   }
 }
 
-/* Recommendations row */
+/* ============================================================
+   Recommendations rail — "Curated for you"
+   A cinematic, poster-forward carousel set apart from the cold
+   browse grid by a warm gold accent and an editorial serif head.
+   ============================================================ */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap");
+
 .recommendations-row {
-  margin: 1rem auto;
-  max-width: 1400px;
-  padding: 0 1rem;
+  --rec-gold: #e9b955;
+  --rec-gold-soft: #f3d089;
+  --rec-ink: #0f1130;
+  position: relative;
+  max-width: 1500px;
+  margin: 1.25rem auto 0.5rem;
+  padding: 1.4rem 1.5rem 1.5rem;
+  border-radius: 18px;
+  /* Warm-tinted panel that lifts the rail off the navy page. */
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(233, 185, 85, 0.10), transparent 45%),
+    radial-gradient(120% 160% at 100% 0%, rgba(123, 97, 255, 0.10), transparent 50%),
+    linear-gradient(180deg, #262a55 0%, #1d2046 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 24px 50px -28px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
 }
-.recommendations-heading {
-  margin: 0 0 0.75rem;
-  font-size: 1.25rem;
+/* Thin gold hairline along the top edge. */
+.recommendations-row::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--rec-gold), transparent);
+  opacity: 0.7;
+}
+
+/* ---- Editorial header ---- */
+.rec-header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  column-gap: 0.9rem;
+  row-gap: 0.1rem;
+  margin-bottom: 1.15rem;
+}
+.rec-kicker {
+  grid-column: 1 / -1;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--rec-gold);
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.rec-kicker::after {
+  content: "";
+  height: 1px;
+  flex: 0 0 38px;
+  background: linear-gradient(90deg, var(--rec-gold), transparent);
+}
+.rec-heading {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 2rem;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+.rec-subline {
+  font-size: 0.78rem;
+  color: #b9bce0;
+  white-space: nowrap;
+  align-self: center;
+  justify-self: start;
+}
+
+/* ---- Edge-faded scroll rail ---- */
+.rec-rail {
+  position: relative;
+  margin: 0 -0.4rem;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 2.5%, #000 97.5%, transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 2.5%, #000 97.5%, transparent);
+}
+.rec-scroller {
+  display: flex;
+  gap: 1.1rem;
+  padding: 0.4rem 0.4rem 0.9rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rec-gold) transparent;
+}
+.rec-scroller::-webkit-scrollbar { height: 6px; }
+.rec-scroller::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.06); border-radius: 99px; }
+.rec-scroller::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, var(--rec-gold), var(--rec-gold-soft));
+  border-radius: 99px;
+}
+
+/* ---- Card ---- */
+.rec-card {
+  flex: 0 0 182px;
+  width: 182px;
+  scroll-snap-align: start;
+  cursor: pointer;
+  outline: none;
+  /* Staggered entrance on first paint. */
+  opacity: 0;
+  transform: translateY(14px);
+  animation: recIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(var(--i) * 55ms);
+}
+@keyframes recIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-card { animation: none; opacity: 1; transform: none; }
+}
+
+.rec-poster {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 13px;
+  overflow: hidden;
+  background: var(--rec-ink);
+  box-shadow: 0 12px 26px -14px rgba(0, 0, 0, 0.85);
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.32s ease;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.rec-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), filter 0.32s ease;
+}
+
+/* Rank numeral, ghosted top-left. */
+.rec-rank {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.6rem;
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+  letter-spacing: -0.02em;
+  z-index: 2;
+}
+/* Type tag, top-right. */
+.rec-type {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 2;
+  font-size: 0.56rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rec-ink);
+  background: var(--rec-gold-soft);
+  padding: 0.18rem 0.4rem;
+  border-radius: 5px;
+}
+
+/* Bottom scrim with title + rating/year. */
+.rec-scrim {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 1.8rem 0.7rem 0.65rem;
+  background: linear-gradient(transparent, rgba(8, 9, 26, 0.55) 40%, rgba(8, 9, 26, 0.94));
+  z-index: 1;
+}
+.rec-title {
+  margin: 0 0 0.18rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #fff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rec-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.72rem;
+  color: #cdd0f0;
+}
+.rec-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  font-weight: 600;
+  color: var(--rec-gold-soft);
+}
+.rec-year { color: #9fa3cf; }
+
+/* Center play affordance, hidden until hover. */
+.rec-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  color: var(--rec-ink);
+  background: var(--rec-gold);
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0.6);
+  opacity: 0;
+  box-shadow: 0 8px 22px -6px rgba(233, 185, 85, 0.7);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+}
+.rec-play svg { margin-left: 2px; }
+
+/* Hover / focus state. */
+.rec-card:hover .rec-poster,
+.rec-card:focus-visible .rec-poster {
+  transform: translateY(-6px);
+  box-shadow: 0 22px 40px -16px rgba(0, 0, 0, 0.9), 0 0 0 2px var(--rec-gold);
+}
+.rec-card:hover .rec-art,
+.rec-card:focus-visible .rec-art {
+  transform: scale(1.07);
+  filter: brightness(0.82);
+}
+.rec-card:hover .rec-play,
+.rec-card:focus-visible .rec-play {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* ---- The "why" caption — the hero of a recommendation ---- */
+.rec-because {
+  margin: 0.6rem 0.15rem 0;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: #aeb2dc;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.rec-spark {
+  flex: 0 0 auto;
+  color: var(--rec-gold);
+  transform: translateY(1px);
+}
+.rec-because b {
+  color: var(--rec-gold-soft);
   font-weight: 600;
 }
-.recommendations-scroller {
-  display: flex;
-  gap: 1rem;
-  overflow-x: auto;
-  padding-bottom: 0.5rem;
-  scroll-snap-type: x proximity;
-}
-.recommendations-scroller .recommendation-card {
-  flex: 0 0 300px;
-  scroll-snap-align: start;
-  position: relative;
-}
-.recommendation-reason {
-  margin-top: 0.4rem;
-  padding: 0.2rem 0.5rem;
-  font-size: 0.72rem;
-  line-height: 1.2;
-  color: #cbd5e1;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
-  display: inline-block;
+
+@media (max-width: 640px) {
+  .recommendations-row { padding: 1.1rem 1rem 1.2rem; border-radius: 14px; }
+  .rec-heading { font-size: 1.6rem; }
+  .rec-subline { display: none; }
+  .rec-card { flex-basis: 150px; width: 150px; }
 }

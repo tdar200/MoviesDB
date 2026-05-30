@@ -1617,7 +1617,104 @@ async function searchMovies(query) {
   return data.results || [];
 }
 
-// Render the "Recommended for you" row at the top of the Movies home view.
+// Build a single purpose-built recommendation card (poster-forward, reason-first).
+// Deliberately NOT createMovieCard — Discover candidates lack RT/votes/director,
+// so the heavy browse card renders empty fields. This is a lean, curated card.
+function createRecommendationCard(rec, index) {
+  const movie = rec.movie;
+  const displayTitle = movie.title || movie.name || 'Unknown';
+  const year = movie.release_date?.split('-')[0] || movie.first_air_date?.split('-')[0] || '';
+  const isTv = movie.media_type === 'tv';
+  const kind = isTv ? 'Series' : 'Film';
+  const rating = typeof movie.vote_average === 'number' && movie.vote_average > 0
+    ? movie.vote_average.toFixed(1) : null;
+
+  const card = document.createElement('article');
+  card.className = 'rec-card';
+  card.style.setProperty('--i', index);
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-label', `${displayTitle}${year ? `, ${year}` : ''}, ${kind}. ${rec.reasons[0] || ''}`);
+
+  // Poster with overlaid scrim, rank, type tag, play affordance.
+  const poster = document.createElement('div');
+  poster.className = 'rec-poster';
+
+  const img = document.createElement('img');
+  img.className = 'rec-art';
+  img.loading = 'lazy';
+  img.alt = `${displayTitle} poster`;
+  img.src = movie.poster_path
+    ? CONFIG.IMAGE_URL + movie.poster_path
+    : "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='450'><rect width='300' height='450' fill='%231b1d3e'/><text x='50%25' y='50%25' fill='%236b6f9c' font-size='20' text-anchor='middle' font-family='sans-serif'>No Art</text></svg>";
+  poster.appendChild(img);
+
+  const rank = document.createElement('span');
+  rank.className = 'rec-rank';
+  rank.textContent = String(index + 1).padStart(2, '0');
+  poster.appendChild(rank);
+
+  const typeTag = document.createElement('span');
+  typeTag.className = 'rec-type';
+  typeTag.textContent = kind;
+  poster.appendChild(typeTag);
+
+  const play = document.createElement('span');
+  play.className = 'rec-play';
+  play.setAttribute('aria-hidden', 'true');
+  play.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  poster.appendChild(play);
+
+  const scrim = document.createElement('div');
+  scrim.className = 'rec-scrim';
+  const titleEl = document.createElement('h3');
+  titleEl.className = 'rec-title';
+  titleEl.textContent = displayTitle;
+  scrim.appendChild(titleEl);
+  const sub = document.createElement('div');
+  sub.className = 'rec-sub';
+  if (rating) {
+    const star = document.createElement('span');
+    star.className = 'rec-rating';
+    star.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.3 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>${rating}`;
+    sub.appendChild(star);
+  }
+  if (year) {
+    const yr = document.createElement('span');
+    yr.className = 'rec-year';
+    yr.textContent = year;
+    sub.appendChild(yr);
+  }
+  scrim.appendChild(sub);
+  poster.appendChild(scrim);
+  card.appendChild(poster);
+
+  // The "why" — the hero of a recommendation. Emphasize the matched title in gold.
+  const because = document.createElement('p');
+  because.className = 'rec-because';
+  const primary = rec.reasons[0] || '';
+  const watchedMatch = primary.match(/^Because you watched (.+)$/);
+  if (watchedMatch) {
+    because.innerHTML =
+      '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>' +
+      'Because you watched <b></b>';
+    because.querySelector('b').textContent = watchedMatch[1];
+  } else {
+    because.innerHTML =
+      '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>';
+    because.appendChild(document.createTextNode(primary || 'Picked for your taste'));
+  }
+  card.appendChild(because);
+
+  const handleClick = () => openPlayer(movie);
+  card.addEventListener('click', handleClick);
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); }
+  });
+  return card;
+}
+
+// Render the "Recommended for you" rail at the top of the Movies home view.
 async function renderRecommendationsRow() {
   // Remove any existing row first (avoids duplicates on re-render).
   document.getElementById('recommendations-row')?.remove();
@@ -1641,27 +1738,32 @@ async function renderRecommendationsRow() {
   section.id = 'recommendations-row';
   section.className = 'recommendations-row';
 
+  // Editorial header: kicker + serif title + taste subline.
+  const header = document.createElement('div');
+  header.className = 'rec-header';
+  const kicker = document.createElement('span');
+  kicker.className = 'rec-kicker';
+  kicker.textContent = 'Curated for you';
   const heading = document.createElement('h2');
-  heading.className = 'recommendations-heading';
-  heading.textContent = 'Recommended for you';
-  section.appendChild(heading);
+  heading.className = 'rec-heading';
+  heading.textContent = 'Recommended';
+  const subline = document.createElement('span');
+  subline.className = 'rec-subline';
+  subline.textContent = `Tuned to your taste · ${recs.length} picks`;
+  header.appendChild(kicker);
+  header.appendChild(heading);
+  header.appendChild(subline);
+  section.appendChild(header);
 
+  // Edge-faded scroll rail.
+  const rail = document.createElement('div');
+  rail.className = 'rec-rail';
   const scroller = document.createElement('div');
-  scroller.className = 'recommendations-scroller';
+  scroller.className = 'rec-scroller';
+  recs.forEach((rec, index) => scroller.appendChild(createRecommendationCard(rec, index)));
+  rail.appendChild(scroller);
+  section.appendChild(rail);
 
-  recs.forEach((rec, index) => {
-    const card = createMovieCard(rec.movie, index);
-    card.classList.add('recommendation-card');
-    if (rec.reasons.length) {
-      const badge = document.createElement('div');
-      badge.className = 'recommendation-reason';
-      badge.textContent = rec.reasons.join(' · ');
-      card.appendChild(badge);
-    }
-    scroller.appendChild(card);
-  });
-
-  section.appendChild(scroller);
   // Insert above the main grid (remove again to close any async double-render race).
   document.getElementById('recommendations-row')?.remove();
   main.parentNode.insertBefore(section, main);
