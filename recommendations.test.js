@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
+import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_700_000_000_000; // fixed clock for deterministic tests
@@ -37,4 +38,53 @@ test('buildTasteProfile aggregates weighted genres, keywords, people', () => {
   assert.ok(p.mediaTypeBias.movie > 0 && p.mediaTypeBias.tv > 0);
   assert.equal(p.topTitles[0].id, 1);
   assert.deepEqual(p.topTitles[0].keywordIds, [9]);
+});
+
+const PROFILE = {
+  genres: { '878': 3, '28': 1 },
+  keywords: { '9': { name: 'time travel', weight: 2 } },
+  people: { '5': { name: 'Nolan', weight: 2 } },
+  mediaTypeBias: { movie: 5, tv: 1 },
+  topTitles: [
+    { id: 1, title: 'Inception', weight: 3, genreIds: [878], keywordIds: [9], peopleIds: [5], media_type: 'movie' },
+  ],
+};
+
+test('mergeCandidates dedupes by id and accumulates seeds', () => {
+  const merged = mergeCandidates([
+    { id: 100, genre_ids: [878], _seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] },
+    { id: 100, genre_ids: [878], _seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 2 }] },
+    { id: 200, genre_ids: [28], _seeds: [{ type: 'genre', id: 28, name: 'Action', weight: 1 }] },
+  ]);
+  assert.equal(merged.length, 2);
+  const c100 = merged.find((c) => c.id === 100);
+  assert.equal(c100._seeds.length, 2);
+});
+
+test('scoreCandidate rewards seed weight, genre overlap, popularity', () => {
+  const strong = { id: 100, genre_ids: [878], popularity: 100,
+    _seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] };
+  const weak = { id: 200, genre_ids: [28], popularity: 1,
+    _seeds: [{ type: 'genre', id: 28, name: 'Action', weight: 1 }] };
+  assert.ok(scoreCandidate(strong, PROFILE) > scoreCandidate(weak, PROFILE));
+});
+
+test('generateReasons links to a watched title and falls back to genre', () => {
+  const cand = { id: 100, genre_ids: [878], popularity: 50,
+    _seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 2 }] };
+  const reasons = generateReasons(cand, PROFILE);
+  assert.ok(reasons.length >= 1 && reasons.length <= 2);
+  assert.ok(reasons[0].includes('Inception'));
+});
+
+test('rankCandidates drops already-watched and sorts by score', () => {
+  const cands = [
+    { id: 1, genre_ids: [878], popularity: 100, _seeds: [{ type: 'keyword', id: 9, name: 'tt', weight: 2 }] },
+    { id: 100, genre_ids: [878], popularity: 100, _seeds: [{ type: 'keyword', id: 9, name: 'tt', weight: 2 }] },
+    { id: 200, genre_ids: [28], popularity: 1, _seeds: [{ type: 'genre', id: 28, name: 'Action', weight: 1 }] },
+  ];
+  const recs = rankCandidates(cands, PROFILE, new Set([1]), 10);
+  assert.equal(recs.length, 2);
+  assert.equal(recs[0].movie.id, 100);
+  assert.ok(recs[0].score >= recs[1].score);
 });

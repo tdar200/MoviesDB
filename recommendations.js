@@ -84,3 +84,73 @@ export function buildTasteProfile(enrichedWatched, now) {
     topTitles: topTitles.sort((a, b) => b.weight - a.weight),
   };
 }
+
+function capitalize(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+// Merge Discover result lists, deduping by id and accumulating seed provenance.
+export function mergeCandidates(taggedCandidates) {
+  const byId = new Map();
+  for (const c of taggedCandidates) {
+    const key = String(c.id);
+    if (byId.has(key)) {
+      byId.get(key)._seeds.push(...(c._seeds || []));
+    } else {
+      byId.set(key, { ...c, _seeds: [...(c._seeds || [])] });
+    }
+  }
+  return [...byId.values()];
+}
+
+// Score a candidate: seed provenance + profile genre overlap + light popularity prior.
+export function scoreCandidate(candidate, profile) {
+  let score = 0;
+  for (const seed of candidate._seeds || []) score += seed.weight;
+  for (const gid of candidate.genre_ids || []) {
+    const gw = profile.genres[String(gid)];
+    if (gw) score += gw * 0.5;
+  }
+  const pop = candidate.popularity || 0;
+  score += Math.log10(pop + 1) * 0.1;
+  return score;
+}
+
+// Up to 2 human-readable reasons. Prefers "Because you watched <title>" when the
+// candidate's strongest seed (person/keyword) is shared with a watched title.
+export function generateReasons(candidate, profile) {
+  const reasons = [];
+  const seeds = [...(candidate._seeds || [])].sort((a, b) => b.weight - a.weight);
+  const topSeed = seeds.find((s) => s.type === 'person' || s.type === 'keyword');
+
+  if (topSeed) {
+    const shared = profile.topTitles.find((t) =>
+      topSeed.type === 'person'
+        ? t.peopleIds.includes(topSeed.id)
+        : t.keywordIds.includes(topSeed.id)
+    );
+    if (shared && shared.title) reasons.push(`Because you watched ${shared.title}`);
+    else if (topSeed.type === 'person') reasons.push(`Features ${topSeed.name}`);
+    else reasons.push(capitalize(topSeed.name));
+  }
+
+  if (reasons.length < 2) {
+    const matchedGenres = (candidate.genre_ids || [])
+      .filter((id) => profile.genres[String(id)])
+      .map((id) => GENRE_NAMES.get(id))
+      .filter(Boolean);
+    if (matchedGenres.length) reasons.push(matchedGenres.slice(0, 2).join(' · '));
+  }
+
+  return reasons.slice(0, 2);
+}
+
+// Score, drop already-watched, sort desc, take top `limit`.
+export function rankCandidates(candidates, profile, watchedIds, limit = 20) {
+  const watched = new Set([...watchedIds].map(String));
+  return candidates
+    .filter((c) => !watched.has(String(c.id)))
+    .map((c) => ({ movie: c, score: scoreCandidate(c, profile), reasons: generateReasons(c, profile) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
