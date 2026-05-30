@@ -1213,6 +1213,7 @@ async function openPlayer(movie) {
     };
     syncPlayerStar();
     playerStarBtn.onclick = (e) => { e.stopPropagation(); toggleStar(movie); syncPlayerStar(); };
+    playerStarBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); };
   }
 
   // Reset TV state
@@ -1925,6 +1926,10 @@ function createStarButton(movie) {
     toggleStar(movie);
     sync();
     if (isFavoritesMode) loadFavorites(); // un-starring removes it from the favorites grid
+  });
+  // Keep keyboard activation on the star from bubbling to the card's play handler.
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
   });
   return btn;
 }
