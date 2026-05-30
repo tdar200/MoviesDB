@@ -617,6 +617,7 @@ function clearActorFilter() {
 
 // Load movies/shows by actor
 async function loadByActor() {
+  document.getElementById('recommendations-row')?.remove();
   if (!currentFilters.actorId) return;
 
   try {
@@ -670,6 +671,7 @@ async function fetchTop250() {
 
 // Load Top 250 movies
 async function loadTop250() {
+  document.getElementById('recommendations-row')?.remove();
   try {
     setLoading(true);
     hideError();
@@ -1660,7 +1662,8 @@ async function renderRecommendationsRow() {
   });
 
   section.appendChild(scroller);
-  // Insert above the main grid.
+  // Insert above the main grid (remove again to close any async double-render race).
+  document.getElementById('recommendations-row')?.remove();
   main.parentNode.insertBefore(section, main);
 }
 
@@ -2032,6 +2035,7 @@ async function handleSearch(query) {
     top250Btn.classList.remove('active');
   }
 
+  document.getElementById('recommendations-row')?.remove();
   try {
     setLoading(true);
     hideError();
