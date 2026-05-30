@@ -160,6 +160,25 @@ const nextEpisodeBtn = document.getElementById('next-episode');
 
 // Current movie being played (for source switching)
 let currentPlayingMovie = null;
+let playerOpenedAt = 0;
+let playerHiddenMs = 0;
+let playerHiddenSince = 0;
+let dwellTitleId = null;
+
+// Compute and persist this session's dwell, then reset. Idempotent.
+function flushDwell() {
+  if (!playerOpenedAt || !dwellTitleId) return;
+  if (playerHiddenSince) { // tab still hidden at flush time
+    playerHiddenMs += Date.now() - playerHiddenSince;
+    playerHiddenSince = 0;
+  }
+  const dwell = Date.now() - playerOpenedAt - playerHiddenMs;
+  recordDwell(dwellTitleId, dwell);
+  if (dwell > 0) clearRecommendationCache();
+  playerOpenedAt = 0;
+  playerHiddenMs = 0;
+  dwellTitleId = null;
+}
 
 // Current trailer key
 let currentTrailerKey = null;
@@ -1095,6 +1114,7 @@ function playEpisode(season, episode) {
   }
 
   saveWatchProgress(currentPlayingMovie.id, season, episode);
+  recordEpisode(currentPlayingMovie.id, season, episode);
   updateNavButtons();
 }
 
@@ -1166,6 +1186,14 @@ function handleEpisodeChange(episodeNum) {
 async function openPlayer(movie) {
   // Add to watched history
   addToWatchedHistory(movie);
+
+  // Begin engagement capture for this title.
+  flushDwell(); // flush any prior session that didn't close cleanly
+  playerOpenedAt = Date.now();
+  playerHiddenMs = 0;
+  playerHiddenSince = 0;
+  dwellTitleId = movie.id;
+  recordOpen(movie.id);
 
   const title = movie.title || movie.name || 'Unknown';
   const type = movie.media_type === 'tv' ? 'tv' : 'movie';
@@ -1289,6 +1317,7 @@ async function openPlayer(movie) {
 
 // Close video player modal
 function closePlayer() {
+  flushDwell();
   playerModal.style.display = 'none';
   playerIframe.src = '';
   trailerIframe.src = '';
@@ -2549,6 +2578,18 @@ function initFromUrl() {
 
 // Scroll event for infinite scroll (debounced)
 window.addEventListener('scroll', debounce(checkScrollPosition, 100));
+
+// Pause dwell accumulation while the tab is hidden; flush on tab close.
+document.addEventListener('visibilitychange', () => {
+  if (!playerOpenedAt) return;
+  if (document.hidden) {
+    playerHiddenSince = Date.now();
+  } else if (playerHiddenSince) {
+    playerHiddenMs += Date.now() - playerHiddenSince;
+    playerHiddenSince = 0;
+  }
+});
+window.addEventListener('pagehide', flushDwell);
 
 // Initialize
 populateSourceSelector();
