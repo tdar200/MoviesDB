@@ -89,6 +89,15 @@ test('generateReasons falls back to generic when nothing matches', () => {
   assert.deepEqual(generateReasons(cand, PROFILE), ['Picked for your taste']);
 });
 
+test('generateReasons: single person/keyword match is not labelled a genre', () => {
+  // Candidate matches person 5 (Nolan) but none of its genres are in the profile.
+  const cand = { id: 103, genre_ids: [99], popularity: 5,
+    _seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 2 }] };
+  const reasons = generateReasons(cand, PROFILE);
+  assert.ok(!/genre/i.test(reasons[0]), `must not call a person a genre: ${reasons[0]}`);
+  assert.match(reasons[0], /Nolan/);
+});
+
 test('rankCandidates drops already-watched and sorts by score', () => {
   const cands = [
     { id: 1, genre_ids: [878], popularity: 100, _seeds: [{ type: 'keyword', id: 9, name: 'tt', weight: 2 }] },

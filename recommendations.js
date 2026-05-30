@@ -226,9 +226,17 @@ export function generateReasons(candidate, profile) {
   else if (matchedGenres[1]) themeParts.push(matchedGenres[1]);
 
   let theme;
-  if (themeParts.length >= 2) theme = `Matches your love of ${themeParts[0]} & ${themeParts[1]}`;
-  else if (themeParts.length === 1) theme = `From your most-watched genre: ${themeParts[0]}`;
-  else theme = 'Picked for your taste';
+  if (themeParts.length >= 2) {
+    theme = `Matches your love of ${themeParts[0]} & ${themeParts[1]}`;
+  } else if (themeParts.length === 1) {
+    // A single part is the matched genre only when no person/keyword was matched;
+    // otherwise it's a person/keyword and must not be labelled a "genre".
+    theme = matchedGenres[0]
+      ? `From your most-watched genre: ${themeParts[0]}`
+      : `Matches your taste for ${themeParts[0]}`;
+  } else {
+    theme = 'Picked for your taste';
+  }
 
   const reasons = [theme];
   if (dominantTitle && theme !== 'Picked for your taste') reasons.push(`esp. ${dominantTitle}`);
