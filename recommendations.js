@@ -76,7 +76,12 @@ export function buildTasteProfile(enrichedWatched, now) {
   const topTitles = [];
 
   for (const item of enrichedWatched) {
-    const w = recencyWeight(item.watchedAt, now) * ratingNudge(item.vote_average);
+    const recency = item._starred ? 1 : recencyWeight(item.watchedAt, now);
+    const eng = item._engagement
+      ? engagementBoost(item._engagement.dwellMs, item._engagement.episodes)
+      : 1;
+    const star = item._starred ? STAR_BONUS : 1;
+    const w = recency * ratingNudge(item.vote_average) * eng * star;
 
     (item.genre_ids || []).forEach((id) => {
       genres[id] = (genres[id] || 0) + w;

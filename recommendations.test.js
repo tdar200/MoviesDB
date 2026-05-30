@@ -109,3 +109,25 @@ test('engagementBoost: episode depth is a strong signal', () => {
 test('engagementBoost: monotonic non-decreasing in dwell past the bail point', () => {
   assert.ok(engagementBoost(3000000, 0) >= engagementBoost(2000000, 0));
 });
+
+test('buildTasteProfile applies engagement and star multipliers', () => {
+  const base = { id: 1, media_type: 'movie', title: 'A', genre_ids: [878], vote_average: 8, watchedAt: NOW };
+  const neutral = buildTasteProfile([{ ...base }], NOW).genres['878'];
+  const bailed  = buildTasteProfile([{ ...base, _engagement: { dwellMs: 0, episodes: 0 } }], NOW).genres['878'];
+  const engaged = buildTasteProfile([{ ...base, _engagement: { dwellMs: 5400000, episodes: 0 } }], NOW).genres['878'];
+  assert.ok(bailed < neutral, 'a quick bail downweights below neutral');
+  assert.ok(engaged > neutral, 'a long watch upweights above neutral');
+});
+
+test('buildTasteProfile: stars are decay-proof and boosted', () => {
+  const old = { id: 2, media_type: 'movie', title: 'B', genre_ids: [28], vote_average: 8, watchedAt: NOW - 365 * DAY };
+  const normal  = buildTasteProfile([{ ...old }], NOW).genres['28'];
+  const starred = buildTasteProfile([{ ...old, _starred: true }], NOW).genres['28'];
+  assert.ok(starred > normal * 5, 'starred old item vastly outweighs decayed normal');
+});
+
+test('buildTasteProfile: legacy items (no _engagement/_starred) unchanged', () => {
+  const item = { id: 3, media_type: 'movie', title: 'C', genre_ids: [18], vote_average: 7, watchedAt: NOW };
+  const w = buildTasteProfile([item], NOW).genres['18'];
+  assert.ok(Math.abs(w - 1.1) < 1e-9);
+});
