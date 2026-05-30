@@ -1854,7 +1854,7 @@ async function renderRecommendationsRow() {
   document.getElementById('recommendations-row')?.remove();
 
   // Only show on the Movies home/browse view — not search, Top 250, or Watched.
-  if (isSearchMode || isTop250Mode || isWatchedMode) return;
+  if (isSearchMode || isTop250Mode || isWatchedMode || isFavoritesMode) return;
 
   const items = buildSignalItems();
   if (items.length === 0) return; // cold-start: show nothing
@@ -2645,6 +2645,7 @@ initYouTube();
 // Tab switching logic
 const tabMovies = document.getElementById('tab-movies');
 const tabWatched = document.getElementById('tab-watched');
+const tabFavorites = document.getElementById('tab-favorites');
 const tabYouTube = document.getElementById('tab-youtube');
 const movieFilters = document.getElementById('movie-filters');
 const youtubeFilters = document.getElementById('youtube-filters');
@@ -2653,13 +2654,16 @@ const youtubeSearchForm = document.getElementById('yt-form');
 const top250Button = document.getElementById('top250-btn');
 
 let isWatchedMode = false;
+let isFavoritesMode = false;
 
 function switchToMovies() {
   currentApp = 'movies';
   isWatchedMode = false;
+  isFavoritesMode = false;
   tabMovies.classList.add('active');
   tabWatched.classList.remove('active');
   tabYouTube.classList.remove('active');
+  tabFavorites.classList.remove('active');
   movieFilters.style.display = 'flex';
   youtubeFilters.style.display = 'none';
   movieSearchForm.style.display = 'flex';
@@ -2673,9 +2677,11 @@ function switchToYouTube() {
   document.getElementById('recommendations-row')?.remove();
   currentApp = 'youtube';
   isWatchedMode = false;
+  isFavoritesMode = false;
   tabYouTube.classList.add('active');
   tabMovies.classList.remove('active');
   tabWatched.classList.remove('active');
+  tabFavorites.classList.remove('active');
   youtubeFilters.style.display = 'flex';
   movieFilters.style.display = 'none';
   youtubeSearchForm.style.display = 'flex';
@@ -2689,6 +2695,7 @@ function switchToWatched() {
   document.getElementById('recommendations-row')?.remove();
   currentApp = 'movies';
   isWatchedMode = true;
+  isFavoritesMode = false;
   isSearchMode = false;
   isTop250Mode = false;
 
@@ -2696,6 +2703,7 @@ function switchToWatched() {
   tabMovies.classList.remove('active');
   tabWatched.classList.add('active');
   tabYouTube.classList.remove('active');
+  tabFavorites.classList.remove('active');
   top250Btn.classList.remove('active');
 
   // Show movie UI elements but hide filters for watched
@@ -2738,6 +2746,55 @@ async function loadWatchedHistory() {
   setLoading(false);
 }
 
+function switchToFavorites() {
+  currentApp = 'movies';
+  isWatchedMode = false;
+  isFavoritesMode = true;
+  isSearchMode = false;
+  isTop250Mode = false;
+
+  document.getElementById('recommendations-row')?.remove();
+  tabMovies.classList.remove('active');
+  tabWatched.classList.remove('active');
+  tabYouTube.classList.remove('active');
+  tabFavorites.classList.add('active');
+  top250Btn.classList.remove('active');
+
+  movieFilters.style.display = 'none';
+  youtubeFilters.style.display = 'none';
+  movieSearchForm.style.display = 'none';
+  youtubeSearchForm.style.display = 'none';
+  top250Button.style.display = 'none';
+
+  loadFavorites();
+}
+
+function loadFavorites() {
+  setLoading(true);
+  hideError();
+
+  const favorites = getStarredList();
+  if (favorites.length === 0) {
+    main.innerHTML = '<p class="no-results">No favorites yet. Tap the ★ on any title to add it.</p>';
+    setLoading(false);
+    return;
+  }
+
+  allMovies = favorites;
+  filteredMovies = favorites;
+  displayedCount = 0;
+  hasMorePages = false;
+
+  main.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  favorites.forEach((movie, index) => fragment.appendChild(createMovieCard(movie, index)));
+  main.appendChild(fragment);
+  displayedCount = favorites.length;
+
+  setLoading(false);
+}
+
 tabMovies?.addEventListener('click', switchToMovies);
 tabWatched?.addEventListener('click', switchToWatched);
+tabFavorites?.addEventListener('click', switchToFavorites);
 tabYouTube?.addEventListener('click', switchToYouTube);
