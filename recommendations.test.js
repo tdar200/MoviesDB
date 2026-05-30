@@ -69,12 +69,33 @@ test('scoreCandidate rewards seed weight, genre overlap, popularity', () => {
   assert.ok(scoreCandidate(strong, PROFILE) > scoreCandidate(weak, PROFILE));
 });
 
-test('generateReasons links to a watched title and falls back to genre', () => {
+test('generateReasons leads with a taste theme and adds dominant title', () => {
   const cand = { id: 100, genre_ids: [878], popularity: 50,
     _seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 2 }] };
   const reasons = generateReasons(cand, PROFILE);
   assert.ok(reasons.length >= 1 && reasons.length <= 2);
-  assert.ok(reasons[0].includes('Inception'));
+  assert.match(reasons[0], /Sci-Fi|Nolan|most-watched/);
+  assert.ok(reasons.join(' ').includes('Inception'));
+});
+
+test('generateReasons falls back to genre-only theme without person/keyword', () => {
+  const cand = { id: 101, genre_ids: [878], popularity: 5, _seeds: [] };
+  const reasons = generateReasons(cand, PROFILE);
+  assert.match(reasons[0], /Sci-Fi/);
+});
+
+test('generateReasons falls back to generic when nothing matches', () => {
+  const cand = { id: 102, genre_ids: [99], popularity: 1, _seeds: [] };
+  assert.deepEqual(generateReasons(cand, PROFILE), ['Picked for your taste']);
+});
+
+test('generateReasons: single person/keyword match is not labelled a genre', () => {
+  // Candidate matches person 5 (Nolan) but none of its genres are in the profile.
+  const cand = { id: 103, genre_ids: [99], popularity: 5,
+    _seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 2 }] };
+  const reasons = generateReasons(cand, PROFILE);
+  assert.ok(!/genre/i.test(reasons[0]), `must not call a person a genre: ${reasons[0]}`);
+  assert.match(reasons[0], /Nolan/);
 });
 
 test('rankCandidates drops already-watched and sorts by score', () => {
@@ -87,4 +108,95 @@ test('rankCandidates drops already-watched and sorts by score', () => {
   assert.equal(recs.length, 2);
   assert.equal(recs[0].movie.id, 100);
   assert.ok(recs[0].score >= recs[1].score);
+});
+
+import { engagementBoost } from './recommendations.js';
+
+test('engagementBoost: quick bail trends to minimum', () => {
+  assert.equal(engagementBoost(0, 0), 0.4);            // opened, closed instantly
+  assert.ok(engagementBoost(60000, 0) > 0.4 && engagementBoost(60000, 0) < 1.0); // 1 min
+});
+
+test('engagementBoost: long dwell trends to max', () => {
+  assert.equal(engagementBoost(5400000, 0), 2.5);      // 90 min
+  assert.ok(engagementBoost(2700000, 0) > 1.5 && engagementBoost(2700000, 0) < 2.5); // 45 min
+});
+
+test('engagementBoost: episode depth is a strong signal', () => {
+  assert.equal(engagementBoost(0, 20), 2.5);           // 20 episodes saturates
+  assert.ok(engagementBoost(0, 5) > 1.0);              // some episodes => above neutral
+});
+
+test('engagementBoost: monotonic non-decreasing in dwell past the bail point', () => {
+  assert.ok(engagementBoost(3000000, 0) >= engagementBoost(2000000, 0));
+});
+
+test('buildTasteProfile applies engagement and star multipliers', () => {
+  const base = { id: 1, media_type: 'movie', title: 'A', genre_ids: [878], vote_average: 8, watchedAt: NOW };
+  const neutral = buildTasteProfile([{ ...base }], NOW).genres['878'];
+  const bailed  = buildTasteProfile([{ ...base, _engagement: { dwellMs: 0, episodes: 0 } }], NOW).genres['878'];
+  const engaged = buildTasteProfile([{ ...base, _engagement: { dwellMs: 5400000, episodes: 0 } }], NOW).genres['878'];
+  assert.ok(bailed < neutral, 'a quick bail downweights below neutral');
+  assert.ok(engaged > neutral, 'a long watch upweights above neutral');
+});
+
+test('buildTasteProfile: stars are decay-proof and boosted', () => {
+  const old = { id: 2, media_type: 'movie', title: 'B', genre_ids: [28], vote_average: 8, watchedAt: NOW - 365 * DAY };
+  const normal  = buildTasteProfile([{ ...old }], NOW).genres['28'];
+  const starred = buildTasteProfile([{ ...old, _starred: true }], NOW).genres['28'];
+  assert.ok(starred > normal * 5, 'starred old item vastly outweighs decayed normal');
+});
+
+test('buildTasteProfile: legacy items (no _engagement/_starred) unchanged', () => {
+  const item = { id: 3, media_type: 'movie', title: 'C', genre_ids: [18], vote_average: 7, watchedAt: NOW };
+  const w = buildTasteProfile([item], NOW).genres['18'];
+  assert.ok(Math.abs(w - 1.1) < 1e-9);
+});
+
+test('scoreCandidate rewards aligning with more distinct watched titles', () => {
+  const profile = {
+    genres: { '878': 1 },
+    keywords: {},
+    people: {},
+    mediaTypeBias: { movie: 5, tv: 0 },
+    topTitles: [
+      { id: 1, title: 'A', weight: 1, genreIds: [], keywordIds: [9], peopleIds: [] },
+      { id: 2, title: 'B', weight: 1, genreIds: [], keywordIds: [12], peopleIds: [] },
+      { id: 3, title: 'C', weight: 1, genreIds: [], keywordIds: [13], peopleIds: [] },
+    ],
+  };
+  // Identical base score (same genres, popularity, total seed weight = 3);
+  // they differ ONLY in collection breadth: broad spans 3 titles, narrow spans 1.
+  const broad = { id: 100, genre_ids: [878], popularity: 10, _seeds: [
+    { type: 'keyword', id: 9, name: 'a', weight: 1 },
+    { type: 'keyword', id: 12, name: 'b', weight: 1 },
+    { type: 'keyword', id: 13, name: 'c', weight: 1 },
+  ] };
+  const narrow = { id: 200, genre_ids: [878], popularity: 10, _seeds: [
+    { type: 'keyword', id: 9, name: 'a', weight: 3 },
+  ] };
+  assert.ok(scoreCandidate(broad, profile) > scoreCandidate(narrow, profile),
+    'breadth across the collection should break the tie at equal base score');
+});
+
+import { mergeSignalItems } from './recommendations.js';
+
+test('mergeSignalItems unions watched + starred and annotates each', () => {
+  const watched = [
+    { id: 1, media_type: 'movie', title: 'A', genre_ids: [878], vote_average: 8, watchedAt: 111 },
+    { id: 2, media_type: 'tv', name: 'B', genre_ids: [18], vote_average: 7, watchedAt: 222 },
+  ];
+  const starred = {
+    2: { id: 2, media_type: 'tv', name: 'B', genre_ids: [18], vote_average: 7, starredAt: 9 },
+    3: { id: 3, media_type: 'movie', title: 'C', genre_ids: [28], vote_average: 6, starredAt: 9 },
+  };
+  const engagement = { 1: { dwellMs: 5000, episodes: 0, opens: 1 } };
+  const items = mergeSignalItems(watched, starred, engagement);
+  const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+  assert.equal(items.length, 3);
+  assert.equal(byId[1]._starred, false);
+  assert.deepEqual(byId[1]._engagement, { dwellMs: 5000, episodes: 0, opens: 1 });
+  assert.equal(byId[2]._starred, true);
+  assert.equal(byId[3]._starred, true);
+  assert.equal(byId[3]._engagement, null);
 });

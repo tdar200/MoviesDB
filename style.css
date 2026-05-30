@@ -1398,3 +1398,46 @@ main {
   .rec-subline { display: none; }
   .rec-card { flex-basis: 150px; width: 150px; }
 }
+
+/* Star toggle */
+.star-btn {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.5rem;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(8, 9, 26, 0.55);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+.movie:hover .star-btn,
+.rec-card:hover .star-btn,
+.star-btn:focus-visible,
+.star-btn.starred {
+  opacity: 1;
+  transform: scale(1);
+}
+.star-btn.starred { color: #e9b955; background: rgba(8, 9, 26, 0.75); }
+.star-btn:hover { color: #f3d089; }
+/* The rec card already uses top-left for the rank; offset its star to top-right. */
+.rec-card .star-btn { left: auto; right: 0.5rem; }
+/* Player-header star sits inline, always visible. */
+.player-title-row { display: flex; align-items: center; gap: 0.6rem; }
+.player-star {
+  position: static;
+  opacity: 1;
+  transform: none;
+  width: 34px;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.08);
+}

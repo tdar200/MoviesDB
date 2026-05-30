@@ -1,6 +1,6 @@
 import { CONFIG, ENDPOINTS, MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './config.js';
 import { initYouTube, activateYouTube } from './youtube.js';
-import { getRecommendations, clearRecommendationCache } from './recommendations.js';
+import { getRecommendations, clearRecommendationCache, mergeSignalItems } from './recommendations.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -51,6 +51,7 @@ const top250Btn = document.getElementById('top250-btn');
 // Player Modal Elements
 const playerModal = document.getElementById('player-modal');
 const playerIframe = document.getElementById('player-iframe');
+const playerStarBtn = document.getElementById('player-star');
 const trailerIframe = document.getElementById('trailer-iframe');
 const playerTitle = document.getElementById('player-title');
 const closeModalBtn = document.getElementById('close-modal');
@@ -160,6 +161,25 @@ const nextEpisodeBtn = document.getElementById('next-episode');
 
 // Current movie being played (for source switching)
 let currentPlayingMovie = null;
+let playerOpenedAt = 0;
+let playerHiddenMs = 0;
+let playerHiddenSince = 0;
+let dwellTitleId = null;
+
+// Compute and persist this session's dwell, then reset. Idempotent.
+function flushDwell() {
+  if (!playerOpenedAt || !dwellTitleId) return;
+  if (playerHiddenSince) { // tab still hidden at flush time
+    playerHiddenMs += Date.now() - playerHiddenSince;
+    playerHiddenSince = 0;
+  }
+  const dwell = Date.now() - playerOpenedAt - playerHiddenMs;
+  recordDwell(dwellTitleId, dwell);
+  if (dwell > 0) clearRecommendationCache();
+  playerOpenedAt = 0;
+  playerHiddenMs = 0;
+  dwellTitleId = null;
+}
 
 // Current trailer key
 let currentTrailerKey = null;
@@ -230,6 +250,97 @@ function getWatchedHistory() {
 // Clear watched history
 function clearWatchedHistory() {
   localStorage.removeItem(WATCHED_HISTORY_KEY);
+}
+
+// ---- Engagement + star signal stores ----
+const TITLE_ENGAGEMENT_KEY = 'titleEngagement';
+const STARRED_TITLES_KEY = 'starredTitles';
+const SESSION_DWELL_CAP_MS = 10800000; // 3h per session
+const TOTAL_DWELL_CAP_MS = 86400000;   // 24h lifetime per title
+
+function getEngagementStore() {
+  try { return JSON.parse(localStorage.getItem(TITLE_ENGAGEMENT_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveEngagementStore(store) {
+  try { localStorage.setItem(TITLE_ENGAGEMENT_KEY, JSON.stringify(store)); }
+  catch (e) { console.error('engagement save failed:', e); }
+}
+function recordOpen(id) {
+  const s = getEngagementStore();
+  const e = s[id] || { dwellMs: 0, episodes: 0, opens: 0, _eps: [] };
+  e.opens = (e.opens || 0) + 1;
+  e.lastAt = Date.now();
+  s[id] = e;
+  saveEngagementStore(s);
+}
+function recordDwell(id, ms) {
+  if (!id || !ms || ms <= 0) return;
+  const capped = Math.min(ms, SESSION_DWELL_CAP_MS);
+  const s = getEngagementStore();
+  const e = s[id] || { dwellMs: 0, episodes: 0, opens: 0, _eps: [] };
+  e.dwellMs = Math.min((e.dwellMs || 0) + capped, TOTAL_DWELL_CAP_MS);
+  e.lastAt = Date.now();
+  s[id] = e;
+  saveEngagementStore(s);
+}
+function recordEpisode(id, season, episode) {
+  const s = getEngagementStore();
+  const e = s[id] || { dwellMs: 0, episodes: 0, opens: 0, _eps: [] };
+  const key = `${season}:${episode}`;
+  e._eps = e._eps || [];
+  if (!e._eps.includes(key)) e._eps.push(key);
+  e.episodes = e._eps.length;
+  e.lastAt = Date.now();
+  s[id] = e;
+  saveEngagementStore(s);
+}
+
+function getStarredStore() {
+  try { return JSON.parse(localStorage.getItem(STARRED_TITLES_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveStarredStore(store) {
+  try { localStorage.setItem(STARRED_TITLES_KEY, JSON.stringify(store)); }
+  catch (e) { console.error('starred save failed:', e); }
+}
+function isStarred(id) {
+  return Object.prototype.hasOwnProperty.call(getStarredStore(), id);
+}
+// Toggle star for a movie; returns the new starred state.
+function toggleStar(movie) {
+  const store = getStarredStore();
+  if (Object.prototype.hasOwnProperty.call(store, movie.id)) {
+    delete store[movie.id];
+    saveStarredStore(store);
+    clearRecommendationCache();
+    return false;
+  }
+  store[movie.id] = {
+    id: movie.id,
+    media_type: movie.media_type || (movie.title ? 'movie' : 'tv'),
+    genre_ids: movie.genre_ids || [],
+    vote_average: movie.vote_average,
+    title: movie.title,
+    name: movie.name,
+    poster_path: movie.poster_path,
+    release_date: movie.release_date,
+    first_air_date: movie.first_air_date,
+    overview: movie.overview,
+    starredAt: Date.now(),
+  };
+  saveStarredStore(store);
+  clearRecommendationCache();
+  return true;
+}
+function getStarredList() {
+  const store = getStarredStore();
+  return Object.values(store).sort((a, b) => (b.starredAt || 0) - (a.starredAt || 0));
+}
+
+// Assemble the unified, annotated input the engine consumes.
+function buildSignalItems() {
+  return mergeSignalItems(getWatchedHistory(), getStarredStore(), getEngagementStore());
 }
 
 // Populate source selector with test results percentages
@@ -1004,6 +1115,7 @@ function playEpisode(season, episode) {
   }
 
   saveWatchProgress(currentPlayingMovie.id, season, episode);
+  recordEpisode(currentPlayingMovie.id, season, episode);
   updateNavButtons();
 }
 
@@ -1076,11 +1188,33 @@ async function openPlayer(movie) {
   // Add to watched history
   addToWatchedHistory(movie);
 
+  // Begin engagement capture for this title.
+  flushDwell(); // flush any prior session that didn't close cleanly
+  playerOpenedAt = Date.now();
+  playerHiddenMs = 0;
+  playerHiddenSince = 0;
+  dwellTitleId = movie.id;
+  recordOpen(movie.id);
+
   const title = movie.title || movie.name || 'Unknown';
   const type = movie.media_type === 'tv' ? 'tv' : 'movie';
 
   // Store current movie for source switching
   currentPlayingMovie = movie;
+
+  // Sync the player-header star to this title.
+  if (playerStarBtn) {
+    const syncPlayerStar = () => {
+      const on = isStarred(movie.id);
+      playerStarBtn.classList.toggle('starred', on);
+      playerStarBtn.setAttribute('aria-pressed', String(on));
+      playerStarBtn.title = on ? 'Remove from favorites' : 'Add to favorites';
+      playerStarBtn.innerHTML = on ? STAR_FILLED_SVG : STAR_OUTLINE_SVG;
+    };
+    syncPlayerStar();
+    playerStarBtn.onclick = (e) => { e.stopPropagation(); toggleStar(movie); syncPlayerStar(); };
+    playerStarBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); };
+  }
 
   // Reset TV state
   currentTvData = null;
@@ -1198,6 +1332,7 @@ async function openPlayer(movie) {
 
 // Close video player modal
 function closePlayer() {
+  flushDwell();
   playerModal.style.display = 'none';
   playerIframe.src = '';
   trailerIframe.src = '';
@@ -1687,22 +1822,22 @@ function createRecommendationCard(rec, index) {
   }
   scrim.appendChild(sub);
   poster.appendChild(scrim);
+  poster.appendChild(createStarButton(movie));
   card.appendChild(poster);
 
-  // The "why" — the hero of a recommendation. Emphasize the matched title in gold.
+  // The "why" — theme-led, with an optional dominant title.
   const because = document.createElement('p');
   because.className = 'rec-because';
-  const primary = rec.reasons[0] || '';
-  const watchedMatch = primary.match(/^Because you watched (.+)$/);
-  if (watchedMatch) {
-    because.innerHTML =
-      '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>' +
-      'Because you watched <b></b>';
-    because.querySelector('b').textContent = watchedMatch[1];
-  } else {
-    because.innerHTML =
-      '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>';
-    because.appendChild(document.createTextNode(primary || 'Picked for your taste'));
+  because.innerHTML =
+    '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>';
+  const theme = rec.reasons[0] || 'Picked for your taste';
+  because.appendChild(document.createTextNode(theme));
+  const espMatch = (rec.reasons[1] || '').match(/^esp\. (.+)$/);
+  if (espMatch) {
+    because.appendChild(document.createTextNode(' · esp. '));
+    const b = document.createElement('b');
+    b.textContent = espMatch[1];
+    because.appendChild(b);
   }
   card.appendChild(because);
 
@@ -1720,14 +1855,14 @@ async function renderRecommendationsRow() {
   document.getElementById('recommendations-row')?.remove();
 
   // Only show on the Movies home/browse view — not search, Top 250, or Watched.
-  if (isSearchMode || isTop250Mode || isWatchedMode) return;
+  if (isSearchMode || isTop250Mode || isWatchedMode || isFavoritesMode) return;
 
-  const watched = getWatchedHistory();
-  if (!watched || watched.length === 0) return; // cold-start: show nothing
+  const items = buildSignalItems();
+  if (items.length === 0) return; // cold-start: show nothing
 
   let recs = [];
   try {
-    recs = await getRecommendations(watched, { limit: 20 });
+    recs = await getRecommendations(items, { limit: 20 });
   } catch (e) {
     console.warn('Recommendations failed:', e);
     return;
@@ -1767,6 +1902,36 @@ async function renderRecommendationsRow() {
   // Insert above the main grid (remove again to close any async double-render race).
   document.getElementById('recommendations-row')?.remove();
   main.parentNode.insertBefore(section, main);
+}
+
+const STAR_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.3 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';
+const STAR_OUTLINE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3.2l2.6 5.7 6.2.6-4.7 4.1 1.4 6.1L12 16.6 6.5 19.8l1.4-6.1L3.2 9.5l6.2-.6z"/></svg>';
+
+// A star toggle bound to a movie. Stops click propagation so it never triggers play.
+function createStarButton(movie) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'star-btn';
+  const sync = () => {
+    const on = isStarred(movie.id);
+    btn.classList.toggle('starred', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
+    btn.title = on ? 'Remove from favorites' : 'Add to favorites';
+    btn.innerHTML = on ? STAR_FILLED_SVG : STAR_OUTLINE_SVG;
+  };
+  sync();
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleStar(movie);
+    sync();
+    if (isFavoritesMode) loadFavorites(); // un-starring removes it from the favorites grid
+  });
+  // Keep keyboard activation on the star from bubbling to the card's play handler.
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+  });
+  return btn;
 }
 
 // Create movie card element
@@ -1936,6 +2101,7 @@ function createMovieCard(movie, index) {
   overviewDiv.appendChild(overviewText);
 
   // Assemble card
+  imageDiv.appendChild(createStarButton(movie));
   card.appendChild(imageDiv);
   card.appendChild(infoDiv);
   card.appendChild(overviewDiv);
@@ -2460,6 +2626,18 @@ function initFromUrl() {
 // Scroll event for infinite scroll (debounced)
 window.addEventListener('scroll', debounce(checkScrollPosition, 100));
 
+// Pause dwell accumulation while the tab is hidden; flush on tab close.
+document.addEventListener('visibilitychange', () => {
+  if (!playerOpenedAt) return;
+  if (document.hidden) {
+    playerHiddenSince = Date.now();
+  } else if (playerHiddenSince) {
+    playerHiddenMs += Date.now() - playerHiddenSince;
+    playerHiddenSince = 0;
+  }
+});
+window.addEventListener('pagehide', flushDwell);
+
 // Initialize
 populateSourceSelector();
 populateThemes(); // Populate theme filter dropdown
@@ -2472,6 +2650,7 @@ initYouTube();
 // Tab switching logic
 const tabMovies = document.getElementById('tab-movies');
 const tabWatched = document.getElementById('tab-watched');
+const tabFavorites = document.getElementById('tab-favorites');
 const tabYouTube = document.getElementById('tab-youtube');
 const movieFilters = document.getElementById('movie-filters');
 const youtubeFilters = document.getElementById('youtube-filters');
@@ -2480,13 +2659,16 @@ const youtubeSearchForm = document.getElementById('yt-form');
 const top250Button = document.getElementById('top250-btn');
 
 let isWatchedMode = false;
+let isFavoritesMode = false;
 
 function switchToMovies() {
   currentApp = 'movies';
   isWatchedMode = false;
+  isFavoritesMode = false;
   tabMovies.classList.add('active');
   tabWatched.classList.remove('active');
   tabYouTube.classList.remove('active');
+  tabFavorites.classList.remove('active');
   movieFilters.style.display = 'flex';
   youtubeFilters.style.display = 'none';
   movieSearchForm.style.display = 'flex';
@@ -2500,9 +2682,11 @@ function switchToYouTube() {
   document.getElementById('recommendations-row')?.remove();
   currentApp = 'youtube';
   isWatchedMode = false;
+  isFavoritesMode = false;
   tabYouTube.classList.add('active');
   tabMovies.classList.remove('active');
   tabWatched.classList.remove('active');
+  tabFavorites.classList.remove('active');
   youtubeFilters.style.display = 'flex';
   movieFilters.style.display = 'none';
   youtubeSearchForm.style.display = 'flex';
@@ -2516,6 +2700,7 @@ function switchToWatched() {
   document.getElementById('recommendations-row')?.remove();
   currentApp = 'movies';
   isWatchedMode = true;
+  isFavoritesMode = false;
   isSearchMode = false;
   isTop250Mode = false;
 
@@ -2523,6 +2708,7 @@ function switchToWatched() {
   tabMovies.classList.remove('active');
   tabWatched.classList.add('active');
   tabYouTube.classList.remove('active');
+  tabFavorites.classList.remove('active');
   top250Btn.classList.remove('active');
 
   // Show movie UI elements but hide filters for watched
@@ -2565,6 +2751,55 @@ async function loadWatchedHistory() {
   setLoading(false);
 }
 
+function switchToFavorites() {
+  currentApp = 'movies';
+  isWatchedMode = false;
+  isFavoritesMode = true;
+  isSearchMode = false;
+  isTop250Mode = false;
+
+  document.getElementById('recommendations-row')?.remove();
+  tabMovies.classList.remove('active');
+  tabWatched.classList.remove('active');
+  tabYouTube.classList.remove('active');
+  tabFavorites.classList.add('active');
+  top250Btn.classList.remove('active');
+
+  movieFilters.style.display = 'none';
+  youtubeFilters.style.display = 'none';
+  movieSearchForm.style.display = 'none';
+  youtubeSearchForm.style.display = 'none';
+  top250Button.style.display = 'none';
+
+  loadFavorites();
+}
+
+function loadFavorites() {
+  setLoading(true);
+  hideError();
+
+  const favorites = getStarredList();
+  if (favorites.length === 0) {
+    main.innerHTML = '<p class="no-results">No favorites yet. Tap the ★ on any title to add it.</p>';
+    setLoading(false);
+    return;
+  }
+
+  allMovies = favorites;
+  filteredMovies = favorites;
+  displayedCount = 0;
+  hasMorePages = false;
+
+  main.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  favorites.forEach((movie, index) => fragment.appendChild(createMovieCard(movie, index)));
+  main.appendChild(fragment);
+  displayedCount = favorites.length;
+
+  setLoading(false);
+}
+
 tabMovies?.addEventListener('click', switchToMovies);
 tabWatched?.addEventListener('click', switchToWatched);
+tabFavorites?.addEventListener('click', switchToFavorites);
 tabYouTube?.addEventListener('click', switchToYouTube);

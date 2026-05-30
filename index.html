@@ -14,6 +14,7 @@
         <div class="app-tabs">
           <button id="tab-movies" class="app-tab active" data-tab="movies">Movies</button>
           <button id="tab-watched" class="app-tab" data-tab="watched">Watched</button>
+          <button id="tab-favorites" class="app-tab" data-tab="favorites">Favorites</button>
           <button id="tab-youtube" class="app-tab" data-tab="youtube">YouTube</button>
           <a href="provider-tester.html" class="app-tab" data-tab="test">Test</a>
         </div>
@@ -266,7 +267,10 @@
       <div class="modal-content">
         <button id="close-modal" class="close-btn" aria-label="Close player">&times;</button>
         <div class="player-header">
-          <h2 id="player-title">Now Playing</h2>
+          <div class="player-title-row">
+            <h2 id="player-title">Now Playing</h2>
+            <button id="player-star" type="button" class="star-btn player-star" aria-label="Add to favorites" title="Add to favorites"></button>
+          </div>
           <div class="player-controls">
             <select id="source-select" class="source-select" aria-label="Select video source">
               <!-- Populated by JavaScript -->

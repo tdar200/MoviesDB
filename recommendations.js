@@ -14,6 +14,33 @@ const GENRE_NAMES = new Map();
 
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30-day half-life
 
+// --- Engagement & star tuning ---
+const ENGAGEMENT_MIN = 0.4;
+const ENGAGEMENT_MAX = 2.5;
+const QUICK_BAIL_MS = 120000;       // < 2 min dwell = sampled-and-dropped
+const FULL_ENGAGE_MS = 5400000;     // ~90 min dwell = fully engaged
+const EPISODE_SATURATION = 20;      // episodes reached for max episode signal
+const STAR_BONUS = 2.5;             // multiplier for starred items
+const COVERAGE_WEIGHT = 0.5;        // strength of collection-breadth bonus
+
+// Map a title's measured engagement to a weight multiplier in [0.4 .. 2.5].
+// Callers pass a real engagement record; absence of a record is handled by the
+// profile builder (neutral 1.0), not here.
+export function engagementBoost(dwellMs, episodes) {
+  const d = dwellMs || 0;
+  const ep = episodes || 0;
+  // Below the bail threshold with no episodes watched: downweight toward MIN.
+  if (d < QUICK_BAIL_MS && ep === 0) {
+    return ENGAGEMENT_MIN + (1 - ENGAGEMENT_MIN) * (d / QUICK_BAIL_MS);
+  }
+  // Otherwise interpolate 1.0 -> MAX by the stronger of dwell / episode signal.
+  const engage = Math.max(
+    Math.min(d / FULL_ENGAGE_MS, 1),
+    Math.min(ep / EPISODE_SATURATION, 1)
+  );
+  return 1 + (ENGAGEMENT_MAX - 1) * engage;
+}
+
 // Newer watched items count more. Returns 1.0 at now, ~0.5 after 30 days.
 export function recencyWeight(watchedAt, now) {
   if (!watchedAt) return 0.5;
@@ -49,7 +76,12 @@ export function buildTasteProfile(enrichedWatched, now) {
   const topTitles = [];
 
   for (const item of enrichedWatched) {
-    const w = recencyWeight(item.watchedAt, now) * ratingNudge(item.vote_average);
+    const recency = item._starred ? 1 : recencyWeight(item.watchedAt, now);
+    const eng = item._engagement
+      ? engagementBoost(item._engagement.dwellMs, item._engagement.episodes)
+      : 1;
+    const star = item._starred ? STAR_BONUS : 1;
+    const w = recency * ratingNudge(item.vote_average) * eng * star;
 
     (item.genre_ids || []).forEach((id) => {
       genres[id] = (genres[id] || 0) + w;
@@ -85,6 +117,29 @@ export function buildTasteProfile(enrichedWatched, now) {
   };
 }
 
+// Union watched history with starred titles and annotate each item with its
+// engagement record and star flag. Pure: caller supplies the three raw stores.
+export function mergeSignalItems(watched, starredMap, engagementMap) {
+  const starred = starredMap || {};
+  const engagement = engagementMap || {};
+  const byId = new Map();
+  for (const m of watched || []) byId.set(m.id, { ...m });
+  for (const key of Object.keys(starred)) {
+    const s = starred[key];
+    byId.set(s.id, byId.has(s.id) ? { ...byId.get(s.id), ...s } : { ...s });
+  }
+  const items = [];
+  for (const m of byId.values()) {
+    const e = engagement[m.id];
+    items.push({
+      ...m,
+      _starred: Object.prototype.hasOwnProperty.call(starred, m.id),
+      _engagement: e ? { dwellMs: e.dwellMs || 0, episodes: e.episodes || 0, opens: e.opens || 0 } : null,
+    });
+  }
+  return items;
+}
+
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
@@ -103,6 +158,26 @@ export function mergeCandidates(taggedCandidates) {
   return [...byId.values()];
 }
 
+// Count how many distinct watched/starred titles a candidate aligns with, via
+// its seed provenance (shared keyword/person) and shared genres.
+function contributingTitleCount(candidate, profile) {
+  const seedKw = new Set();
+  const seedPp = new Set();
+  for (const s of candidate._seeds || []) {
+    if (s.type === 'keyword') seedKw.add(s.id);
+    else if (s.type === 'person') seedPp.add(s.id);
+  }
+  const candGenres = new Set((candidate.genre_ids || []).map(Number));
+  const ids = new Set();
+  for (const t of profile.topTitles || []) {
+    const kwHit = (t.keywordIds || []).some((k) => seedKw.has(k));
+    const ppHit = (t.peopleIds || []).some((p) => seedPp.has(p));
+    const gnHit = (t.genreIds || []).some((g) => candGenres.has(Number(g)));
+    if (kwHit || ppHit || gnHit) ids.add(t.id);
+  }
+  return ids.size;
+}
+
 // Score a candidate: seed provenance + profile genre overlap + light popularity prior.
 export function scoreCandidate(candidate, profile) {
   let score = 0;
@@ -113,35 +188,58 @@ export function scoreCandidate(candidate, profile) {
   }
   const pop = candidate.popularity || 0;
   score += Math.log10(pop + 1) * 0.1;
-  return score;
+  const contributors = contributingTitleCount(candidate, profile);
+  return score * (1 + COVERAGE_WEIGHT * Math.log2(1 + contributors));
 }
 
-// Up to 2 human-readable reasons. Prefers "Because you watched <title>" when the
-// candidate's strongest seed (person/keyword) is shared with a watched title.
+// Up to 2 reasons, collection-aware. Leads with a taste theme (top matched
+// genre and/or strongest matched person/keyword); appends "esp. <Title>" when a
+// single watched/starred title dominates the match.
 export function generateReasons(candidate, profile) {
-  const reasons = [];
+  // Matched genres, strongest first by profile weight.
+  const matchedGenres = (candidate.genre_ids || [])
+    .map(Number)
+    .filter((id) => profile.genres[String(id)])
+    .sort((a, b) => profile.genres[String(b)] - profile.genres[String(a)])
+    .map((id) => GENRE_NAMES.get(id))
+    .filter(Boolean);
+
+  // Strongest matched person/keyword seed.
   const seeds = [...(candidate._seeds || [])].sort((a, b) => b.weight - a.weight);
   const topSeed = seeds.find((s) => s.type === 'person' || s.type === 'keyword');
 
+  // Dominant contributing title: a watched/starred title sharing the top seed.
+  let dominantTitle = null;
   if (topSeed) {
-    const shared = profile.topTitles.find((t) =>
+    const shared = (profile.topTitles || []).find((t) =>
       topSeed.type === 'person'
-        ? t.peopleIds.includes(topSeed.id)
-        : t.keywordIds.includes(topSeed.id)
+        ? (t.peopleIds || []).includes(topSeed.id)
+        : (t.keywordIds || []).includes(topSeed.id)
     );
-    if (shared && shared.title) reasons.push(`Because you watched ${shared.title}`);
-    else if (topSeed.type === 'person') reasons.push(`Features ${topSeed.name}`);
-    else reasons.push(capitalize(topSeed.name));
+    if (shared && shared.title) dominantTitle = shared.title;
   }
 
-  if (reasons.length < 2) {
-    const matchedGenres = (candidate.genre_ids || [])
-      .filter((id) => profile.genres[String(id)])
-      .map((id) => GENRE_NAMES.get(id))
-      .filter(Boolean);
-    if (matchedGenres.length) reasons.push(matchedGenres.slice(0, 2).join(' · '));
+  // Build the theme.
+  const themeParts = [];
+  if (matchedGenres[0]) themeParts.push(matchedGenres[0]);
+  if (topSeed) themeParts.push(topSeed.type === 'person' ? topSeed.name : capitalize(topSeed.name));
+  else if (matchedGenres[1]) themeParts.push(matchedGenres[1]);
+
+  let theme;
+  if (themeParts.length >= 2) {
+    theme = `Matches your love of ${themeParts[0]} & ${themeParts[1]}`;
+  } else if (themeParts.length === 1) {
+    // A single part is the matched genre only when no person/keyword was matched;
+    // otherwise it's a person/keyword and must not be labelled a "genre".
+    theme = matchedGenres[0]
+      ? `From your most-watched genre: ${themeParts[0]}`
+      : `Matches your taste for ${themeParts[0]}`;
+  } else {
+    theme = 'Picked for your taste';
   }
 
+  const reasons = [theme];
+  if (dominantTitle && theme !== 'Picked for your taste') reasons.push(`esp. ${dominantTitle}`);
   return reasons.slice(0, 2);
 }
 
@@ -278,27 +376,30 @@ async function generateCandidates(profile) {
   return mergeCandidates(tagged);
 }
 
-// Stable signature of the watched set so we can cache results per session.
-function watchedSignature(watched) {
-  return watched.map((m) => `${m.id}:${m.watchedAt || 0}`).join(',');
+// Stable signature of the signal set so we can cache results per session.
+// Includes star + engagement so toggling a star or finishing a long watch busts it.
+function signalSignature(items) {
+  return items
+    .map((m) => `${m.id}:${m.watchedAt || 0}:${m._starred ? 1 : 0}:${m._engagement?.dwellMs || 0}:${m._engagement?.episodes || 0}`)
+    .join(',');
 }
 
 // Top-level orchestrator. Returns [{ movie, score, reasons }]. `now` injectable for tests.
-export async function getRecommendations(watched, opts = {}) {
+export async function getRecommendations(items, opts = {}) {
   const { limit = 20, now = Date.now() } = opts;
-  if (!watched || watched.length === 0) return [];
+  if (!items || items.length === 0) return [];
 
-  const sig = watchedSignature(watched);
+  const sig = signalSignature(items);
   try {
     const cached = JSON.parse(sessionStorage.getItem(RECS_CACHE_KEY) || 'null');
     if (cached && cached.sig === sig) return cached.recs;
   } catch { /* ignore cache read errors */ }
 
-  const enriched = await enrichWatchedTitles(watched);
+  const enriched = await enrichWatchedTitles(items);
   const profile = buildTasteProfile(enriched, now);
   const candidates = await generateCandidates(profile);
-  const watchedIds = new Set(watched.map((m) => m.id));
-  const recs = rankCandidates(candidates, profile, watchedIds, limit);
+  const excludeIds = new Set(items.map((m) => m.id));
+  const recs = rankCandidates(candidates, profile, excludeIds, limit);
 
   try {
     sessionStorage.setItem(RECS_CACHE_KEY, JSON.stringify({ sig, recs }));
