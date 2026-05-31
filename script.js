@@ -1951,7 +1951,6 @@ async function renderRecommendationsPage() {
   const page = document.createElement('div');
   page.className = 'rec-page';
   rows.forEach((row) => page.appendChild(buildRecRail(row.recs, { heading: row.title })));
-  main.innerHTML = '';
   main.appendChild(page);
 }
 
