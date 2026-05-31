@@ -2882,6 +2882,7 @@ const top250Button = document.getElementById('top250-btn');
 
 let isWatchedMode = false;
 let isFavoritesMode = false;
+let basketView = 'basket'; // 'basket' | 'downvoted' — which list the Basket tab shows
 
 function switchToRecommended() {
   currentApp = 'movies';
@@ -3028,23 +3029,48 @@ function loadFavorites() {
   setLoading(true);
   hideError();
 
-  const favorites = getStarredList();
-  if (favorites.length === 0) {
-    main.innerHTML = '<p class="no-results">No favorites yet. Tap the ★ on any title to add it.</p>';
+  const basket = getStarredList();
+  const downvoted = getDownvotedList();
+  const list = basketView === 'downvoted' ? downvoted : basket;
+
+  main.innerHTML = '';
+
+  // Segmented toggle: Basket | Downvoted (N)
+  const seg = document.createElement('div');
+  seg.className = 'basket-toggle';
+  const mkBtn = (key, label) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'basket-seg' + (basketView === key ? ' active' : '');
+    b.textContent = label;
+    b.addEventListener('click', () => { basketView = key; loadFavorites(); });
+    return b;
+  };
+  seg.appendChild(mkBtn('basket', `Basket (${basket.length})`));
+  seg.appendChild(mkBtn('downvoted', `Downvoted (${downvoted.length})`));
+  main.appendChild(seg);
+
+  if (list.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'no-results';
+    empty.textContent = basketView === 'downvoted'
+      ? 'No downvoted titles. Tap 👎 on any title to steer recommendations away from it.'
+      : 'Your basket is empty. Tap ★ on any title to seed recommendations.';
+    main.appendChild(empty);
+    allMovies = []; filteredMovies = []; displayedCount = 0; hasMorePages = false;
     setLoading(false);
     return;
   }
 
-  allMovies = favorites;
-  filteredMovies = favorites;
+  allMovies = list;
+  filteredMovies = list;
   displayedCount = 0;
   hasMorePages = false;
 
-  main.innerHTML = '';
   const fragment = document.createDocumentFragment();
-  favorites.forEach((movie, index) => fragment.appendChild(createMovieCard(movie, index)));
+  list.forEach((movie, index) => fragment.appendChild(createMovieCard(movie, index)));
   main.appendChild(fragment);
-  displayedCount = favorites.length;
+  displayedCount = list.length;
 
   setLoading(false);
 }
