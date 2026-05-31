@@ -201,7 +201,7 @@ test('mergeSignalItems unions watched + starred and annotates each', () => {
   assert.equal(byId[3]._engagement, null);
 });
 
-import { groupIntoRows } from './recommendations.js';
+import { groupIntoRows, combineProfiles } from './recommendations.js';
 
 // Helper to build a ranked rec quickly.
 function gr(id, { seeds = [], genres = [], score = 1 } = {}) {
@@ -278,4 +278,53 @@ test('groupIntoRows: total rows never exceed maxRows', () => {
   const ranked = Array.from({ length: 40 }, (_, i) => gr(2000 + i, { genres: [878] }));
   const rows = groupIntoRows(ranked, GROUP_PROFILE, { maxRows: 2 });
   assert.ok(rows.length <= 2);
+});
+
+const POS = {
+  genres: { '878': 4, '18': 2 },
+  keywords: { '9': { name: 'time travel', weight: 3 }, '7': { name: 'space', weight: 1 } },
+  people: { '5': { name: 'Nolan', weight: 2 } },
+  mediaTypeBias: { movie: 5, tv: 0 },
+  topTitles: [{ id: 1, title: 'Inception', weight: 3, genreIds: [878], keywordIds: [9], peopleIds: [5], media_type: 'movie' }],
+};
+const NEG = {
+  genres: { '18': 3, '27': 5 },
+  keywords: { '9': { name: 'time travel', weight: 1 }, '99': { name: 'gore', weight: 4 } },
+  people: { '5': { name: 'Nolan', weight: 1 } },
+  mediaTypeBias: { movie: 1, tv: 0 },
+  topTitles: [],
+};
+
+test('combineProfiles: genres net (pos - penalty*neg), keep negatives so scoring can penalize', () => {
+  const c = combineProfiles(POS, NEG, { penalty: 1 });
+  assert.equal(c.genres['878'], 4);
+  assert.equal(c.genres['18'], -1);
+  assert.equal(c.genres['27'], -5);
+});
+
+test('combineProfiles: keywords/people net, drop anything <= 0 so disliked themes never seed', () => {
+  const c = combineProfiles(POS, NEG, { penalty: 1 });
+  assert.equal(c.keywords['9'].weight, 2);
+  assert.equal(c.keywords['7'].weight, 1);
+  assert.equal(c.keywords['99'], undefined);
+  assert.equal(c.people['5'].weight, 1);
+});
+
+test('combineProfiles: penalty scales the negative side', () => {
+  const c = combineProfiles(POS, NEG, { penalty: 0.5 });
+  assert.equal(c.genres['18'], 0.5);
+  assert.equal(c.people['5'].weight, 1.5);
+});
+
+test('combineProfiles: positive profile passes through topTitles and mediaTypeBias', () => {
+  const c = combineProfiles(POS, NEG, { penalty: 1 });
+  assert.equal(c.topTitles[0].id, 1);
+  assert.deepEqual(c.mediaTypeBias, { movie: 5, tv: 0 });
+});
+
+test('combineProfiles: no negative profile is a pass-through of positives', () => {
+  const c = combineProfiles(POS, null, { penalty: 1 });
+  assert.equal(c.genres['878'], 4);
+  assert.equal(c.keywords['9'].weight, 3);
+  assert.equal(c.people['5'].weight, 2);
 });
