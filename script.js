@@ -1,6 +1,7 @@
 import { CONFIG, ENDPOINTS, MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './config.js';
 import { initYouTube, activateYouTube } from './youtube.js';
 import { getRecommendations, getRecommendationRows, clearRecommendationCache, mergeSignalItems } from './recommendations.js';
+import { createWatchTimer } from './watch-timer.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -161,24 +162,51 @@ const nextEpisodeBtn = document.getElementById('next-episode');
 
 // Current movie being played (for source switching)
 let currentPlayingMovie = null;
-let playerOpenedAt = 0;
-let playerHiddenMs = 0;
-let playerHiddenSince = 0;
-let dwellTitleId = null;
+let dwellTitleId = null;       // id of the title whose watch session is in progress
+let dwellMovie = null;         // its movie object, for committing to watched history
+let playerModalOpen = false;   // is the player modal visible?
+let activePlayerTab = 'watch'; // 'watch' | 'trailer' — which sub-tab is showing
 
-// Compute and persist this session's dwell, then reset. Idempotent.
+// A title counts as "watched" only after this much ACTIVE watch-tab time. The player
+// embeds cross-origin iframes, so real playback can't be detected — active watch-tab
+// time (trailer time and backgrounded-tab time excluded) is the honest proxy.
+const WATCHED_DWELL_THRESHOLD_MS = 180000; // 3 minutes
+
+// Tracks active watch-tab time for the current session (see watch-timer.js).
+const watchTimer = createWatchTimer();
+
+// Allow tests/debugging to lower the threshold via localStorage; falls back to default.
+function watchedThresholdMs() {
+  const o = Number(localStorage.getItem('__watchedThresholdMs'));
+  return Number.isFinite(o) && o > 0 ? o : WATCHED_DWELL_THRESHOLD_MS;
+}
+
+// The main video is "actively watched" only while the modal is open, the Watch tab
+// (not the trailer) is showing, and the browser tab is in the foreground.
+function isActivelyWatching() {
+  return playerModalOpen && !!dwellTitleId && activePlayerTab === 'watch' && !document.hidden;
+}
+
+// Re-evaluate the watch timer after any state change (tab switch, visibility, open/close).
+function syncWatchTimer() {
+  if (isActivelyWatching()) watchTimer.start(Date.now());
+  else watchTimer.pause(Date.now());
+}
+
+// Persist this session's active watch time and, if it crossed the threshold, commit the
+// title to watched history. Idempotent — safe to call on close, reopen, and pagehide.
 function flushDwell() {
-  if (!playerOpenedAt || !dwellTitleId) return;
-  if (playerHiddenSince) { // tab still hidden at flush time
-    playerHiddenMs += Date.now() - playerHiddenSince;
-    playerHiddenSince = 0;
+  if (!dwellTitleId) return;
+  watchTimer.pause(Date.now());
+  const watchMs = watchTimer.elapsed(Date.now());
+  if (watchMs > 0) {
+    recordDwell(dwellTitleId, watchMs);
+    if (dwellMovie && watchMs >= watchedThresholdMs()) addToWatchedHistory(dwellMovie);
+    clearRecommendationCache();
   }
-  const dwell = Date.now() - playerOpenedAt - playerHiddenMs;
-  recordDwell(dwellTitleId, dwell);
-  if (dwell > 0) clearRecommendationCache();
-  playerOpenedAt = 0;
-  playerHiddenMs = 0;
+  watchTimer.reset();
   dwellTitleId = null;
+  dwellMovie = null;
 }
 
 // Current trailer key
@@ -945,6 +973,7 @@ function switchTab(tab) {
     trailerContainer.style.display = 'none';
     // Pause trailer when switching away
     trailerIframe.src = '';
+    activePlayerTab = 'watch';
   } else if (tab === 'trailer' && currentTrailerKey) {
     tabTrailer.classList.add('active');
     tabWatch.classList.remove('active');
@@ -953,7 +982,10 @@ function switchTab(tab) {
     trailerIframe.src = `${YOUTUBE_EMBED_URL}/${currentTrailerKey}?autoplay=1`;
     // Pause main player when switching away
     playerIframe.src = '';
+    activePlayerTab = 'trailer';
   }
+  // Only watch-tab time counts toward "watched"; pause the timer on the trailer tab.
+  syncWatchTimer();
 }
 
 // Open video player modal
@@ -1185,15 +1217,13 @@ function handleEpisodeChange(episodeNum) {
 }
 
 async function openPlayer(movie) {
-  // Add to watched history
-  addToWatchedHistory(movie);
-
-  // Begin engagement capture for this title.
-  flushDwell(); // flush any prior session that didn't close cleanly
-  playerOpenedAt = Date.now();
-  playerHiddenMs = 0;
-  playerHiddenSince = 0;
+  // Begin engagement capture for this title. Watched status is NOT set on open — it is
+  // committed later by flushDwell() once enough active watch-tab time has accrued.
+  flushDwell(); // flush any prior session that didn't close cleanly (may mark it watched)
   dwellTitleId = movie.id;
+  dwellMovie = movie;
+  activePlayerTab = 'watch';
+  watchTimer.reset();
   recordOpen(movie.id);
 
   const title = movie.title || movie.name || 'Unknown';
@@ -1315,6 +1345,8 @@ async function openPlayer(movie) {
   // Show modal
   playerModal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
+  playerModalOpen = true;
+  syncWatchTimer(); // start counting active watch-tab time now that the modal is visible
 
   // Fetch trailer in background
   const trailerKey = await fetchTrailers(type, movie.id);
@@ -1332,6 +1364,7 @@ async function openPlayer(movie) {
 
 // Close video player modal
 function closePlayer() {
+  playerModalOpen = false;
   flushDwell();
   playerModal.style.display = 'none';
   playerIframe.src = '';
@@ -2683,15 +2716,10 @@ function initFromUrl() {
 // Scroll event for infinite scroll (debounced)
 window.addEventListener('scroll', debounce(checkScrollPosition, 100));
 
-// Pause dwell accumulation while the tab is hidden; flush on tab close.
+// Pause watch-time accumulation while the browser tab is hidden; flush on page close.
 document.addEventListener('visibilitychange', () => {
-  if (!playerOpenedAt) return;
-  if (document.hidden) {
-    playerHiddenSince = Date.now();
-  } else if (playerHiddenSince) {
-    playerHiddenMs += Date.now() - playerHiddenSince;
-    playerHiddenSince = 0;
-  }
+  if (!dwellTitleId) return;
+  syncWatchTimer();
 });
 window.addEventListener('pagehide', flushDwell);
 
