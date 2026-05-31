@@ -1921,6 +1921,13 @@ async function renderRecommendationsRow() {
 // Render the full themed Recommendation page (stacked rails) into #main.
 async function renderRecommendationsPage() {
   document.getElementById('recommendations-row')?.remove();
+  // Neutralize the Movies infinite-scroll lifecycle so scrolling this page can't
+  // append movie tiles or replace it with the trending grid (the global scroll
+  // listener is not tab-aware). Matches what Watched/Favorites do.
+  filteredMovies = [];
+  displayedCount = 0;
+  hasMorePages = false;
+  document.getElementById('load-more-indicator')?.remove();
   main.innerHTML = '';
   setLoading(true);
   hideError();
