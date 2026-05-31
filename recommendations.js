@@ -149,28 +149,6 @@ export function combineProfiles(pos, neg, opts = {}) {
   };
 }
 
-// Union watched history with starred titles and annotate each item with its
-// engagement record and star flag. Pure: caller supplies the three raw stores.
-export function mergeSignalItems(watched, starredMap, engagementMap) {
-  const starred = starredMap || {};
-  const engagement = engagementMap || {};
-  const byId = new Map();
-  for (const m of watched || []) byId.set(m.id, { ...m });
-  for (const key of Object.keys(starred)) {
-    const s = starred[key];
-    byId.set(s.id, byId.has(s.id) ? { ...byId.get(s.id), ...s } : { ...s });
-  }
-  const items = [];
-  for (const m of byId.values()) {
-    const e = engagement[m.id];
-    items.push({
-      ...m,
-      _starred: Object.prototype.hasOwnProperty.call(starred, m.id),
-      _engagement: e ? { dwellMs: e.dwellMs || 0, episodes: e.episodes || 0, opens: e.opens || 0 } : null,
-    });
-  }
-  return items;
-}
 
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
@@ -479,30 +457,44 @@ async function generateCandidates(profile) {
   return mergeCandidates(tagged);
 }
 
-// Stable signature of the signal set so we can cache results per session.
-// Includes star + engagement so toggling a star or finishing a long watch busts it.
-function signalSignature(items) {
-  return items
-    .map((m) => `${m.id}:${m.watchedAt || 0}:${m._starred ? 1 : 0}:${m._engagement?.dwellMs || 0}:${m._engagement?.episodes || 0}`)
-    .join(',');
+// Stable signature of the explicit signal set (basket + downvoted) for session caching.
+// Toggling a star or a downvote changes this, busting the cache.
+function signalSignature(basket, downvoted) {
+  const ids = (arr) => (arr || []).map((m) => m.id).join(',');
+  return `b:${ids(basket)}|d:${ids(downvoted)}`;
 }
 
-// Shared pipeline: enrich → profile → candidates → rank. Returns the profile too
-// (the dedicated Recommendation page groups by it). Cached per (signal signature, limit)
-// so the home teaser (limit 20) and the page (limit 60) don't clobber each other.
-async function _pipeline(items, opts = {}) {
-  const { limit = 20, now = Date.now() } = opts;
-  const sig = signalSignature(items);
+// Shared pipeline: enrich basket + downvoted → positive/negative profiles → net profile
+// → candidates → rank, excluding watched ∪ downvoted ∪ basket. `input` is
+// { basket: [movie], downvoted: [movie], watchedIds: [id] }. Cached per (signature, limit).
+async function _pipeline(input, opts = {}) {
+  const { limit = 20, now = Date.now(), penalty = DOWNVOTE_PENALTY } = opts;
+  const basket = input.basket || [];
+  const downvoted = input.downvoted || [];
+  const watchedIds = input.watchedIds || [];
+
+  const sig = signalSignature(basket, downvoted);
   const cacheKey = `${RECS_CACHE_KEY}:${limit}`;
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
     if (cached && cached.sig === sig) return { profile: cached.profile, recs: cached.recs };
   } catch { /* ignore cache read errors */ }
 
-  const enriched = await enrichWatchedTitles(items);
-  const profile = buildTasteProfile(enriched, now);
+  // Basket items are explicit seeds; mark them starred and drop engagement so the profile
+  // weights them uniformly (basket-primary, not time/engagement-driven). Downvoted items
+  // are profiled the same way so positive/negative weights are on a comparable scale.
+  const annotate = (arr) => arr.map((m) => ({ ...m, _starred: true, _engagement: null }));
+  const basketEnriched = annotate(await enrichWatchedTitles(basket));
+  const downEnriched = annotate(await enrichWatchedTitles(downvoted));
+
+  const posProfile = buildTasteProfile(basketEnriched, now);
+  const negProfile = downEnriched.length ? buildTasteProfile(downEnriched, now) : null;
+  const profile = combineProfiles(posProfile, negProfile, { penalty });
+
   const candidates = await generateCandidates(profile);
-  const excludeIds = new Set(items.map((m) => m.id));
+  const excludeIds = new Set(
+    [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
+  );
   const recs = rankCandidates(candidates, profile, excludeIds, limit);
 
   try {
@@ -511,19 +503,17 @@ async function _pipeline(items, opts = {}) {
   return { profile, recs };
 }
 
-// Top-level orchestrator for the home teaser row. Returns [{ movie, score, reasons }].
-export async function getRecommendations(items, opts = {}) {
-  if (!items || items.length === 0) return [];
-  return (await _pipeline(items, opts)).recs;
+// Home teaser orchestrator. Empty basket -> no recommendations (basket-primary cold-start).
+export async function getRecommendations(input, opts = {}) {
+  if (!input || !input.basket || input.basket.length === 0) return [];
+  return (await _pipeline(input, opts)).recs;
 }
 
-// Orchestrator for the dedicated Recommendation page. Ranks a larger candidate set
-// (the engine already over-fetches, so this adds no network cost) and groups it.
-// Returns { rows: [{ kind, title, recs }] }. `now` and `groupOpts` injectable for tests.
-export async function getRecommendationRows(items, opts = {}) {
-  if (!items || items.length === 0) return { rows: [] };
+// Recommendation page orchestrator. Empty basket -> no rows.
+export async function getRecommendationRows(input, opts = {}) {
+  if (!input || !input.basket || input.basket.length === 0) return { rows: [] };
   const { limit = 60, now = Date.now(), groupOpts = {} } = opts;
-  const { profile, recs } = await _pipeline(items, { limit, now });
+  const { profile, recs } = await _pipeline(input, { limit, now });
   return { rows: groupIntoRows(recs, profile, groupOpts) };
 }
 
