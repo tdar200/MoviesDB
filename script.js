@@ -1,6 +1,6 @@
 import { CONFIG, ENDPOINTS, MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './config.js';
 import { initYouTube, activateYouTube } from './youtube.js';
-import { getRecommendations, getRecommendationRows, clearRecommendationCache, mergeSignalItems } from './recommendations.js';
+import { getRecommendations, getRecommendationRows, clearRecommendationCache } from './recommendations.js';
 import { createWatchTimer } from './watch-timer.js';
 
 // App state - which tab is active
@@ -425,9 +425,14 @@ function getDownvotedList() {
   return Object.values(store).sort((a, b) => (b.downvotedAt || 0) - (a.downvotedAt || 0));
 }
 
-// Assemble the unified, annotated input the engine consumes.
+// Assemble the explicit signal input the engine consumes: the starred basket (positive),
+// the downvoted set (negative steer), and watched ids (exclude-only).
 function buildSignalItems() {
-  return mergeSignalItems(getWatchedHistory(), getStarredStore(), getEngagementStore());
+  return {
+    basket: getStarredList(),
+    downvoted: getDownvotedList(),
+    watchedIds: getWatchedHistory().map((m) => m.id),
+  };
 }
 
 // Populate source selector with test results percentages
@@ -2001,7 +2006,7 @@ async function renderRecommendationsRow() {
   if (isSearchMode || isTop250Mode || isWatchedMode || isFavoritesMode) return;
 
   const items = buildSignalItems();
-  if (items.length === 0) return; // cold-start: show nothing
+  if (items.basket.length === 0) return; // basket-primary cold-start: nothing to recommend
 
   let recs = [];
   try {
@@ -2054,9 +2059,9 @@ async function renderRecommendationsPage() {
   hideError();
 
   const items = buildSignalItems();
-  if (items.length === 0) {
+  if (items.basket.length === 0) {
     setLoading(false);
-    main.innerHTML = '<p class="no-results rec-empty">Watch or ★ a few titles to build your recommendations.</p>';
+    main.innerHTML = '<p class="no-results rec-empty">Add titles to your basket with ★ to build your recommendations.</p>';
     return;
   }
 
