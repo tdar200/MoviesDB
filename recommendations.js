@@ -484,6 +484,16 @@ export async function getRecommendations(items, opts = {}) {
   return (await _pipeline(items, opts)).recs;
 }
 
+// Orchestrator for the dedicated Recommendation page. Ranks a larger candidate set
+// (the engine already over-fetches, so this adds no network cost) and groups it.
+// Returns { rows: [{ kind, title, recs }] }. `now` and `groupOpts` injectable for tests.
+export async function getRecommendationRows(items, opts = {}) {
+  if (!items || items.length === 0) return { rows: [] };
+  const { limit = 60, now = Date.now(), groupOpts = {} } = opts;
+  const { profile, recs } = await _pipeline(items, { limit, now });
+  return { rows: groupIntoRows(recs, profile, groupOpts) };
+}
+
 // Clear every per-limit session results cache entry (call after a new title is watched).
 export function clearRecommendationCache() {
   try {
