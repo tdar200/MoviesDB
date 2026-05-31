@@ -1305,6 +1305,7 @@ async function openPlayer(movie) {
       const on = isDownvoted(movie.id);
       playerDownBtn.classList.toggle('downvoted', on);
       playerDownBtn.setAttribute('aria-pressed', String(on));
+      playerDownBtn.setAttribute('aria-label', on ? 'Remove downvote' : 'Not interested (downvote)');
       playerDownBtn.title = on ? 'Remove downvote' : 'Not interested';
       playerDownBtn.innerHTML = on ? DOWN_FILLED_SVG : DOWN_OUTLINE_SVG;
     };
@@ -2035,7 +2036,11 @@ function onSignalChanged() {
 }
 
 // Render the full themed Recommendation page (stacked rails) into #main.
+// Bumped on each render so a slower in-flight render (e.g. from a rapid second toggle)
+// can detect it was superseded and skip mutating #main — avoids stacked duplicate pages.
+let recPageRenderToken = 0;
 async function renderRecommendationsPage() {
+  const token = ++recPageRenderToken;
   document.getElementById('recommendations-row')?.remove();
   // Neutralize the Movies infinite-scroll lifecycle so scrolling this page can't
   // append movie tiles or replace it with the trending grid (the global scroll
@@ -2056,16 +2061,21 @@ async function renderRecommendationsPage() {
   }
 
   let rows = [];
+  let failed = false;
   try {
     ({ rows } = await getRecommendationRows(items, { limit: 60 }));
   } catch (e) {
     console.warn('Recommendation page failed:', e);
-    setLoading(false);
+    failed = true;
+  }
+
+  if (token !== recPageRenderToken) return; // superseded by a newer render — don't touch #main
+
+  setLoading(false);
+  if (failed) {
     main.innerHTML = '<p class="no-results rec-empty">Couldn’t load recommendations right now. Try again shortly.</p>';
     return;
   }
-
-  setLoading(false);
   if (rows.length === 0) {
     main.innerHTML = '<p class="no-results rec-empty">No recommendations yet — keep watching to tune your taste.</p>';
     return;
