@@ -283,6 +283,7 @@ function clearWatchedHistory() {
 // ---- Engagement + star signal stores ----
 const TITLE_ENGAGEMENT_KEY = 'titleEngagement';
 const STARRED_TITLES_KEY = 'starredTitles';
+const DOWNVOTED_TITLES_KEY = 'downvotedTitles';
 const SESSION_DWELL_CAP_MS = 10800000; // 3h per session
 const TOTAL_DWELL_CAP_MS = 86400000;   // 24h lifetime per title
 
@@ -344,6 +345,12 @@ function toggleStar(movie) {
     clearRecommendationCache();
     return false;
   }
+  // Remove from downvoted if present — mutually exclusive with the basket.
+  const downvoted = getDownvotedStore();
+  if (Object.prototype.hasOwnProperty.call(downvoted, movie.id)) {
+    delete downvoted[movie.id];
+    saveDownvotedStore(downvoted);
+  }
   store[movie.id] = {
     id: movie.id,
     media_type: movie.media_type || (movie.title ? 'movie' : 'tv'),
@@ -364,6 +371,57 @@ function toggleStar(movie) {
 function getStarredList() {
   const store = getStarredStore();
   return Object.values(store).sort((a, b) => (b.starredAt || 0) - (a.starredAt || 0));
+}
+
+function getDownvotedStore() {
+  try { return JSON.parse(localStorage.getItem(DOWNVOTED_TITLES_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveDownvotedStore(store) {
+  try { localStorage.setItem(DOWNVOTED_TITLES_KEY, JSON.stringify(store)); }
+  catch (e) { console.error('downvoted save failed:', e); }
+}
+function isDownvoted(id) {
+  return Object.prototype.hasOwnProperty.call(getDownvotedStore(), id);
+}
+// Snapshot of a title for a signal store (basket or downvoted). Mirrors the star payload.
+function signalSnapshot(movie) {
+  return {
+    id: movie.id,
+    media_type: movie.media_type || (movie.title ? 'movie' : 'tv'),
+    genre_ids: movie.genre_ids || [],
+    vote_average: movie.vote_average,
+    title: movie.title,
+    name: movie.name,
+    poster_path: movie.poster_path,
+    release_date: movie.release_date,
+    first_air_date: movie.first_air_date,
+    overview: movie.overview,
+  };
+}
+// Toggle downvote for a movie; returns the new downvoted state. Mutually exclusive with star.
+function toggleDownvote(movie) {
+  const store = getDownvotedStore();
+  if (Object.prototype.hasOwnProperty.call(store, movie.id)) {
+    delete store[movie.id];
+    saveDownvotedStore(store);
+    clearRecommendationCache();
+    return false;
+  }
+  // Remove from basket if present — a title is in at most one of {basket, downvoted}.
+  const starred = getStarredStore();
+  if (Object.prototype.hasOwnProperty.call(starred, movie.id)) {
+    delete starred[movie.id];
+    saveStarredStore(starred);
+  }
+  store[movie.id] = { ...signalSnapshot(movie), downvotedAt: Date.now() };
+  saveDownvotedStore(store);
+  clearRecommendationCache();
+  return true;
+}
+function getDownvotedList() {
+  const store = getDownvotedStore();
+  return Object.values(store).sort((a, b) => (b.downvotedAt || 0) - (a.downvotedAt || 0));
 }
 
 // Assemble the unified, annotated input the engine consumes.
