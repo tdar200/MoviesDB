@@ -384,15 +384,16 @@ function signalSignature(items) {
     .join(',');
 }
 
-// Top-level orchestrator. Returns [{ movie, score, reasons }]. `now` injectable for tests.
-export async function getRecommendations(items, opts = {}) {
+// Shared pipeline: enrich → profile → candidates → rank. Returns the profile too
+// (the dedicated Recommendation page groups by it). Cached per (signal signature, limit)
+// so the home teaser (limit 20) and the page (limit 60) don't clobber each other.
+async function _pipeline(items, opts = {}) {
   const { limit = 20, now = Date.now() } = opts;
-  if (!items || items.length === 0) return [];
-
   const sig = signalSignature(items);
+  const cacheKey = `${RECS_CACHE_KEY}:${limit}`;
   try {
-    const cached = JSON.parse(sessionStorage.getItem(RECS_CACHE_KEY) || 'null');
-    if (cached && cached.sig === sig) return cached.recs;
+    const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+    if (cached && cached.sig === sig) return { profile: cached.profile, recs: cached.recs };
   } catch { /* ignore cache read errors */ }
 
   const enriched = await enrichWatchedTitles(items);
@@ -402,14 +403,23 @@ export async function getRecommendations(items, opts = {}) {
   const recs = rankCandidates(candidates, profile, excludeIds, limit);
 
   try {
-    sessionStorage.setItem(RECS_CACHE_KEY, JSON.stringify({ sig, recs }));
+    sessionStorage.setItem(cacheKey, JSON.stringify({ sig, profile, recs }));
   } catch { /* ignore quota errors */ }
-  return recs;
+  return { profile, recs };
 }
 
-// Clear the session results cache (call after a new title is watched).
+// Top-level orchestrator for the home teaser row. Returns [{ movie, score, reasons }].
+export async function getRecommendations(items, opts = {}) {
+  if (!items || items.length === 0) return [];
+  return (await _pipeline(items, opts)).recs;
+}
+
+// Clear every per-limit session results cache entry (call after a new title is watched).
 export function clearRecommendationCache() {
   try {
-    sessionStorage.removeItem(RECS_CACHE_KEY);
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(RECS_CACHE_KEY)) sessionStorage.removeItem(k);
+    }
   } catch { /* ignore */ }
 }
