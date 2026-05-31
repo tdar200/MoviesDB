@@ -1459,3 +1459,65 @@ main {
   height: 34px;
   background: rgba(255, 255, 255, 0.08);
 }
+
+/* Downvote toggle — sits beside the star on cards. */
+.down-btn {
+  position: absolute;
+  top: 0.45rem;
+  left: 2.7rem;            /* to the right of the star (which is at left: 0.5rem) */
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(8, 9, 26, 0.55);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+.movie:hover .down-btn,
+.rec-card:hover .down-btn,
+.down-btn:focus-visible,
+.down-btn.downvoted {
+  opacity: 1;
+  transform: scale(1);
+}
+.down-btn.downvoted { color: #ff6b6b; background: rgba(8, 9, 26, 0.75); }
+.down-btn:hover { color: #ff9b9b; }
+/* On the rec card the star is at top-right; offset the downvote to its left. */
+.rec-card .down-btn { left: auto; right: 2.7rem; }
+/* Player-header downvote sits inline beside the title star, always visible. */
+.player-down {
+  position: static;
+  opacity: 1;
+  transform: none;
+  width: 34px;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Basket | Downvoted segmented toggle. */
+.basket-toggle {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0 auto 1.25rem;
+  max-width: 1500px;
+  padding: 0 0.4rem;
+}
+.basket-seg {
+  padding: 0.45rem 0.9rem;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #b9bce0;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.basket-seg.active { background: #e9b955; color: #1a1a2e; border-color: transparent; font-weight: 600; }
