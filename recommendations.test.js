@@ -328,3 +328,15 @@ test('combineProfiles: no negative profile is a pass-through of positives', () =
   assert.equal(c.keywords['9'].weight, 3);
   assert.equal(c.people['5'].weight, 2);
 });
+
+test('scoreCandidate: a candidate in a net-negative genre scores below a neutral one', () => {
+  const netProfile = {
+    genres: { '878': 4, '27': -5 },                 // like Sci-Fi, dislike Horror
+    keywords: {}, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  const sciFi = { id: 10, genre_ids: [878], _seeds: [], popularity: 10 };
+  const horror = { id: 11, genre_ids: [878, 27], _seeds: [], popularity: 10 };
+  assert.ok(scoreCandidate(sciFi, netProfile) > scoreCandidate(horror, netProfile),
+    'horror-tagged candidate must score lower due to the negative genre');
+});

@@ -446,6 +446,7 @@ async function generateCandidates(profile) {
   const topPeople = Object.entries(profile.people)
     .sort((a, b) => b[1].weight - a[1].weight).slice(0, 6);
   const topGenres = Object.entries(profile.genres)
+    .filter(([, w]) => w > 0)                       // never seed Discover with a downvoted genre
     .sort((a, b) => b[1] - a[1]).slice(0, 4).map(([id]) => id);
 
   const requests = [];
