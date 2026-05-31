@@ -53,6 +53,7 @@ const top250Btn = document.getElementById('top250-btn');
 const playerModal = document.getElementById('player-modal');
 const playerIframe = document.getElementById('player-iframe');
 const playerStarBtn = document.getElementById('player-star');
+const playerDownBtn = document.getElementById('player-down');
 const trailerIframe = document.getElementById('trailer-iframe');
 const playerTitle = document.getElementById('player-title');
 const closeModalBtn = document.getElementById('close-modal');
@@ -1290,7 +1291,7 @@ async function openPlayer(movie) {
   // Store current movie for source switching
   currentPlayingMovie = movie;
 
-  // Sync the player-header star to this title.
+  // Sync the player-header star + downvote to this title, kept mutually exclusive.
   if (playerStarBtn) {
     const syncPlayerStar = () => {
       const on = isStarred(movie.id);
@@ -1299,9 +1300,22 @@ async function openPlayer(movie) {
       playerStarBtn.title = on ? 'Remove from favorites' : 'Add to favorites';
       playerStarBtn.innerHTML = on ? STAR_FILLED_SVG : STAR_OUTLINE_SVG;
     };
+    const syncPlayerDown = () => {
+      if (!playerDownBtn) return;
+      const on = isDownvoted(movie.id);
+      playerDownBtn.classList.toggle('downvoted', on);
+      playerDownBtn.setAttribute('aria-pressed', String(on));
+      playerDownBtn.title = on ? 'Remove downvote' : 'Not interested';
+      playerDownBtn.innerHTML = on ? DOWN_FILLED_SVG : DOWN_OUTLINE_SVG;
+    };
     syncPlayerStar();
-    playerStarBtn.onclick = (e) => { e.stopPropagation(); toggleStar(movie); syncPlayerStar(); };
+    syncPlayerDown();
+    playerStarBtn.onclick = (e) => { e.stopPropagation(); toggleStar(movie); syncPlayerStar(); syncPlayerDown(); onSignalChanged(); };
     playerStarBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); };
+    if (playerDownBtn) {
+      playerDownBtn.onclick = (e) => { e.stopPropagation(); toggleDownvote(movie); syncPlayerStar(); syncPlayerDown(); onSignalChanged(); };
+      playerDownBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); };
+    }
   }
 
   // Reset TV state
@@ -1914,6 +1928,7 @@ function createRecommendationCard(rec, index) {
   scrim.appendChild(sub);
   poster.appendChild(scrim);
   poster.appendChild(createStarButton(movie));
+  poster.appendChild(createDownvoteButton(movie));
   card.appendChild(poster);
 
   // The "why" — theme-led, with an optional dominant title.
@@ -2009,6 +2024,16 @@ async function renderRecommendationsRow() {
   main.parentNode.insertBefore(section, main);
 }
 
+// Called after any basket/downvote toggle. The stores already busted the rec cache;
+// re-render whichever recommendation surface is currently showing so the change applies.
+function onSignalChanged() {
+  if (tabRecommended.classList.contains('active')) {
+    renderRecommendationsPage();
+  } else if (currentApp === 'movies' && !isWatchedMode && !isFavoritesMode && !isSearchMode && !isTop250Mode) {
+    renderRecommendationsRow();
+  }
+}
+
 // Render the full themed Recommendation page (stacked rails) into #main.
 async function renderRecommendationsPage() {
   document.getElementById('recommendations-row')?.remove();
@@ -2069,13 +2094,50 @@ function createStarButton(movie) {
     btn.innerHTML = on ? STAR_FILLED_SVG : STAR_OUTLINE_SVG;
   };
   sync();
+  btn.addEventListener('resync', sync); // re-render when a sibling downvote toggles state
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleStar(movie);
     sync();
-    if (isFavoritesMode) loadFavorites(); // un-starring removes it from the favorites grid
+    const down = btn.parentElement?.querySelector('.down-btn');
+    if (down) down.dispatchEvent(new CustomEvent('resync'));
+    if (isFavoritesMode) loadFavorites();
+    onSignalChanged();
   });
   // Keep keyboard activation on the star from bubbling to the card's play handler.
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+  });
+  return btn;
+}
+
+const DOWN_OUTLINE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 14V3H4v11h3zm0 0l4 7c1.1 0 2-.9 2-2v-4h5.5c.8 0 1.4-.7 1.3-1.5l-1-6A1.5 1.5 0 0 0 17.3 9H13V5"/></svg>';
+const DOWN_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M22 4h-3v11h3V4zM2 14.5C2 15.3 2.7 16 3.5 16H10l-1 4.5c-.2.9.5 1.5 1.3 1.5.5 0 1-.3 1.3-.8L16 14V4H4.2c-.7 0-1.3.5-1.5 1.2l-2 8.3c0 .3 0 .7.3 1z"/></svg>';
+
+// A downvote toggle bound to a movie. Mutually exclusive with the star; stops click
+// propagation so it never triggers play. Re-syncs the sibling star button after toggling.
+function createDownvoteButton(movie) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'down-btn';
+  const sync = () => {
+    const on = isDownvoted(movie.id);
+    btn.classList.toggle('downvoted', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Remove downvote' : 'Not interested (downvote)');
+    btn.title = on ? 'Remove downvote' : 'Not interested';
+    btn.innerHTML = on ? DOWN_FILLED_SVG : DOWN_OUTLINE_SVG;
+  };
+  sync();
+  btn.addEventListener('resync', sync);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleDownvote(movie);
+    sync();
+    const star = btn.parentElement?.querySelector('.star-btn');
+    if (star) star.dispatchEvent(new CustomEvent('resync'));
+    onSignalChanged();
+  });
   btn.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
   });
@@ -2250,6 +2312,7 @@ function createMovieCard(movie, index) {
 
   // Assemble card
   imageDiv.appendChild(createStarButton(movie));
+  imageDiv.appendChild(createDownvoteButton(movie));
   card.appendChild(imageDiv);
   card.appendChild(infoDiv);
   card.appendChild(overviewDiv);
