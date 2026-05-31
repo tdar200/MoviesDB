@@ -299,6 +299,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
 
   // 3. More <Genre> — top profile genres by weight.
   const topGenres = Object.entries(profile.genres || {})
+    .filter(([, w]) => w > 0)
     .sort((a, b) => b[1] - a[1]).slice(0, genreRows).map(([id]) => Number(id));
   for (const gid of topGenres) {
     const recs = take((r) => (r.movie.genre_ids || []).map(Number).includes(gid));
@@ -460,7 +461,7 @@ async function generateCandidates(profile) {
 // Stable signature of the explicit signal set (basket + downvoted) for session caching.
 // Toggling a star or a downvote changes this, busting the cache.
 function signalSignature(basket, downvoted) {
-  const ids = (arr) => (arr || []).map((m) => m.id).join(',');
+  const ids = (arr) => (arr || []).map((m) => m.id).sort().join(',');
   return `b:${ids(basket)}|d:${ids(downvoted)}`;
 }
 
@@ -512,8 +513,8 @@ export async function getRecommendations(input, opts = {}) {
 // Recommendation page orchestrator. Empty basket -> no rows.
 export async function getRecommendationRows(input, opts = {}) {
   if (!input || !input.basket || input.basket.length === 0) return { rows: [] };
-  const { limit = 60, now = Date.now(), groupOpts = {} } = opts;
-  const { profile, recs } = await _pipeline(input, { limit, now });
+  const { limit = 60, now = Date.now(), groupOpts = {}, penalty } = opts;
+  const { profile, recs } = await _pipeline(input, { limit, now, penalty });
   return { rows: groupIntoRows(recs, profile, groupOpts) };
 }
 
