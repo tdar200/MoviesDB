@@ -1233,6 +1233,24 @@ main {
   border-radius: 99px;
 }
 
+/* ---- Dedicated Recommendation page (stacked rails) ---- */
+.rec-page {
+  /* Re-declare the gold accent vars the rails/cards reference; on the home row
+     these come from .recommendations-row, which the page intentionally omits. */
+  --rec-gold: #e9b955;
+  --rec-gold-soft: #f3d089;
+  --rec-ink: #0f1130;
+  max-width: 1500px;
+  margin: 1.25rem auto 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2.25rem;
+}
+.rec-rail-section { position: relative; }
+.rec-page .rec-header { margin-bottom: 0.85rem; }
+.rec-page .rec-heading { font-size: 1.5rem; }
+.rec-empty { margin: 3rem auto; text-align: center; color: #b9bce0; }
+
 /* ---- Card ---- */
 .rec-card {
   flex: 0 0 182px;
