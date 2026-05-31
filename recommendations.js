@@ -274,11 +274,13 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   const hasSeed = (r, type, id) => (r.movie._seeds || []).some((s) => s.type === type && s.id === id);
 
   // 2. Because you watched X — strongest contributing titles by profile weight.
+  // Note: these also claim person-seeded recs, so a "More from <Person>" row for a
+  // person who is also in topTitles may be starved (and dropped by the minItems gate).
   for (const t of (profile.topTitles || []).slice(0, titleRows)) {
     const kw = new Set(t.keywordIds || []);
     const pp = new Set(t.peopleIds || []);
     const recs = take((r) => (r.movie._seeds || []).some((s) =>
-      (s.type === 'keyword' && kw.has(s.id)) || (s.type === 'person' && pp.has(s.id))));
+      (s.type === 'keyword' && kw.has(Number(s.id))) || (s.type === 'person' && pp.has(Number(s.id)))));
     if (recs.length >= minItems) {
       claim(recs);
       rows.push({ kind: 'title', title: `Because you watched ${t.title}`, recs });
