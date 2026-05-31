@@ -243,6 +243,74 @@ export function generateReasons(candidate, profile) {
   return reasons.slice(0, 2);
 }
 
+// Group a ranked rec list into themed rows for the dedicated Recommendation page.
+// Pure: no network, no DOM. `ranked` = [{movie, score, reasons}] where each movie
+// carries _seeds provenance and genre_ids; `profile` is a buildTasteProfile() result.
+export function groupIntoRows(ranked, profile, opts = {}) {
+  const {
+    topCount = 20,
+    titleRows = 3,
+    genreRows = 3,
+    personRows = 2,
+    minItems = 4,
+    maxRows = 10,
+    itemsPerRow = 20,
+  } = opts;
+
+  const rows = [];
+
+  // 1. Top picks — highest scored overall. Does not consume the themed-row claim.
+  if (ranked.length && topCount > 0) {
+    rows.push({ kind: 'top', title: 'Top picks for you', recs: ranked.slice(0, topCount) });
+  }
+
+  // A movie lands in at most one themed row; first themed row (by order below) wins.
+  const claimed = new Set();
+  const recId = (r) => String(r.movie.id);
+  const take = (predicate) => ranked
+    .filter((r) => !claimed.has(recId(r)) && predicate(r))
+    .slice(0, itemsPerRow);
+  const claim = (recs) => recs.forEach((r) => claimed.add(recId(r)));
+  const hasSeed = (r, type, id) => (r.movie._seeds || []).some((s) => s.type === type && s.id === id);
+
+  // 2. Because you watched X — strongest contributing titles by profile weight.
+  for (const t of (profile.topTitles || []).slice(0, titleRows)) {
+    const kw = new Set(t.keywordIds || []);
+    const pp = new Set(t.peopleIds || []);
+    const recs = take((r) => (r.movie._seeds || []).some((s) =>
+      (s.type === 'keyword' && kw.has(s.id)) || (s.type === 'person' && pp.has(s.id))));
+    if (recs.length >= minItems) {
+      claim(recs);
+      rows.push({ kind: 'title', title: `Because you watched ${t.title}`, recs });
+    }
+  }
+
+  // 3. More <Genre> — top profile genres by weight.
+  const topGenres = Object.entries(profile.genres || {})
+    .sort((a, b) => b[1] - a[1]).slice(0, genreRows).map(([id]) => Number(id));
+  for (const gid of topGenres) {
+    const recs = take((r) => (r.movie.genre_ids || []).map(Number).includes(gid));
+    if (recs.length >= minItems) {
+      claim(recs);
+      rows.push({ kind: 'genre', title: `More ${GENRE_NAMES.get(gid) || 'like this'}`, recs });
+    }
+  }
+
+  // 4. More from <Person> — top profile people by weight.
+  const topPeople = Object.entries(profile.people || {})
+    .sort((a, b) => b[1].weight - a[1].weight).slice(0, personRows);
+  for (const [pidStr, { name }] of topPeople) {
+    const pid = Number(pidStr);
+    const recs = take((r) => hasSeed(r, 'person', pid));
+    if (recs.length >= minItems) {
+      claim(recs);
+      rows.push({ kind: 'person', title: `More from ${name}`, recs });
+    }
+  }
+
+  return rows.slice(0, maxRows);
+}
+
 // Score, drop already-watched, sort desc, take top `limit`.
 export function rankCandidates(candidates, profile, watchedIds, limit = 20) {
   const watched = new Set([...watchedIds].map(String));

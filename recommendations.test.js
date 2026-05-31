@@ -200,3 +200,82 @@ test('mergeSignalItems unions watched + starred and annotates each', () => {
   assert.equal(byId[3]._starred, true);
   assert.equal(byId[3]._engagement, null);
 });
+
+import { groupIntoRows } from './recommendations.js';
+
+// Helper to build a ranked rec quickly.
+function gr(id, { seeds = [], genres = [], score = 1 } = {}) {
+  return { movie: { id, genre_ids: genres, _seeds: seeds }, score, reasons: ['r'] };
+}
+
+const GROUP_PROFILE = {
+  genres: { '878': 5, '28': 3, '18': 1 },                 // 878=Sci-Fi, 28=Action, 18=Drama
+  keywords: { '9': { name: 'time travel', weight: 2 } },
+  people: { '5': { name: 'Nolan', weight: 4 }, '7': { name: 'Villeneuve', weight: 2 } },
+  mediaTypeBias: { movie: 5, tv: 0 },
+  topTitles: [
+    { id: 1, title: 'Inception', weight: 3, genreIds: [878], keywordIds: [9], peopleIds: [5], media_type: 'movie' },
+  ],
+};
+
+test('groupIntoRows: top picks row is first and capped', () => {
+  const ranked = Array.from({ length: 30 }, (_, i) => gr(1000 + i, { genres: [878] }));
+  const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 20 });
+  assert.equal(rows[0].kind, 'top');
+  assert.equal(rows[0].title, 'Top picks for you');
+  assert.equal(rows[0].recs.length, 20);
+});
+
+test('groupIntoRows: "Because you watched" groups by shared keyword/person seed', () => {
+  const ranked = [
+    gr(10, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
+    gr(11, { seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 4 }] }),
+    gr(12, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
+    gr(13, { seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 4 }] }),
+    gr(14, { seeds: [{ type: 'genre', id: 99, name: 'Doc', weight: 1 }] }), // unrelated
+  ];
+  const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 0, minItems: 4 });
+  const titleRow = rows.find((r) => r.kind === 'title');
+  assert.equal(titleRow.title, 'Because you watched Inception');
+  assert.equal(titleRow.recs.length, 4); // ids 10,11,12,13 — not the unrelated 14
+});
+
+test('groupIntoRows: drops rows with fewer than minItems', () => {
+  const ranked = [
+    gr(10, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
+    gr(11, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
+  ]; // only 2 match the title — below minItems 4
+  const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 0, minItems: 4 });
+  assert.equal(rows.find((r) => r.kind === 'title'), undefined);
+});
+
+test('groupIntoRows: genre row labelled from config and deduped against earlier rows', () => {
+  // 4 sci-fi recs share the Nolan person seed (claimed by the title row first),
+  // plus 4 fresh sci-fi recs with no person seed for the genre row.
+  const ranked = [
+    ...[20, 21, 22, 23].map((id) => gr(id, { genres: [878], seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 4 }] })),
+    ...[30, 31, 32, 33].map((id) => gr(id, { genres: [878] })),
+  ];
+  const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 0, minItems: 4 });
+  const genreRow = rows.find((r) => r.kind === 'genre');
+  assert.equal(genreRow.title, 'More Sci-Fi');
+  // 20-23 were claimed by the "Because you watched" row; only 30-33 remain.
+  assert.deepEqual(genreRow.recs.map((r) => r.movie.id), [30, 31, 32, 33]);
+});
+
+test('groupIntoRows: "More from <Person>" groups by person seed', () => {
+  const ranked = [10, 11, 12, 13].map((id) =>
+    gr(id, { seeds: [{ type: 'person', id: 7, name: 'Villeneuve', weight: 2 }] }));
+  // No topTitles person 7 and no genre match, so these land in the person row.
+  const profile = { ...GROUP_PROFILE, topTitles: [], genres: {} };
+  const rows = groupIntoRows(ranked, profile, { topCount: 0, minItems: 4 });
+  const personRow = rows.find((r) => r.kind === 'person');
+  assert.equal(personRow.title, 'More from Villeneuve');
+  assert.equal(personRow.recs.length, 4);
+});
+
+test('groupIntoRows: total rows never exceed maxRows', () => {
+  const ranked = Array.from({ length: 40 }, (_, i) => gr(2000 + i, { genres: [878] }));
+  const rows = groupIntoRows(ranked, GROUP_PROFILE, { maxRows: 2 });
+  assert.ok(rows.length <= 2);
+});
