@@ -1,6 +1,6 @@
 import { CONFIG, ENDPOINTS, MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './config.js';
 import { initYouTube, activateYouTube } from './youtube.js';
-import { getRecommendations, clearRecommendationCache, mergeSignalItems } from './recommendations.js';
+import { getRecommendations, getRecommendationRows, clearRecommendationCache, mergeSignalItems } from './recommendations.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -1850,6 +1850,42 @@ function createRecommendationCard(rec, index) {
 }
 
 // Render the "Recommended for you" rail at the top of the Movies home view.
+// Build one labelled recommendation rail (editorial header + edge-faded scroller of
+// rec cards). Shared by the Movies-home teaser row and the dedicated Recommendation page.
+function buildRecRail(recs, { kicker, heading, subline }) {
+  const section = document.createElement('section');
+  section.className = 'rec-rail-section';
+
+  const header = document.createElement('div');
+  header.className = 'rec-header';
+  if (kicker) {
+    const k = document.createElement('span');
+    k.className = 'rec-kicker';
+    k.textContent = kicker;
+    header.appendChild(k);
+  }
+  const h = document.createElement('h2');
+  h.className = 'rec-heading';
+  h.textContent = heading;
+  header.appendChild(h);
+  if (subline) {
+    const s = document.createElement('span');
+    s.className = 'rec-subline';
+    s.textContent = subline;
+    header.appendChild(s);
+  }
+  section.appendChild(header);
+
+  const rail = document.createElement('div');
+  rail.className = 'rec-rail';
+  const scroller = document.createElement('div');
+  scroller.className = 'rec-scroller';
+  recs.forEach((rec, index) => scroller.appendChild(createRecommendationCard(rec, index)));
+  rail.appendChild(scroller);
+  section.appendChild(rail);
+  return section;
+}
+
 async function renderRecommendationsRow() {
   // Remove any existing row first (avoids duplicates on re-render).
   document.getElementById('recommendations-row')?.remove();
@@ -1869,39 +1905,54 @@ async function renderRecommendationsRow() {
   }
   if (recs.length === 0) return;
 
-  const section = document.createElement('section');
+  const section = buildRecRail(recs, {
+    kicker: 'Curated for you',
+    heading: 'Recommended',
+    subline: `Tuned to your taste · ${recs.length} picks`,
+  });
   section.id = 'recommendations-row';
-  section.className = 'recommendations-row';
-
-  // Editorial header: kicker + serif title + taste subline.
-  const header = document.createElement('div');
-  header.className = 'rec-header';
-  const kicker = document.createElement('span');
-  kicker.className = 'rec-kicker';
-  kicker.textContent = 'Curated for you';
-  const heading = document.createElement('h2');
-  heading.className = 'rec-heading';
-  heading.textContent = 'Recommended';
-  const subline = document.createElement('span');
-  subline.className = 'rec-subline';
-  subline.textContent = `Tuned to your taste · ${recs.length} picks`;
-  header.appendChild(kicker);
-  header.appendChild(heading);
-  header.appendChild(subline);
-  section.appendChild(header);
-
-  // Edge-faded scroll rail.
-  const rail = document.createElement('div');
-  rail.className = 'rec-rail';
-  const scroller = document.createElement('div');
-  scroller.className = 'rec-scroller';
-  recs.forEach((rec, index) => scroller.appendChild(createRecommendationCard(rec, index)));
-  rail.appendChild(scroller);
-  section.appendChild(rail);
+  section.classList.add('recommendations-row');
 
   // Insert above the main grid (remove again to close any async double-render race).
   document.getElementById('recommendations-row')?.remove();
   main.parentNode.insertBefore(section, main);
+}
+
+// Render the full themed Recommendation page (stacked rails) into #main.
+async function renderRecommendationsPage() {
+  document.getElementById('recommendations-row')?.remove();
+  main.innerHTML = '';
+  setLoading(true);
+  hideError();
+
+  const items = buildSignalItems();
+  if (items.length === 0) {
+    setLoading(false);
+    main.innerHTML = '<p class="no-results rec-empty">Watch or ★ a few titles to build your recommendations.</p>';
+    return;
+  }
+
+  let rows = [];
+  try {
+    ({ rows } = await getRecommendationRows(items, { limit: 60 }));
+  } catch (e) {
+    console.warn('Recommendation page failed:', e);
+    setLoading(false);
+    main.innerHTML = '<p class="no-results rec-empty">Couldn’t load recommendations right now. Try again shortly.</p>';
+    return;
+  }
+
+  setLoading(false);
+  if (rows.length === 0) {
+    main.innerHTML = '<p class="no-results rec-empty">No recommendations yet — keep watching to tune your taste.</p>';
+    return;
+  }
+
+  const page = document.createElement('div');
+  page.className = 'rec-page';
+  rows.forEach((row) => page.appendChild(buildRecRail(row.recs, { heading: row.title })));
+  main.innerHTML = '';
+  main.appendChild(page);
 }
 
 const STAR_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.3 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';
@@ -2652,6 +2703,7 @@ const tabMovies = document.getElementById('tab-movies');
 const tabWatched = document.getElementById('tab-watched');
 const tabFavorites = document.getElementById('tab-favorites');
 const tabYouTube = document.getElementById('tab-youtube');
+const tabRecommended = document.getElementById('tab-recommended');
 const movieFilters = document.getElementById('movie-filters');
 const youtubeFilters = document.getElementById('youtube-filters');
 const movieSearchForm = document.getElementById('form');
@@ -2661,11 +2713,36 @@ const top250Button = document.getElementById('top250-btn');
 let isWatchedMode = false;
 let isFavoritesMode = false;
 
+function switchToRecommended() {
+  currentApp = 'movies';
+  isWatchedMode = false;
+  isFavoritesMode = false;
+  isSearchMode = false;
+  isTop250Mode = false;
+
+  document.getElementById('recommendations-row')?.remove();
+  tabMovies.classList.remove('active');
+  tabRecommended.classList.add('active');
+  tabWatched.classList.remove('active');
+  tabFavorites.classList.remove('active');
+  tabYouTube.classList.remove('active');
+  top250Btn.classList.remove('active');
+
+  movieFilters.style.display = 'none';
+  youtubeFilters.style.display = 'none';
+  movieSearchForm.style.display = 'none';
+  youtubeSearchForm.style.display = 'none';
+  top250Button.style.display = 'none';
+
+  renderRecommendationsPage();
+}
+
 function switchToMovies() {
   currentApp = 'movies';
   isWatchedMode = false;
   isFavoritesMode = false;
   tabMovies.classList.add('active');
+  tabRecommended.classList.remove('active');
   tabWatched.classList.remove('active');
   tabYouTube.classList.remove('active');
   tabFavorites.classList.remove('active');
@@ -2685,6 +2762,7 @@ function switchToYouTube() {
   isFavoritesMode = false;
   tabYouTube.classList.add('active');
   tabMovies.classList.remove('active');
+  tabRecommended.classList.remove('active');
   tabWatched.classList.remove('active');
   tabFavorites.classList.remove('active');
   youtubeFilters.style.display = 'flex';
@@ -2706,6 +2784,7 @@ function switchToWatched() {
 
   // Update tab active states
   tabMovies.classList.remove('active');
+  tabRecommended.classList.remove('active');
   tabWatched.classList.add('active');
   tabYouTube.classList.remove('active');
   tabFavorites.classList.remove('active');
@@ -2760,6 +2839,7 @@ function switchToFavorites() {
 
   document.getElementById('recommendations-row')?.remove();
   tabMovies.classList.remove('active');
+  tabRecommended.classList.remove('active');
   tabWatched.classList.remove('active');
   tabYouTube.classList.remove('active');
   tabFavorites.classList.add('active');
@@ -2803,3 +2883,4 @@ tabMovies?.addEventListener('click', switchToMovies);
 tabWatched?.addEventListener('click', switchToWatched);
 tabFavorites?.addEventListener('click', switchToFavorites);
 tabYouTube?.addEventListener('click', switchToYouTube);
+tabRecommended?.addEventListener('click', switchToRecommended);
