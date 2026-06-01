@@ -23,6 +23,8 @@ const EPISODE_SATURATION = 20;      // episodes reached for max episode signal
 const STAR_BONUS = 2.5;             // multiplier for starred items
 const COVERAGE_WEIGHT = 0.5;        // strength of collection-breadth bonus
 const DOWNVOTE_PENALTY = 1.0;       // steer-away strength: a downvoted theme cancels an equal positive one
+const DOWNVOTE_SCORE_STRENGTH = 0.4;        // how hard disliked-vector overlap downweights a candidate
+export const DOWNVOTE_SCORE_FLOOR = 0.5;    // a strongly-disliked candidate keeps >= half its score (never zeroed)
 
 // --- Recommendation engine tuning (contract constants; declared once) ---
 const W_COLLAB = 0.6;               // collaborative score weight in the hybrid
@@ -192,8 +194,18 @@ export function collabScore(candidate) {
 // `dislikeVector` is part of the signature for the downvote-penalty step (added
 // later); when absent it has no effect. Returns Scored[] sorted descending,
 // each with parts + reasons.
+// Fraction of a candidate's own tag-vector terms that the disliked tag-vector also contains, in
+// [0,1]. The candidate's tag-vector is built by the scorer (buildTagVector): 'g:'/'k:'/'p:' keys.
+function dislikeOverlapVec(candVec, dislikeVector) {
+  if (!dislikeVector) return 0;
+  const terms = Object.keys(candVec || {});
+  if (terms.length === 0) return 0;
+  let hit = 0;
+  for (const t of terms) if (dislikeVector[t] > 0) hit += 1;
+  return hit / terms.length;
+}
+
 export function scorePool(candidates, { profile, now = Date.now(), weights = { collab: W_COLLAB, content: W_CONTENT }, dislikeVector } = {}) {
-  void dislikeVector; // reserved: downvote-penalty step folds a bounded term in here
   const tagVectors = candidates.map(buildTagVector);
   const idf = computeIdf(tagVectors);
   const rawProfVec = profileVector(profile);
@@ -216,7 +228,11 @@ export function scorePool(candidates, { profile, now = Date.now(), weights = { c
       : cosineSim(profVec, applyIdf(tagVectors[i], idf));
     const quality = qualityMultiplier(c.vote_average, c.vote_count);
     const recency = recencyMultiplier(c.release_date || c.first_air_date, now);
-    const score = (weights.collab * collabN + weights.content * contentN) * quality * recency;
+    let score = (weights.collab * collabN + weights.content * contentN) * quality * recency;
+    const overlap = dislikeOverlapVec(tagVectors[i], dislikeVector);
+    if (overlap > 0) {
+      score *= Math.max(DOWNVOTE_SCORE_FLOOR, 1 - DOWNVOTE_SCORE_STRENGTH * overlap);
+    }
     return {
       movie: c,
       score,

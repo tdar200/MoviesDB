@@ -5,7 +5,7 @@ import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extra
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
-  collabScore, scorePool,
+  collabScore, scorePool, DOWNVOTE_SCORE_FLOOR,
 } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -716,6 +716,55 @@ test('scorePool: absent dislikeVector is inert (no penalty applied)', () => {
   const withOpt = scorePool([c], { profile, now: NOW, dislikeVector: undefined })[0].score;
   const without = scorePool([c], { profile, now: NOW })[0].score;
   assert.equal(withOpt, without, 'dislikeVector:undefined must not change the score');
+});
+
+test('scorePool: disliked-vector overlap lowers a strong positive but never zeros it', () => {
+  const profile = {
+    genres: { '878': 4, '28': 3 },
+    keywords: { '9': { name: 'time travel', weight: 3 } },
+    people: {}, mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  // Strong positive candidate: liked genres + keyword + a strong rec seed.
+  const cand = {
+    id: 50, media_type: 'movie', genre_ids: [878, 28], popularity: 100,
+    vote_average: 8, vote_count: 1000,
+    _keywords: [{ id: 9, name: 'time travel' }],
+    _seeds: [{ source: 'rec', type: 'title', id: 1, rank: 0, weight: 3 }],
+  };
+  // Disliked vector overlaps both genres and the keyword on the candidate.
+  const dislikeVector = { 'g:878': 5, 'g:28': 5, 'k:9': 5 };
+
+  const base = scorePool([cand], { profile, now: NOW })[0].score;
+  const penalized = scorePool([cand], { profile, now: NOW, dislikeVector })[0].score;
+
+  assert.ok(penalized < base, 'overlap with the disliked vector must lower the score');
+  assert.ok(penalized > base * DOWNVOTE_SCORE_FLOOR,
+    `a strong positive must keep most of its score (> floor*base=${base * DOWNVOTE_SCORE_FLOOR}), got ${penalized}`);
+  assert.ok(penalized > 0, 'penalty is bounded — never zeroes a strong positive');
+});
+
+test('scorePool: no disliked vector is a pass-through (back-compat)', () => {
+  const profile = {
+    genres: { '878': 4 }, keywords: {}, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  const cand = { id: 51, media_type: 'movie', genre_ids: [878], popularity: 10, vote_average: 7, vote_count: 100, _seeds: [] };
+  const plain = scorePool([cand], { profile, now: NOW })[0].score;
+  assert.equal(scorePool([cand], { profile, now: NOW, dislikeVector: undefined })[0].score, plain);
+  assert.equal(scorePool([cand], { profile, now: NOW, dislikeVector: null })[0].score, plain);
+});
+
+test('scorePool: a candidate NOT overlapping the disliked vector is unpenalized', () => {
+  const profile = {
+    genres: { '878': 4 }, keywords: {}, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  const dislikeVector = { 'g:27': 5 }; // dislikes Horror only
+  const cand = { id: 52, media_type: 'movie', genre_ids: [878], popularity: 10, vote_average: 7, vote_count: 100, _seeds: [] };
+  assert.equal(
+    scorePool([cand], { profile, now: NOW, dislikeVector })[0].score,
+    scorePool([cand], { profile, now: NOW })[0].score
+  );
 });
 
 test('scorePool: a genre in every candidate (negative idf) keeps content in [0,1] and preserves ranking', () => {
