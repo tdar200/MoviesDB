@@ -698,3 +698,26 @@ test('scorePool: absent dislikeVector is inert (no penalty applied)', () => {
   const without = scorePool([c], { profile, now: NOW })[0].score;
   assert.equal(withOpt, without, 'dislikeVector:undefined must not change the score');
 });
+
+test('scorePool: a genre in every candidate (negative idf) keeps content in [0,1] and preserves ranking', () => {
+  // Drama(18) appears in ALL candidates => df=N => idf(g:18) < 0. SciFi(878) is rare.
+  // The same idf weights profile and candidate, so the shared drama term contributes
+  // profW*idf^2 (>=0): content must stay in [0,1] and the scifi-matching candidate must win.
+  const profile = {
+    genres: { '18': 2, '878': 2 }, keywords: {}, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  const base = {
+    media_type: 'movie', vote_average: 7, vote_count: 1000, popularity: 5, release_date: rd,
+    _seeds: [{ source: 'rec', type: 'title', id: 9, rank: 0, weight: 1 }], // equal collab across the pool
+  };
+  const both = { ...base, id: 1, genre_ids: [18, 878] };
+  const dramaOnlyA = { ...base, id: 2, genre_ids: [18] };
+  const dramaOnlyB = { ...base, id: 3, genre_ids: [18] };
+  const out = scorePool([both, dramaOnlyA, dramaOnlyB], { profile, now: NOW });
+  for (const o of out) {
+    assert.ok(o.parts.content >= 0 && o.parts.content <= 1, `content in [0,1], got ${o.parts.content}`);
+  }
+  assert.equal(out[0].movie.id, 1, 'rare-term match wins despite the ubiquitous genre having negative idf');
+});

@@ -131,6 +131,9 @@ export function profileVector(profile) {
 }
 
 // Inverse document frequency over a set of tag-vectors: idf = log(N/(1+df)).
+// A term in every candidate (df=N) gets a small NEGATIVE idf, but that is harmless in
+// cosineSim: profile and candidate share the same idf, so a shared term contributes
+// profW*idf^2 (>=0) — content stays in [0,1] and ranking is preserved (see regression test).
 export function computeIdf(tagVectors) {
   const N = tagVectors.length;
   const df = {};
@@ -189,7 +192,7 @@ export function collabScore(candidate) {
 // `dislikeVector` is part of the signature for the downvote-penalty step (added
 // later); when absent it has no effect. Returns Scored[] sorted descending,
 // each with parts + reasons.
-export function scorePool(candidates, { profile, now, weights = { collab: W_COLLAB, content: W_CONTENT }, dislikeVector } = {}) {
+export function scorePool(candidates, { profile, now = Date.now(), weights = { collab: W_COLLAB, content: W_CONTENT }, dislikeVector } = {}) {
   void dislikeVector; // reserved: downvote-penalty step folds a bounded term in here
   const tagVectors = candidates.map(buildTagVector);
   const idf = computeIdf(tagVectors);
