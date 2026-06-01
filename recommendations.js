@@ -1257,13 +1257,14 @@ export function signalSignature(basket, downvoted, watchedIds) {
 // → candidates → rank, excluding watched ∪ downvoted ∪ basket. `input` is
 // { basket: [movie], downvoted: [movie], watchedIds: [id] }. Cached per (signature, limit).
 async function _pipeline(input, opts = {}) {
-  const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA } = opts;
+  const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA, lambda = MMR_LAMBDA_PAGE } = opts;
   const basket = input.basket || [];
   const downvoted = input.downvoted || [];
   const watchedIds = input.watchedIds || [];
 
   const sig = signalSignature(basket, downvoted, watchedIds);
-  const cacheKey = `${RECS_CACHE_KEY}:${limit}`;
+  // lambda is part of the key: the teaser (0.8) and page (0.6) must not share a cache entry.
+  const cacheKey = `${RECS_CACHE_KEY}:${limit}:${lambda}`;
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
     if (cached && cached.sig === sig) return { profile: cached.profile, recs: cached.recs };
@@ -1291,7 +1292,7 @@ async function _pipeline(input, opts = {}) {
   );
   const scored = scorePool(candidates, { profile, now, dislikeVector })
     .filter((s) => !excludeIds.has(s.movie.id));
-  const recs = mmrRerank(scored, { lambda: MMR_LAMBDA_PAGE, limit });
+  const recs = mmrRerank(scored, { lambda, limit });
 
   try {
     sessionStorage.setItem(cacheKey, JSON.stringify({ sig, profile, recs }));
@@ -1303,7 +1304,8 @@ async function _pipeline(input, opts = {}) {
 export async function getRecommendations(input, opts = {}) {
   const safe = input || {};
   const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [] };
-  return (await _pipeline(sig, opts)).recs;
+  // Home teaser: a single scarce row -> favor relevance (higher MMR lambda) over diversity.
+  return (await _pipeline(sig, { lambda: MMR_LAMBDA_TEASER, ...opts })).recs;
 }
 
 // Recommendation page orchestrator. Empty basket -> trending-only cold-start rows (never empty).
