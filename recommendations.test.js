@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
+import { recencyWeight, ratingNudge, buildTasteProfile, signalSignature } from './recommendations.js';
 import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
@@ -1260,4 +1260,34 @@ test('coldStartBlend: dedupes filler ids already present in personalized', () =>
 test('coldStartBlend: filler shortfall is fine (returns what it has)', () => {
   const out = coldStartBlend([mkBlendC(1)], [], 0); // p=0 -> filler-only path, no filler -> empty
   assert.deepEqual(out.map((c) => c.id), []);
+});
+
+const mkSigM = (id) => ({ id, media_type: 'movie' });
+
+test('signalSignature: same basket + a newly-watched id changes the signature', () => {
+  const basket = [mkSigM(1), mkSigM(2)];
+  const down = [mkSigM(9)];
+  const before = signalSignature(basket, down, [100, 101]);
+  const after = signalSignature(basket, down, [100, 101, 102]); // watched one more
+  assert.notEqual(before, after);
+});
+
+test('signalSignature: watchedIds hash is order-independent', () => {
+  const basket = [mkSigM(1)];
+  const a = signalSignature(basket, [], [3, 1, 2]);
+  const b = signalSignature(basket, [], [2, 3, 1]);
+  assert.equal(a, b);
+});
+
+test('signalSignature: identical signals produce an identical signature', () => {
+  const a = signalSignature([mkSigM(2), mkSigM(1)], [mkSigM(5)], [7, 8]);
+  const b = signalSignature([mkSigM(1), mkSigM(2)], [mkSigM(5)], [8, 7]);
+  assert.equal(a, b);
+});
+
+test('signalSignature: empty watchedIds is stable and distinct from non-empty', () => {
+  const empty = signalSignature([mkSigM(1)], [], []);
+  const nonEmpty = signalSignature([mkSigM(1)], [], [1]);
+  assert.equal(empty, signalSignature([mkSigM(1)], [], undefined));
+  assert.notEqual(empty, nonEmpty);
 });

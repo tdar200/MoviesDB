@@ -1145,11 +1145,23 @@ async function discoverCandidates(profile, negProfile = null) {
   return mergeCandidates(tagged);
 }
 
-// Stable signature of the explicit signal set (basket + downvoted) for session caching.
-// Toggling a star or a downvote changes this, busting the cache.
-function signalSignature(basket, downvoted) {
+// Order-independent FNV-1a hash of a sorted numeric id list. Deterministic, no clock.
+function hashIds(ids) {
+  const sorted = (ids || []).map(Number).filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
+  let h = 0x811c9dc5;
+  const s = sorted.join(',');
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
+// Stable signature of the full signal set (basket + downvoted + watchedIds) for session
+// caching. Toggling a star/downvote OR watching a new title changes this, busting the cache.
+export function signalSignature(basket, downvoted, watchedIds) {
   const ids = (arr) => (arr || []).map((m) => m.id).sort().join(',');
-  return `b:${ids(basket)}|d:${ids(downvoted)}`;
+  return `b:${ids(basket)}|d:${ids(downvoted)}|w:${hashIds(watchedIds)}`;
 }
 
 // Shared pipeline: enrich basket + downvoted → positive/negative profiles → net profile
@@ -1161,7 +1173,7 @@ async function _pipeline(input, opts = {}) {
   const downvoted = input.downvoted || [];
   const watchedIds = input.watchedIds || [];
 
-  const sig = signalSignature(basket, downvoted);
+  const sig = signalSignature(basket, downvoted, watchedIds);
   const cacheKey = `${RECS_CACHE_KEY}:${limit}`;
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
