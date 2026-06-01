@@ -5,7 +5,7 @@ import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extra
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
-  collabScore,
+  collabScore, scorePool,
 } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -605,4 +605,96 @@ test('collabScore: more contributing seeds accumulate higher', () => {
     { source: 'rec', type: 'title', id: 11, rank: 0, weight: 1 },
   ] };
   assert.ok(collabScore(two) > collabScore(one));
+});
+
+test('scorePool returns Scored items sorted desc with parts and reasons', () => {
+  const profile = {
+    genres: { '878': 3 }, keywords: { '9': { name: 'tt', weight: 2 } }, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 },
+    topTitles: [{ id: 1, title: 'Inception', weight: 3, genreIds: [878], keywordIds: [9], peopleIds: [], media_type: 'movie' }],
+  };
+  const candidates = [
+    { id: 100, title: 'Strong', media_type: 'movie', genre_ids: [878], vote_average: 8, vote_count: 5000,
+      popularity: 50, release_date: new Date(NOW).toISOString().slice(0, 10),
+      _keywords: [{ id: 9, name: 'tt' }], _seeds: [{ source: 'rec', type: 'title', id: 1, rank: 0, weight: 1 }] },
+    { id: 200, title: 'Weak', media_type: 'movie', genre_ids: [12], vote_average: 5, vote_count: 10,
+      popularity: 1, release_date: '1980-01-01', _seeds: [{ source: 'discover-genre', type: 'genre', id: 12, rank: 0, weight: 1 }] },
+  ];
+  const out = scorePool(candidates, { profile, now: NOW });
+  assert.equal(out.length, 2);
+  assert.equal(out[0].movie.id, 100, 'strong collaborative + content + quality wins');
+  assert.ok(out[0].score >= out[1].score, 'sorted descending');
+  for (const term of ['collab', 'content', 'quality', 'recency']) {
+    assert.ok(typeof out[0].parts[term] === 'number', `parts.${term} present`);
+  }
+  assert.ok(Array.isArray(out[0].reasons) && out[0].reasons.length >= 1, 'reasons attached');
+});
+
+test('scorePool: a high-vote great title outranks a low-vote obscure one at equal collab', () => {
+  const profile = {
+    genres: { '878': 1 }, keywords: {}, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  const rd = new Date(NOW).toISOString().slice(0, 10); // identical recency
+  // Identical collab seed (same source/rank/weight) and identical genre vector;
+  // they differ ONLY in quality (vote_average + vote_count).
+  const great = { id: 100, media_type: 'movie', genre_ids: [878], vote_average: 8.2, vote_count: 8000,
+    popularity: 10, release_date: rd, _seeds: [{ source: 'rec', type: 'title', id: 1, rank: 0, weight: 1 }] };
+  const obscure = { id: 200, media_type: 'movie', genre_ids: [878], vote_average: 9.9, vote_count: 6,
+    popularity: 10, release_date: rd, _seeds: [{ source: 'rec', type: 'title', id: 1, rank: 0, weight: 1 }] };
+  const out = scorePool([great, obscure], { profile, now: NOW });
+  assert.equal(out[0].movie.id, 100, 'shrunk obscure 9.9/6 must fall below the well-voted 8.2/8000');
+});
+
+test('scorePool normalizes collab via min-max across the pool', () => {
+  const profile = { genres: {}, keywords: {}, people: {}, mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [] };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  const hi = { id: 1, media_type: 'movie', genre_ids: [878], vote_average: 7, vote_count: 1000, popularity: 5,
+    release_date: rd, _seeds: [{ source: 'rec', type: 'title', id: 9, rank: 0, weight: 1 }] };       // collab 1.0
+  const lo = { id: 2, media_type: 'movie', genre_ids: [878], vote_average: 7, vote_count: 1000, popularity: 5,
+    release_date: rd, _seeds: [{ source: 'similar', type: 'title', id: 9, rank: 3, weight: 1 }] };    // collab 0.125
+  const out = scorePool([hi, lo], { profile, now: NOW });
+  const hiScored = out.find((o) => o.movie.id === 1);
+  const loScored = out.find((o) => o.movie.id === 2);
+  // Min-max over {1.0, 0.125} => hi.collab===1, lo.collab===0.
+  assert.equal(hiScored.parts.collab, 1);
+  assert.equal(loScored.parts.collab, 0);
+});
+
+test('scorePool: content cosine rewards profile overlap when collab ties at 0', () => {
+  const profile = {
+    genres: { '878': 5 }, keywords: {}, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  // Both discover-sourced => collab 0 for both; matchGenre overlaps the profile, offGenre does not.
+  const matchGenre = { id: 1, media_type: 'movie', genre_ids: [878], vote_average: 7, vote_count: 1000,
+    popularity: 5, release_date: rd, _seeds: [{ source: 'discover-genre', type: 'genre', id: 878, rank: 0, weight: 1 }] };
+  const offGenre = { id: 2, media_type: 'movie', genre_ids: [99], vote_average: 7, vote_count: 1000,
+    popularity: 5, release_date: rd, _seeds: [{ source: 'discover-genre', type: 'genre', id: 99, rank: 0, weight: 1 }] };
+  const out = scorePool([matchGenre, offGenre], { profile, now: NOW });
+  assert.equal(out[0].movie.id, 1, 'genre-matching candidate wins on content');
+  assert.ok(out[0].parts.content > out.find((o) => o.movie.id === 2).parts.content);
+});
+
+test('scorePool honors injected weights (content-only ignores collab)', () => {
+  const profile = { genres: { '878': 5 }, keywords: {}, people: {}, mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [] };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  // collabHi has strong collab but NO content overlap; contentHi has no collab but full content overlap.
+  const collabHi = { id: 1, media_type: 'movie', genre_ids: [99], vote_average: 7, vote_count: 1000, popularity: 5,
+    release_date: rd, _seeds: [{ source: 'rec', type: 'title', id: 9, rank: 0, weight: 1 }] };
+  const contentHi = { id: 2, media_type: 'movie', genre_ids: [878], vote_average: 7, vote_count: 1000, popularity: 5,
+    release_date: rd, _seeds: [{ source: 'discover-genre', type: 'genre', id: 878, rank: 0, weight: 1 }] };
+  const out = scorePool([collabHi, contentHi], { profile, now: NOW, weights: { collab: 0, content: 1 } });
+  assert.equal(out[0].movie.id, 2, 'with collab weight 0, content overlap must decide');
+});
+
+test('scorePool: absent dislikeVector is inert (no penalty applied)', () => {
+  const profile = { genres: { '878': 5 }, keywords: {}, people: {}, mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [] };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  const c = { id: 1, media_type: 'movie', genre_ids: [878], vote_average: 7, vote_count: 1000, popularity: 5,
+    release_date: rd, _seeds: [{ source: 'rec', type: 'title', id: 9, rank: 0, weight: 1 }] };
+  const withOpt = scorePool([c], { profile, now: NOW, dislikeVector: undefined })[0].score;
+  const without = scorePool([c], { profile, now: NOW })[0].score;
+  assert.equal(withOpt, without, 'dislikeVector:undefined must not change the score');
 });

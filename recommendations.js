@@ -181,6 +181,49 @@ export function collabScore(candidate) {
   return s;
 }
 
+// Hybrid pool scorer (pure, zero network). Builds idf over the pool's tag-vectors,
+// idf-weights both the profile vector and each candidate vector, then:
+//   collabN  = min-max of collabScore across the pool
+//   contentN = cosine(idf(profileVector), idf(candidateVector))   [0,1]
+//   score    = (Wc*collabN + Wt*contentN) * qualityMultiplier * recencyMultiplier
+// `dislikeVector` is part of the signature for the downvote-penalty step (added
+// later); when absent it has no effect. Returns Scored[] sorted descending,
+// each with parts + reasons.
+export function scorePool(candidates, { profile, now, weights = { collab: W_COLLAB, content: W_CONTENT }, dislikeVector } = {}) {
+  void dislikeVector; // reserved: downvote-penalty step folds a bounded term in here
+  const tagVectors = candidates.map(buildTagVector);
+  const idf = computeIdf(tagVectors);
+  const rawProfVec = profileVector(profile);
+  const profVec = applyIdf(rawProfVec, idf);
+  // idf = log(N/(1+df)) collapses to 0 for any term whose df = N-1, which is the
+  // common case in tiny pools (e.g. each genre appearing in exactly one of two
+  // candidates). When idf zeroes the entire profile signal, fall back to the raw
+  // presence/weight vectors so genuine profile overlap still drives content.
+  const idfDegenerate = Object.values(profVec).every((w) => w === 0);
+
+  const collabRaw = candidates.map(collabScore);
+  const cMin = collabRaw.length ? Math.min(...collabRaw) : 0;
+  const cMax = collabRaw.length ? Math.max(...collabRaw) : 0;
+  const cRange = cMax - cMin;
+
+  const scored = candidates.map((c, i) => {
+    const collabN = cRange > 0 ? (collabRaw[i] - cMin) / cRange : 0;
+    const contentN = idfDegenerate
+      ? cosineSim(rawProfVec, tagVectors[i])
+      : cosineSim(profVec, applyIdf(tagVectors[i], idf));
+    const quality = qualityMultiplier(c.vote_average, c.vote_count);
+    const recency = recencyMultiplier(c.release_date || c.first_air_date, now);
+    const score = (weights.collab * collabN + weights.content * contentN) * quality * recency;
+    return {
+      movie: c,
+      score,
+      parts: { collab: collabN, content: contentN, quality, recency },
+      reasons: generateReasons(c, profile),
+    };
+  });
+  return scored.sort((a, b) => b.score - a.score);
+}
+
 function topNumeric(obj, n) {
   return Object.fromEntries(
     Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)
