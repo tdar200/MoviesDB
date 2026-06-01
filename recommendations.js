@@ -290,23 +290,25 @@ export function buildTasteProfile(enrichedWatched, now) {
   };
 }
 
-// Net a positive profile (basket) against a negative profile (downvoted) into a single
-// profile the candidate generator/scorer consume. Genres keep their net value (which may
-// be negative, so scoring penalizes candidates in disliked genres). Keywords/people are
-// netted but anything <= 0 is dropped, so disliked themes never seed candidate generation.
+// ROCCHIO: net a positive profile (basket) against a negative profile (downvoted) into a single
+// profile the candidate generator/scorer consume:  profile = pos - gamma*neg.
+// Genres keep their net value (which may go negative, so scoring penalizes disliked genres).
+// Keywords/people are netted but anything <= 0 is dropped, so disliked themes never seed
+// candidate generation. gamma is small (DOWNVOTE_GAMMA) so a single downvote softens but does
+// NOT erase a strongly-basketed shared theme.
 export function combineProfiles(pos, neg, opts = {}) {
-  const { penalty = DOWNVOTE_PENALTY } = opts;
+  const { gamma = DOWNVOTE_GAMMA } = opts;
   const n = neg || { genres: {}, keywords: {}, people: {} };
 
   const genres = {};
   for (const [g, w] of Object.entries(pos.genres || {})) genres[g] = w;
-  for (const [g, w] of Object.entries(n.genres || {})) genres[g] = (genres[g] || 0) - penalty * w;
+  for (const [g, w] of Object.entries(n.genres || {})) genres[g] = (genres[g] || 0) - gamma * w;
 
   const netWeighted = (posMap, negMap) => {
     const out = {};
     for (const [id, v] of Object.entries(posMap || {})) out[id] = { name: v.name, weight: v.weight };
     for (const [id, v] of Object.entries(negMap || {})) {
-      if (out[id]) out[id].weight -= penalty * v.weight; // purely-downvoted themes are never added
+      if (out[id]) out[id].weight -= gamma * v.weight; // purely-downvoted themes are never added
     }
     for (const id of Object.keys(out)) if (out[id].weight <= 0) delete out[id];
     return out;

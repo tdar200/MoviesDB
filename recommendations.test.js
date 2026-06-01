@@ -318,35 +318,48 @@ const NEG = {
   topTitles: [],
 };
 
-test('combineProfiles: genres net (pos - penalty*neg), keep negatives so scoring can penalize', () => {
-  const c = combineProfiles(POS, NEG, { penalty: 1 });
-  assert.equal(c.genres['878'], 4);
-  assert.equal(c.genres['18'], -1);
-  assert.equal(c.genres['27'], -5);
+test('combineProfiles ROCCHIO: genres net (pos - gamma*neg), keep negatives so scoring can penalize', () => {
+  const c = combineProfiles(POS, NEG, { gamma: 1 });
+  assert.equal(c.genres['878'], 4);   // 4 - 1*0 (not in NEG)
+  assert.equal(c.genres['18'], -1);   // 2 - 1*3
+  assert.equal(c.genres['27'], -5);   // 0 - 1*5
 });
 
-test('combineProfiles: keywords/people net, drop anything <= 0 so disliked themes never seed', () => {
-  const c = combineProfiles(POS, NEG, { penalty: 1 });
-  assert.equal(c.keywords['9'].weight, 2);
-  assert.equal(c.keywords['7'].weight, 1);
-  assert.equal(c.keywords['99'], undefined);
-  assert.equal(c.people['5'].weight, 1);
+test('combineProfiles ROCCHIO: keywords/people net, drop anything <= 0 so disliked themes never seed', () => {
+  const c = combineProfiles(POS, NEG, { gamma: 1 });
+  assert.equal(c.keywords['9'].weight, 2);   // 3 - 1*1
+  assert.equal(c.keywords['7'].weight, 1);   // 1 - 1*0
+  assert.equal(c.keywords['99'], undefined); // 0 - 1*4 <= 0, dropped
+  assert.equal(c.people['5'].weight, 1);     // 2 - 1*1
 });
 
-test('combineProfiles: penalty scales the negative side', () => {
-  const c = combineProfiles(POS, NEG, { penalty: 0.5 });
-  assert.equal(c.genres['18'], 0.5);
-  assert.equal(c.people['5'].weight, 1.5);
+test('combineProfiles ROCCHIO: gamma scales the negative side', () => {
+  const c = combineProfiles(POS, NEG, { gamma: 0.5 });
+  assert.equal(c.genres['18'], 0.5);         // 2 - 0.5*3
+  assert.equal(c.people['5'].weight, 1.5);   // 2 - 0.5*1
 });
 
-test('combineProfiles: positive profile passes through topTitles and mediaTypeBias', () => {
-  const c = combineProfiles(POS, NEG, { penalty: 1 });
+test('combineProfiles ROCCHIO: default gamma is DOWNVOTE_GAMMA=0.15 and does NOT erase a strongly-basketed theme', () => {
+  // One downvote shares keyword 9 (time travel) and genre 18 with a strong basket.
+  // Old penalty=1.0 behavior: kw9 = 3-1 = 2 (still alive), genre18 = 2-3 = -1 (negative).
+  // New default gamma=0.15: the theme stays clearly positive (soft steer, not erase).
+  const c = combineProfiles(POS, NEG);
+  assert.ok(c.keywords['9'], 'shared keyword must NOT be erased by one downvote');
+  assert.ok(Math.abs(c.keywords['9'].weight - (3 - 0.15 * 1)) < 1e-9); // 2.85
+  assert.ok(c.genres['18'] > 0, 'shared genre stays positive under soft Rocchio');
+  assert.ok(Math.abs(c.genres['18'] - (2 - 0.15 * 3)) < 1e-9);          // 1.55
+  // A purely-disliked genre still goes net-negative so scoring can steer away.
+  assert.ok(Math.abs(c.genres['27'] - (0 - 0.15 * 5)) < 1e-9);          // -0.75
+});
+
+test('combineProfiles ROCCHIO: positive profile passes through topTitles and mediaTypeBias', () => {
+  const c = combineProfiles(POS, NEG, { gamma: 1 });
   assert.equal(c.topTitles[0].id, 1);
   assert.deepEqual(c.mediaTypeBias, { movie: 5, tv: 0 });
 });
 
-test('combineProfiles: no negative profile is a pass-through of positives', () => {
-  const c = combineProfiles(POS, null, { penalty: 1 });
+test('combineProfiles ROCCHIO: no negative profile is a pass-through of positives', () => {
+  const c = combineProfiles(POS, null, { gamma: 1 });
   assert.equal(c.genres['878'], 4);
   assert.equal(c.keywords['9'].weight, 3);
   assert.equal(c.people['5'].weight, 2);
