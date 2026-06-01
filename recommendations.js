@@ -518,6 +518,17 @@ export function coldStartBlend(personalCandidates, fillerCandidates, basketSize)
   }
   if (p >= 1) return out; // full basket: personalized only.
 
+  // If no personalized candidates were produced (e.g. all collab/discover calls failed),
+  // fall back to filler-only so a fractional basket never yields a blank screen.
+  if (out.length === 0) {
+    for (const c of filler) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+    }
+    return out;
+  }
+
   // Size the pool so filler makes up the (1 - p) share.
   const poolSize = Math.round(out.length / p);
   const fillerSlots = Math.max(0, poolSize - out.length);
@@ -873,7 +884,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   // the same recId()-keyed placed-Set the function maintains — no new dedupe mechanism.
   const trendingPicked = ranked
     .filter((r) => (r.movie._seeds || []).some((s) => s.source === 'trending'))
-    .slice(0, opts.rowSize || 12);
+    .slice(0, itemsPerRow);
   trendingPicked.forEach((r) => placed.add(recId(r)));
 
   // 1. Top picks — global best-N, genre-calibrated to the basket, and CLAIMS its items.
@@ -1141,7 +1152,9 @@ async function fillerCandidates() {
   const tagged = [];
   const trendingP = fetchJson(ENDPOINTS.trending(1))
     .then((d) => (d.results || []).forEach((m, rank) => {
-      const mediaType = m.media_type === 'tv' ? 'tv' : 'movie';
+      // /trending/all/week can include person results — keep only movie/tv.
+      const mediaType = m.media_type === 'tv' ? 'tv' : m.media_type === 'movie' ? 'movie' : null;
+      if (!mediaType) return;
       tagged.push({ ...m, media_type: mediaType,
         _seeds: [{ source: 'trending', type: 'title', id: m.id, rank, weight: 1 }] });
     }))
@@ -1223,7 +1236,7 @@ async function discoverCandidates(profile, negProfile = null) {
 
 // Order-independent FNV-1a hash of a sorted numeric id list. Deterministic, no clock.
 function hashIds(ids) {
-  const sorted = (ids || []).map(Number).filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
+  const sorted = (ids || []).map(Number).filter((n) => n > 0).sort((a, b) => a - b);
   let h = 0x811c9dc5;
   const s = sorted.join(',');
   for (let i = 0; i < s.length; i += 1) {
