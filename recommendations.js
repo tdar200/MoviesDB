@@ -130,6 +130,40 @@ export function profileVector(profile) {
   return v;
 }
 
+// Inverse document frequency over a set of tag-vectors: idf = log(N/(1+df)).
+export function computeIdf(tagVectors) {
+  const N = tagVectors.length;
+  const df = {};
+  for (const v of tagVectors) {
+    for (const term of Object.keys(v)) df[term] = (df[term] || 0) + 1;
+  }
+  const idf = {};
+  for (const [term, d] of Object.entries(df)) idf[term] = Math.log(N / (1 + d));
+  return idf;
+}
+
+// Scale a tag-vector by idf weights (terms missing from idf => 0).
+export function applyIdf(tagVector, idf) {
+  const out = {};
+  for (const [term, w] of Object.entries(tagVector)) out[term] = w * (idf[term] || 0);
+  return out;
+}
+
+// Cosine similarity in [0,1] over sparse tag-vectors (assumes non-negative weights).
+export function cosineSim(a, b) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (const w of Object.values(a)) na += w * w;
+  for (const w of Object.values(b)) nb += w * w;
+  if (na === 0 || nb === 0) return 0;
+  const [small, large] = Object.keys(a).length <= Object.keys(b).length ? [a, b] : [b, a];
+  for (const [term, w] of Object.entries(small)) {
+    if (term in large) dot += w * large[term];
+  }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
 function topNumeric(obj, n) {
   return Object.fromEntries(
     Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)

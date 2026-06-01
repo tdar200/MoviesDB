@@ -4,7 +4,7 @@ import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations
 import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
-  buildTagVector, profileVector,
+  buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
 } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -524,4 +524,46 @@ test('profileVector drops non-positive genre weights', () => {
   const v = profileVector(netProfile);
   assert.equal(v['g:878'], 4);
   assert.ok(!('g:27' in v), 'disliked genre must not enter the content vector');
+});
+
+test('computeIdf: idf = log(N/(1+df)); rare terms outweigh common ones', () => {
+  // 4 vectors. g:878 in all 4 (common), g:28 in 1 (rare).
+  const vecs = [
+    { 'g:878': 1, 'g:28': 1 },
+    { 'g:878': 1 },
+    { 'g:878': 1 },
+    { 'g:878': 1 },
+  ];
+  const idf = computeIdf(vecs);
+  assert.ok(Math.abs(idf['g:878'] - Math.log(4 / (1 + 4))) < 1e-9);
+  assert.ok(Math.abs(idf['g:28'] - Math.log(4 / (1 + 1))) < 1e-9);
+  assert.ok(idf['g:28'] > idf['g:878'], 'rarer term must carry more idf');
+});
+
+test('applyIdf scales each term weight by its idf', () => {
+  const idf = { 'g:878': 2, 'k:9': 0.5 };
+  const out = applyIdf({ 'g:878': 3, 'k:9': 4 }, idf);
+  assert.equal(out['g:878'], 6);
+  assert.equal(out['k:9'], 2);
+});
+
+test('applyIdf treats terms absent from the idf map as idf 0', () => {
+  const out = applyIdf({ 'g:999': 5 }, {});
+  assert.equal(out['g:999'], 0);
+});
+
+test('cosineSim of identical vectors is 1, orthogonal is 0', () => {
+  const a = { 'g:878': 3, 'k:9': 1 };
+  assert.ok(Math.abs(cosineSim(a, a) - 1) < 1e-12);
+  assert.equal(cosineSim({ 'g:878': 1 }, { 'g:28': 1 }), 0);
+});
+
+test('cosineSim returns 0 when either vector is empty', () => {
+  assert.equal(cosineSim({}, { 'g:1': 1 }), 0);
+  assert.equal(cosineSim({ 'g:1': 1 }, {}), 0);
+});
+
+test('cosineSim partial overlap sits strictly between 0 and 1', () => {
+  const s = cosineSim({ 'g:1': 1, 'g:2': 1 }, { 'g:1': 1, 'g:3': 1 });
+  assert.ok(Math.abs(s - 0.5) < 1e-12, `one shared of two each => 0.5, got ${s}`);
 });
