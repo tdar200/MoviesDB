@@ -463,46 +463,55 @@ async function enrichWatchedTitles(watched) {
   return enriched;
 }
 
-// Pull Discover candidates seeded by the profile's top keywords/people/genres.
-async function generateCandidates(profile) {
-  const preferTv = profile.mediaTypeBias.tv > profile.mediaTypeBias.movie;
-  const types = preferTv ? ['tv', 'movie'] : ['movie', 'tv'];
-  const primaryType = types[0];
+// Cap the basket to the strongest MAX_SEEDS by weight to bound fan-out.
+function topSeeds(basketEnriched) {
+  return [...basketEnriched]
+    .map((m, i) => ({ m, w: typeof m._seedWeight === 'number' ? m._seedWeight : (basketEnriched.length - i) }))
+    .sort((a, b) => b.w - a.w)
+    .slice(0, MAX_SEEDS)
+    .map((x) => x.m);
+}
 
-  const topKeywords = Object.entries(profile.keywords)
-    .sort((a, b) => b[1].weight - a[1].weight).slice(0, 6);
-  const topPeople = Object.entries(profile.people)
-    .sort((a, b) => b[1].weight - a[1].weight).slice(0, 6);
-  const topGenres = Object.entries(profile.genres)
-    .filter(([, w]) => w > 0)                       // never seed Discover with a downvoted genre
-    .sort((a, b) => b[1] - a[1]).slice(0, 4).map(([id]) => id);
+// Normalize the keywords/credits sub-responses of an appendDetail payload into the
+// { id, name } shapes buildTagVector/buildTasteProfile expect (movie keywords live under
+// .keywords.keywords; tv under .keywords.results; credits.cast + the Director).
+function enrichmentFromAppend(json) {
+  const kwList = json?.keywords?.keywords || json?.keywords?.results || [];
+  const keywords = kwList.slice(0, 12).map((k) => ({ id: k.id, name: k.name }));
+  const cast = (json?.credits?.cast || []).slice(0, 5).map((c) => ({ id: c.id, name: c.name }));
+  const director = (json?.credits?.crew || []).find((c) => c.job === 'Director');
+  const people = director ? [...cast, { id: director.id, name: director.name }] : cast;
+  return { keywords, people };
+}
 
-  const requests = [];
-  for (const [id, { name, weight }] of topKeywords) {
-    requests.push({ url: ENDPOINTS.discoverByKeyword(primaryType, id), seed: { type: 'keyword', id: Number(id), name, weight } });
-  }
-  for (const [id, { name, weight }] of topPeople) {
-    requests.push({ url: ENDPOINTS.discoverByCast(primaryType, id), seed: { type: 'person', id: Number(id), name, weight } });
-  }
-  if (topGenres.length) {
-    const csv = topGenres.join('|'); // OR
-    requests.push({ url: ENDPOINTS.discoverByGenres(primaryType, csv), seed: { type: 'genre', id: Number(topGenres[0]), name: GENRE_NAMES.get(Number(topGenres[0])) || 'genre', weight: profile.genres[topGenres[0]] } });
-  }
-
+// Per-seed collaborative candidate generation (OWNER). For each (capped) basket seed,
+// one appendDetail call yields its recommendations + similar (→ tagged candidates via
+// extractSeedCandidates) AND its keywords/credits (→ attached to the seed in place for
+// the content profile). Returns the merged, deduped collaborative candidate pool.
+// Discover (discoverCandidates) and cold-start filler (fillerCandidates) are merged into
+// the _pipeline candidate set by their own sections via targeted edits, not here.
+async function generateCandidates(basketEnriched) {
+  const seeds = topSeeds(basketEnriched);
   const tagged = [];
   const BATCH = 6;
-  for (let i = 0; i < requests.length; i += BATCH) {
-    const slice = requests.slice(i, i + BATCH);
+  for (let i = 0; i < seeds.length; i += BATCH) {
+    const slice = seeds.slice(i, i + BATCH);
     const results = await Promise.all(
-      slice.map((r) => fetchJson(r.url).then((d) => ({ d, seed: r.seed })).catch(() => null))
+      slice.map((seed) => {
+        const type = seed.media_type === 'tv' ? 'tv' : 'movie';
+        return fetchJson(ENDPOINTS.appendDetail(type, seed.id))
+          .then((json) => ({ seed, json }))
+          .catch(() => null);
+      })
     );
     for (const r of results) {
       if (!r) continue;
-      for (const movie of (r.d.results || []).slice(0, 10)) {
-        tagged.push({ ...movie, media_type: primaryType, _seeds: [r.seed] });
-      }
+      const { keywords, people } = enrichmentFromAppend(r.json);
+      r.seed._keywords = keywords;   // attach the seed's own facets in place
+      r.seed._people = people;
+      tagged.push(...extractSeedCandidates(r.seed, r.json));
     }
-    if (i + BATCH < requests.length) await delay(300);
+    if (i + BATCH < seeds.length) await delay(300);
   }
   return mergeCandidates(tagged);
 }
@@ -541,7 +550,7 @@ async function _pipeline(input, opts = {}) {
   const negProfile = downEnriched.length ? buildTasteProfile(downEnriched, now) : null;
   const profile = combineProfiles(posProfile, negProfile, { penalty });
 
-  const candidates = await generateCandidates(profile);
+  const candidates = await generateCandidates(basketEnriched);
   const excludeIds = new Set(
     [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
   );
