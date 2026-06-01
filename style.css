@@ -1410,6 +1410,38 @@ main {
   font-weight: 600;
 }
 
+/* Per-row evidence kicker reuses .rec-kicker; explore row gets a distinct accent. */
+.rec-explore .rec-kicker {
+  color: var(--rec-gold);
+}
+.rec-explore .rec-heading::before {
+  content: '✦ ';
+  color: var(--rec-gold-soft);
+  font-size: 0.85em;
+}
+.rec-row-explore { position: relative; }
+.rec-row-explore .rec-rail::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px rgba(214, 178, 92, 0.18);
+}
+
+/* Per-card collaborative evidence label emphasis. */
+.rec-because[data-rec-source] {
+  color: var(--rec-gold-soft);
+}
+.rec-because[data-rec-source] .rec-spark {
+  color: var(--rec-gold);
+}
+
+/* Cold-start "Trending to get started" page tint. */
+.rec-cold-start .rec-row-top .rec-heading {
+  letter-spacing: 0.01em;
+}
+
 @media (max-width: 640px) {
   .recommendations-row { padding: 1.1rem 1rem 1.2rem; border-radius: 14px; }
   .rec-heading { font-size: 1.6rem; }
