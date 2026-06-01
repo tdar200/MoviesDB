@@ -22,7 +22,6 @@ const FULL_ENGAGE_MS = 5400000;     // ~90 min dwell = fully engaged
 const EPISODE_SATURATION = 20;      // episodes reached for max episode signal
 const STAR_BONUS = 2.5;             // multiplier for starred items
 const COVERAGE_WEIGHT = 0.5;        // strength of collection-breadth bonus
-const DOWNVOTE_PENALTY = 1.0;       // steer-away strength: a downvoted theme cancels an equal positive one
 const DOWNVOTE_SCORE_STRENGTH = 0.4;        // how hard disliked-vector overlap downweights a candidate
 export const DOWNVOTE_SCORE_FLOOR = 0.5;    // a strongly-disliked candidate keeps >= half its score (never zeroed)
 
@@ -964,7 +963,7 @@ function signalSignature(basket, downvoted) {
 // → candidates → rank, excluding watched ∪ downvoted ∪ basket. `input` is
 // { basket: [movie], downvoted: [movie], watchedIds: [id] }. Cached per (signature, limit).
 async function _pipeline(input, opts = {}) {
-  const { limit = 20, now = Date.now(), penalty = DOWNVOTE_PENALTY } = opts;
+  const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA } = opts;
   const basket = input.basket || [];
   const downvoted = input.downvoted || [];
   const watchedIds = input.watchedIds || [];
@@ -976,22 +975,29 @@ async function _pipeline(input, opts = {}) {
     if (cached && cached.sig === sig) return { profile: cached.profile, recs: cached.recs };
   } catch { /* ignore cache read errors */ }
 
-  // Basket items are explicit seeds; mark them starred and drop engagement so the profile
-  // weights them uniformly (basket-primary, not time/engagement-driven). Downvoted items
-  // are profiled the same way so positive/negative weights are on a comparable scale.
-  const annotate = (arr) => arr.map((m) => ({ ...m, _starred: true, _engagement: null }));
-  const basketEnriched = annotate(await enrichWatchedTitles(basket));
-  const downEnriched = annotate(await enrichWatchedTitles(downvoted));
+  // Basket items are explicit positive seeds: STAR_BONUS-weighted, engagement dropped
+  // (basket-primary, uniform). Downvoted items form a SMALL negative centroid — NOT starred,
+  // no engagement — so one downvote can't out-shout the basket; it softly steers via Rocchio
+  // (combineProfiles gamma), the bounded scorePool penalty, and Discover without_*.
+  const annotatePos = (arr) => arr.map((m) => ({ ...m, _starred: true, _engagement: null }));
+  const annotateNeg = (arr) => arr.map((m) => ({ ...m, _starred: false, _engagement: null }));
+  const basketEnriched = annotatePos(await enrichWatchedTitles(basket));
+  const downEnriched = annotateNeg(await enrichWatchedTitles(downvoted));
 
   const posProfile = buildTasteProfile(basketEnriched, now);
   const negProfile = downEnriched.length ? buildTasteProfile(downEnriched, now) : null;
-  const profile = combineProfiles(posProfile, negProfile, { penalty });
+  const profile = combineProfiles(posProfile, negProfile, { gamma });
 
+  // negProfile drives Discover without_genres/without_keywords and the bounded re-rank penalty
+  // (scorePool dislikeVector). It is the negative-centroid tag-vector built by the scorer.
+  const dislikeVector = negProfile ? profileVector(negProfile) : undefined;
   const candidates = await generateCandidates(basketEnriched, profile, negProfile);
   const excludeIds = new Set(
     [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
   );
-  const recs = rankCandidates(candidates, profile, excludeIds, limit);
+  const scored = scorePool(candidates, { profile, now, dislikeVector })
+    .filter((s) => !excludeIds.has(s.movie.id));
+  const recs = mmrRerank(scored, { lambda: MMR_LAMBDA_PAGE, limit });
 
   try {
     sessionStorage.setItem(cacheKey, JSON.stringify({ sig, profile, recs }));
@@ -1008,8 +1014,8 @@ export async function getRecommendations(input, opts = {}) {
 // Recommendation page orchestrator. Empty basket -> no rows.
 export async function getRecommendationRows(input, opts = {}) {
   if (!input || !input.basket || input.basket.length === 0) return { rows: [] };
-  const { limit = 60, now = Date.now(), groupOpts = {}, penalty } = opts;
-  const { profile, recs } = await _pipeline(input, { limit, now, penalty });
+  const { limit = 60, now = Date.now(), groupOpts = {}, gamma } = opts;
+  const { profile, recs } = await _pipeline(input, { limit, now, gamma });
   return { rows: groupIntoRows(recs, profile, groupOpts) };
 }
 
