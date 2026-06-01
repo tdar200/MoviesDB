@@ -188,6 +188,8 @@ export function extractSeedCandidates(seedItem, appendDetailJson) {
       media_type: cand.media_type === 'tv' || cand.media_type === 'movie'
         ? cand.media_type
         : seedMediaType,
+      // type:'title' tags carry no facet of their own, so `id` mirrors `seedId` (the
+      // producing seed title); person/keyword-seed predicates downstream skip type:'title'.
       _seeds: [{ source, type: 'title', id: seedId, seedId, seedTitle, rank, weight }],
     }));
 
@@ -465,6 +467,8 @@ async function enrichWatchedTitles(watched) {
 
 // Cap the basket to the strongest MAX_SEEDS by weight to bound fan-out.
 function topSeeds(basketEnriched) {
+  // _seedWeight is a forward hook (set by a later weighting task); until then this falls
+  // back to insertion order — earlier basket items rank higher.
   return [...basketEnriched]
     .map((m, i) => ({ m, w: typeof m._seedWeight === 'number' ? m._seedWeight : (basketEnriched.length - i) }))
     .sort((a, b) => b.w - a.w)
@@ -507,9 +511,11 @@ async function generateCandidates(basketEnriched) {
     for (const r of results) {
       if (!r) continue;
       const { keywords, people } = enrichmentFromAppend(r.json);
-      r.seed._keywords = keywords;   // attach the seed's own facets in place
-      r.seed._people = people;
-      tagged.push(...extractSeedCandidates(r.seed, r.json));
+      // Pass enrichment on a shallow COPY — never mutate the shared basketEnriched object
+      // (buildTasteProfile already consumed it; in-place writes would be an invisible
+      // ordering dependency). extractSeedCandidates reads only id/title/media_type.
+      const enrichedSeed = { ...r.seed, _keywords: keywords, _people: people };
+      tagged.push(...extractSeedCandidates(enrichedSeed, r.json));
     }
     if (i + BATCH < seeds.length) await delay(300);
   }
