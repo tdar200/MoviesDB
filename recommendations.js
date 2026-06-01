@@ -164,6 +164,23 @@ export function cosineSim(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+// Co-recommendation tally: how strongly the basket's seeds surfaced this candidate
+// via /recommendations and /similar, weighted by source (rec > similar) and seed
+// weight, discounted by the seed-list rank. Non-collaborative seeds contribute 0.
+export function collabScore(candidate) {
+  let s = 0;
+  for (const seed of candidate._seeds || []) {
+    let sw;
+    if (seed.source === 'rec') sw = REC_SOURCE_WEIGHT;
+    else if (seed.source === 'similar') sw = SIMILAR_SOURCE_WEIGHT;
+    else continue;
+    const rank = typeof seed.rank === 'number' ? seed.rank : 0;
+    const weight = typeof seed.weight === 'number' ? seed.weight : 1;
+    s += (sw * weight) / (1 + rank);
+  }
+  return s;
+}
+
 function topNumeric(obj, n) {
   return Object.fromEntries(
     Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)

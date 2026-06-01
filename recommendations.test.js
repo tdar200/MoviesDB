@@ -5,6 +5,7 @@ import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extra
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
+  collabScore,
 } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -566,4 +567,42 @@ test('cosineSim returns 0 when either vector is empty', () => {
 test('cosineSim partial overlap sits strictly between 0 and 1', () => {
   const s = cosineSim({ 'g:1': 1, 'g:2': 1 }, { 'g:1': 1, 'g:3': 1 });
   assert.ok(Math.abs(s - 0.5) < 1e-12, `one shared of two each => 0.5, got ${s}`);
+});
+
+test('collabScore sums rec/similar provenance weighted by source and rank', () => {
+  const c = { id: 1, _seeds: [
+    { source: 'rec', type: 'title', id: 10, rank: 0, weight: 1 },     // 1.0*1/(1+0)=1
+    { source: 'similar', type: 'title', id: 11, rank: 1, weight: 1 }, // 0.5*1/(1+1)=0.25
+  ] };
+  assert.ok(Math.abs(collabScore(c) - 1.25) < 1e-9, `got ${collabScore(c)}`);
+});
+
+test('collabScore: rec outranks similar at the same rank and weight', () => {
+  const rec = { id: 1, _seeds: [{ source: 'rec', type: 'title', id: 10, rank: 0, weight: 1 }] };
+  const sim = { id: 2, _seeds: [{ source: 'similar', type: 'title', id: 10, rank: 0, weight: 1 }] };
+  assert.ok(collabScore(rec) > collabScore(sim));
+  assert.equal(collabScore(rec), 1.0);
+  assert.equal(collabScore(sim), 0.5);
+});
+
+test('collabScore ignores non-collaborative (discover/trending) seeds', () => {
+  const c = { id: 1, _seeds: [
+    { source: 'discover-genre', type: 'genre', id: 28, rank: 0, weight: 5 },
+    { source: 'trending', type: 'title', id: 99, rank: 0, weight: 5 },
+  ] };
+  assert.equal(collabScore(c), 0);
+});
+
+test('collabScore is 0 for a candidate with no seeds', () => {
+  assert.equal(collabScore({ id: 1, _seeds: [] }), 0);
+  assert.equal(collabScore({ id: 2 }), 0);
+});
+
+test('collabScore: more contributing seeds accumulate higher', () => {
+  const one = { id: 1, _seeds: [{ source: 'rec', type: 'title', id: 10, rank: 0, weight: 1 }] };
+  const two = { id: 2, _seeds: [
+    { source: 'rec', type: 'title', id: 10, rank: 0, weight: 1 },
+    { source: 'rec', type: 'title', id: 11, rank: 0, weight: 1 },
+  ] };
+  assert.ok(collabScore(two) > collabScore(one));
 });
