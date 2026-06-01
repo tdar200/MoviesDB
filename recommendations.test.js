@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
-import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates } from './recommendations.js';
+import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_700_000_000_000; // fixed clock for deterministic tests
@@ -318,4 +318,88 @@ test('scoreCandidate: a candidate in a net-negative genre scores below a neutral
   const horror = { id: 11, genre_ids: [878, 27], _seeds: [], popularity: 10 };
   assert.ok(scoreCandidate(sciFi, netProfile) > scoreCandidate(horror, netProfile),
     'horror-tagged candidate must score lower due to the negative genre');
+});
+
+// --- Stage 1: per-seed collaborative candidate extraction ---
+
+const SEED_ITEM = { id: 27205, title: 'Inception', media_type: 'movie' };
+
+// A trimmed but shape-faithful /movie/27205?append_to_response=recommendations,similar response.
+const APPEND_JSON = {
+  id: 27205,
+  title: 'Inception',
+  recommendations: {
+    results: [
+      // a movie rec
+      { id: 155, title: 'The Dark Knight', media_type: 'movie', genre_ids: [18, 28, 80],
+        vote_average: 8.5, vote_count: 30000, popularity: 120.5, release_date: '2008-07-16' },
+      // a tv rec (mixed media: media_type comes straight from the response)
+      { id: 1399, name: 'Game of Thrones', media_type: 'tv', genre_ids: [10765, 18],
+        vote_average: 8.4, vote_count: 21000, popularity: 350.0, first_air_date: '2011-04-17' },
+    ],
+  },
+  similar: {
+    results: [
+      { id: 49026, title: 'The Dark Knight Rises', media_type: 'movie', genre_ids: [28, 80, 18],
+        vote_average: 7.8, vote_count: 19000, popularity: 80.0, release_date: '2012-07-16' },
+    ],
+  },
+};
+
+test('extractSeedCandidates tags rec candidates with source:rec and REC_SOURCE_WEIGHT', () => {
+  const out = extractSeedCandidates(SEED_ITEM, APPEND_JSON);
+  const dk = out.find((c) => c.id === 155);
+  assert.equal(dk.media_type, 'movie');
+  assert.equal(dk.vote_average, 8.5);
+  assert.equal(dk.vote_count, 30000);
+  assert.equal(dk.popularity, 120.5);
+  assert.deepEqual(dk.genre_ids, [18, 28, 80]);
+  assert.equal(dk.release_date, '2008-07-16');
+  assert.equal(dk._seeds.length, 1);
+  const tag = dk._seeds[0];
+  assert.equal(tag.source, 'rec');
+  assert.equal(tag.type, 'title');
+  assert.equal(tag.id, 27205);          // facet id == producing seed title id for rec/similar
+  assert.equal(tag.seedId, 27205);
+  assert.equal(tag.seedTitle, 'Inception');
+  assert.equal(tag.rank, 0);            // 0-based position in the rec list
+  assert.equal(tag.weight, 1.0);        // REC_SOURCE_WEIGHT
+});
+
+test('extractSeedCandidates preserves a tv candidate real media_type and rank', () => {
+  const out = extractSeedCandidates(SEED_ITEM, APPEND_JSON);
+  const got = out.find((c) => c.id === 1399);
+  assert.equal(got.media_type, 'tv');
+  assert.equal(got.name, 'Game of Thrones');
+  assert.equal(got.first_air_date, '2011-04-17');
+  assert.equal(got._seeds[0].source, 'rec');
+  assert.equal(got._seeds[0].rank, 1); // second in the rec list
+});
+
+test('extractSeedCandidates tags similar candidates source:similar weighted below rec', () => {
+  const out = extractSeedCandidates(SEED_ITEM, APPEND_JSON);
+  const sim = out.find((c) => c.id === 49026);
+  assert.equal(sim.media_type, 'movie');
+  const tag = sim._seeds[0];
+  assert.equal(tag.source, 'similar');
+  assert.equal(tag.type, 'title');
+  assert.equal(tag.seedId, 27205);
+  assert.equal(tag.seedTitle, 'Inception');
+  assert.equal(tag.rank, 0);            // 0-based within the similar list
+  assert.equal(tag.weight, 0.5);        // SIMILAR_SOURCE_WEIGHT
+  assert.ok(tag.weight < out.find((c) => c.id === 155)._seeds[0].weight);
+});
+
+test('extractSeedCandidates uses seed media_type when a candidate omits it', () => {
+  const tvSeed = { id: 1396, name: 'Breaking Bad', media_type: 'tv' };
+  const json = { id: 1396, recommendations: { results: [
+    { id: 60059, name: 'Better Call Saul', genre_ids: [18], vote_average: 8.5, vote_count: 5000, popularity: 90 },
+  ] }, similar: { results: [] } };
+  const out = extractSeedCandidates(tvSeed, json);
+  assert.equal(out[0].media_type, 'tv'); // inherited from the tv seed
+});
+
+test('extractSeedCandidates returns [] for an empty / fieldless append payload', () => {
+  assert.deepEqual(extractSeedCandidates(SEED_ITEM, { id: 27205 }), []);
+  assert.deepEqual(extractSeedCandidates(SEED_ITEM, { id: 27205, recommendations: { results: [] }, similar: { results: [] } }), []);
 });

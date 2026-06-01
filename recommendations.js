@@ -24,6 +24,23 @@ const STAR_BONUS = 2.5;             // multiplier for starred items
 const COVERAGE_WEIGHT = 0.5;        // strength of collection-breadth bonus
 const DOWNVOTE_PENALTY = 1.0;       // steer-away strength: a downvoted theme cancels an equal positive one
 
+// --- Recommendation engine tuning (contract constants; declared once) ---
+const W_COLLAB = 0.6;               // collaborative score weight in the hybrid
+const W_CONTENT = 0.4;              // content (cosine) score weight in the hybrid
+const MMR_LAMBDA_TEASER = 0.8;      // home-teaser MMR relevance/diversity tradeoff
+const MMR_LAMBDA_PAGE = 0.6;        // full rec-page MMR relevance/diversity tradeoff
+const PER_SEED_CAP = 3;             // max candidates kept per producing seed in MMR
+const MAX_SEEDS = 12;               // cap basket seeds expanded per pipeline run
+const BAYES_PRIOR_COUNT = 500;      // m: pseudo-count for the bayesian rating prior
+const BAYES_GLOBAL_MEAN = 6.5;      // C: global mean rating prior
+const REC_SOURCE_WEIGHT = 1.0;      // /recommendations candidate source weight
+const SIMILAR_SOURCE_WEIGHT = 0.5;  // /similar weighted below rec
+const NEAR_DUP_SIM = 0.9;           // itemSim above this collapses near-duplicates
+const DOWNVOTE_GAMMA = 0.15;        // Rocchio negative-profile weight
+const RECENCY_FULL_YEARS = 2;       // within 2 yrs => full recency multiplier 1.0
+const RECENCY_FLOOR = 0.85;         // oldest titles recency multiplier floor
+const COLD_START_FULL = 5;          // basketSize at which personalizedWeight === 1
+
 // Map a title's measured engagement to a weight multiplier in [0.4 .. 2.5].
 // Callers pass a real engagement record; absence of a record is handled by the
 // profile builder (neutral 1.0), not here.
@@ -152,6 +169,32 @@ export function combineProfiles(pos, neg, opts = {}) {
 
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+// Map one appendDetail response's recommendations (source:'rec') and similar
+// (source:'similar') lists into tagged Candidates. Each candidate keeps its REAL
+// media_type from the response (mixed movie+tv), all quality/date fields, and a
+// SeedTag recording which basket seed produced it, its 0-based list rank, and the
+// source weight (rec > similar). Pure: no network, no clock.
+export function extractSeedCandidates(seedItem, appendDetailJson) {
+  if (!seedItem || !appendDetailJson) return [];
+  const seedId = seedItem.id;
+  const seedTitle = seedItem.title || seedItem.name;
+  const seedMediaType = seedItem.media_type === 'tv' ? 'tv' : 'movie';
+
+  const fromList = (list, source, weight) =>
+    (list || []).map((cand, rank) => ({
+      ...cand,
+      media_type: cand.media_type === 'tv' || cand.media_type === 'movie'
+        ? cand.media_type
+        : seedMediaType,
+      _seeds: [{ source, type: 'title', id: seedId, seedId, seedTitle, rank, weight }],
+    }));
+
+  return [
+    ...fromList(appendDetailJson.recommendations?.results, 'rec', REC_SOURCE_WEIGHT),
+    ...fromList(appendDetailJson.similar?.results, 'similar', SIMILAR_SOURCE_WEIGHT),
+  ];
 }
 
 // Merge Discover result lists, deduping by id and accumulating seed provenance.
