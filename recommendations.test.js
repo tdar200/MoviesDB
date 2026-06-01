@@ -403,3 +403,23 @@ test('extractSeedCandidates returns [] for an empty / fieldless append payload',
   assert.deepEqual(extractSeedCandidates(SEED_ITEM, { id: 27205 }), []);
   assert.deepEqual(extractSeedCandidates(SEED_ITEM, { id: 27205, recommendations: { results: [] }, similar: { results: [] } }), []);
 });
+
+test('mergeCandidates accumulates rec+similar title SeedTags from different seeds', () => {
+  const merged = mergeCandidates([
+    { id: 155, media_type: 'movie', genre_ids: [18, 28, 80],
+      _seeds: [{ source: 'rec', type: 'title', id: 27205, seedId: 27205, seedTitle: 'Inception', rank: 0, weight: 1.0 }] },
+    { id: 155, media_type: 'movie', genre_ids: [18, 28, 80],
+      _seeds: [{ source: 'similar', type: 'title', id: 49051, seedId: 49051, seedTitle: 'The Hobbit', rank: 2, weight: 0.5 }] },
+    { id: 1399, media_type: 'tv', genre_ids: [10765, 18],
+      _seeds: [{ source: 'rec', type: 'title', id: 27205, seedId: 27205, seedTitle: 'Inception', rank: 1, weight: 1.0 }] },
+  ]);
+  assert.equal(merged.length, 2);
+  const c155 = merged.find((c) => c.id === 155);
+  assert.equal(c155.media_type, 'movie');
+  assert.equal(c155._seeds.length, 2);
+  assert.deepEqual(c155._seeds.map((s) => s.source).sort(), ['rec', 'similar']);
+  assert.deepEqual(c155._seeds.map((s) => s.seedId).sort((a, b) => a - b), [27205, 49051]);
+  const c1399 = merged.find((c) => c.id === 1399);
+  assert.equal(c1399._seeds.length, 1);
+  assert.equal(c1399._seeds[0].source, 'rec');
+});
