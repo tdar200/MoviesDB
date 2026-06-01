@@ -579,6 +579,95 @@ export function splitGenreKeywordIds(ids) {
   return { genres, keywords };
 }
 
+// Build the shared opts (quality gates + date window + negative steering) applied to every
+// Discover request. Pure: sources floors from CONFIG and the negative profile only.
+// MIN_RATING is gated only when > 0 (0 means "no rating floor"). without_* are assembled
+// from the negative profile's genres (real TMDB genre ids) and keywords (keyword ids).
+function discoverGates(negProfile) {
+  const opts = {
+    voteCountGte: CONFIG.MIN_VOTE_COUNT,
+    dateGte: `${CONFIG.MIN_YEAR}-01-01`,
+  };
+  if (CONFIG.MIN_RATING > 0) opts.voteAverageGte = CONFIG.MIN_RATING;
+  if (negProfile) {
+    const negGenreIds = Object.keys(negProfile.genres || {}).map(Number);
+    const negKeywordIds = Object.keys(negProfile.keywords || {}).map(Number);
+    if (negGenreIds.length) opts.withoutGenres = negGenreIds.join('|');
+    if (negKeywordIds.length) opts.withoutKeywords = negKeywordIds.join('|');
+  }
+  return opts;
+}
+
+// Pure: produce the list of { url, seed } Discover requests for the candidate pool.
+// - top genres OR-combined into one with_genres facet (keyword-typed config ids split out)
+// - top keywords and people each their own facet
+// - run for BOTH media types, ordered by mediaTypeBias (heavier type first)
+// - pages 1..opts.pages (default 2), gated by CONFIG floors + negative without_*
+// Seeds conform to SeedTag: source 'discover-genre'|'discover-keyword'|'discover-person',
+//   type 'genre'|'keyword'|'person', id = the producing facet id, name + weight.
+// opts: { pages = 2, maxGenres = 4, maxKeywords = 6, maxPeople = 6 }
+export function buildDiscoverRequests(profile, negProfile, opts = {}) {
+  const { pages = 2, maxGenres = 4, maxKeywords = 6, maxPeople = 6 } = opts;
+  const gates = discoverGates(negProfile);
+
+  // mediaTypeBias-ordered types: heavier type first, both always present (mixed media).
+  const bias = profile.mediaTypeBias || { movie: 0, tv: 0 };
+  const types = bias.tv > bias.movie ? ['tv', 'movie'] : ['movie', 'tv'];
+
+  const topGenreIds = Object.entries(profile.genres || {})
+    .filter(([, w]) => w > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxGenres)
+    .map(([id]) => Number(id));
+  // profile.genres may carry config-sourced keyword-typed ids; route them out of with_genres.
+  const { genres: genreIds, keywords: genreKeywordIds } = splitGenreKeywordIds(topGenreIds);
+
+  const topKeywords = Object.entries(profile.keywords || {})
+    .sort((a, b) => b[1].weight - a[1].weight)
+    .slice(0, maxKeywords)
+    .map(([id, { name, weight }]) => ({ id: Number(id), name, weight }));
+  const topPeople = Object.entries(profile.people || {})
+    .sort((a, b) => b[1].weight - a[1].weight)
+    .slice(0, maxPeople)
+    .map(([id, { name, weight }]) => ({ id: Number(id), name, weight }));
+
+  // Keyword facets = real theme keywords + any keyword-typed ids misfiled under genres.
+  const keywordFacets = [
+    ...topKeywords,
+    ...genreKeywordIds.map((id) => ({ id, name: GENRE_NAMES.get(id) || 'keyword', weight: 1 })),
+  ];
+
+  const requests = [];
+  for (const type of types) {
+    for (let page = 1; page <= pages; page++) {
+      if (genreIds.length) {
+        const csv = genreIds.join('|'); // pipe-OR
+        requests.push({
+          url: ENDPOINTS.discoverByGenres(type, csv, page, gates),
+          seed: {
+            source: 'discover-genre', type: 'genre', id: genreIds[0],
+            name: GENRE_NAMES.get(genreIds[0]) || 'genre',
+            weight: profile.genres[String(genreIds[0])] || 1,
+          },
+        });
+      }
+      for (const k of keywordFacets) {
+        requests.push({
+          url: ENDPOINTS.discoverByKeyword(type, k.id, page, gates),
+          seed: { source: 'discover-keyword', type: 'keyword', id: k.id, name: k.name, weight: k.weight },
+        });
+      }
+      for (const p of topPeople) {
+        requests.push({
+          url: ENDPOINTS.discoverByCast(type, p.id, page, gates),
+          seed: { source: 'discover-person', type: 'person', id: p.id, name: p.name, weight: p.weight },
+        });
+      }
+    }
+  }
+  return requests;
+}
+
 // Group a ranked rec list into themed rows for the dedicated Recommendation page.
 // Pure: no network, no DOM. `ranked` = [{movie, score, reasons}] where each movie
 // carries _seeds provenance and genre_ids; `profile` is a buildTasteProfile() result.
@@ -664,7 +753,7 @@ export function rankCandidates(candidates, profile, watchedIds, limit = 20, now 
 // ---------------------------------------------------------------------------
 // Network + cache layer (browser only)
 // ---------------------------------------------------------------------------
-import { ENDPOINTS } from './config.js';
+import { CONFIG, ENDPOINTS } from './config.js';
 import { createFetchQueue } from './fetch-queue.js';
 
 const META_CACHE_KEY = 'recMetaCache';     // permanent per-title keywords/credits
@@ -776,7 +865,7 @@ function enrichmentFromAppend(json) {
 // the content profile). Returns the merged, deduped collaborative candidate pool.
 // Discover (discoverCandidates) and cold-start filler (fillerCandidates) are merged into
 // the _pipeline candidate set by their own sections via targeted edits, not here.
-async function generateCandidates(basketEnriched) {
+async function generateCandidates(basketEnriched, profile, negProfile = null) {
   const seeds = topSeeds(basketEnriched);
   const tagged = [];
   const BATCH = 6;
@@ -800,6 +889,33 @@ async function generateCandidates(basketEnriched) {
       tagged.push(...extractSeedCandidates(enrichedSeed, r.json));
     }
     if (i + BATCH < seeds.length) await delay(300);
+  }
+  const collab = mergeCandidates(tagged);
+  const discover = await discoverCandidates(profile, negProfile);
+  return mergeCandidates([...collab, ...discover]);
+}
+
+// Pull Discover candidates seeded by the profile's top genres/keywords/people.
+// Deeper (pages 1-2), pipe-OR multi-facet, both media types, gated + negatively steered.
+// Returns merged Candidate[] (de-duped + seed-union via mergeCandidates).
+async function discoverCandidates(profile, negProfile = null) {
+  const requests = buildDiscoverRequests(profile, negProfile, {});
+
+  const tagged = [];
+  const BATCH = 6;
+  for (let i = 0; i < requests.length; i += BATCH) {
+    const slice = requests.slice(i, i + BATCH);
+    const results = await Promise.all(
+      slice.map((r) => fetchJson(r.url).then((d) => ({ d, seed: r.seed, url: r.url })).catch(() => null))
+    );
+    for (const r of results) {
+      if (!r) continue;
+      const reqType = r.url.includes('/discover/tv?') ? 'tv' : 'movie';
+      for (const movie of (r.d.results || [])) {
+        tagged.push({ ...movie, media_type: movie.media_type || reqType, _seeds: [r.seed] });
+      }
+    }
+    if (i + BATCH < requests.length) await delay(300);
   }
   return mergeCandidates(tagged);
 }
@@ -838,7 +954,7 @@ async function _pipeline(input, opts = {}) {
   const negProfile = downEnriched.length ? buildTasteProfile(downEnriched, now) : null;
   const profile = combineProfiles(posProfile, negProfile, { penalty });
 
-  const candidates = await generateCandidates(basketEnriched);
+  const candidates = await generateCandidates(basketEnriched, profile, negProfile);
   const excludeIds = new Set(
     [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
   );

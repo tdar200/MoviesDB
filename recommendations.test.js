@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
-import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds } from './recommendations.js';
+import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
@@ -889,4 +889,92 @@ test('splitGenreKeywordIds: empty input yields empty buckets', () => {
   const out = splitGenreKeywordIds([]);
   assert.deepEqual(out.genres, []);
   assert.deepEqual(out.keywords, []);
+});
+
+const DISC_PROFILE = {
+  genres: { '878': 3, '28': 2 },
+  keywords: { '4379': { name: 'Time Travel', weight: 2 } }, // type:'keyword' config id
+  people: { '5': { name: 'Nolan', weight: 2 } },
+  mediaTypeBias: { movie: 5, tv: 1 },
+  topTitles: [],
+};
+const NEG_PROFILE = {
+  genres: { '27': 1 },                                   // Horror -> without_genres
+  keywords: { '12377': { name: 'Zombie', weight: 1 } },  // Zombie -> without_keywords
+  people: {},
+  mediaTypeBias: { movie: 1, tv: 0 },
+  topTitles: [],
+};
+
+test('buildDiscoverRequests runs for BOTH media types', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
+  const movieReqs = reqs.filter((r) => r.url.includes('/discover/movie?'));
+  const tvReqs = reqs.filter((r) => r.url.includes('/discover/tv?'));
+  assert.ok(movieReqs.length > 0, 'expected movie discover requests');
+  assert.ok(tvReqs.length > 0, 'expected tv discover requests');
+});
+
+test('buildDiscoverRequests paginates pages 1-2 by default', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, null, {});
+  assert.ok(reqs.some((r) => r.url.includes('page=1')), 'expected a page=1 request');
+  assert.ok(reqs.some((r) => r.url.includes('page=2')), 'expected a page=2 request');
+});
+
+test('buildDiscoverRequests OR-combines top genres into one with_genres facet (pipe)', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
+  const genreReq = reqs.find((r) => r.seed.type === 'genre' && r.url.includes('/discover/movie?'));
+  assert.ok(genreReq, 'expected a genre discover request');
+  // 878 and 28 OR-combined; tolerate raw or %7C-encoded pipe.
+  assert.ok(
+    genreReq.url.includes('with_genres=878%7C28') || genreReq.url.includes('with_genres=878|28'),
+    `expected piped genres, got ${genreReq.url}`,
+  );
+});
+
+test('buildDiscoverRequests routes type:keyword facet to with_keywords, never with_genres', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
+  const kwReq = reqs.find((r) => r.seed.type === 'keyword' && r.seed.id === 4379);
+  assert.ok(kwReq, 'expected a keyword discover request for 4379');
+  assert.ok(kwReq.url.includes('with_keywords=4379'), `got ${kwReq.url}`);
+  // Time Travel (4379) must NOT leak into any with_genres list.
+  assert.ok(!reqs.some((r) => r.url.includes('with_genres') && r.url.includes('4379')),
+    'keyword id 4379 leaked into with_genres');
+});
+
+test('buildDiscoverRequests seeds carry source:discover-* and the producing facet id', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
+  const genreSeed = reqs.find((r) => r.seed.source === 'discover-genre').seed;
+  const kwSeed = reqs.find((r) => r.seed.source === 'discover-keyword').seed;
+  const personSeed = reqs.find((r) => r.seed.source === 'discover-person').seed;
+  assert.equal(genreSeed.type, 'genre');
+  assert.equal(kwSeed.type, 'keyword');
+  assert.equal(kwSeed.id, 4379);
+  assert.equal(personSeed.type, 'person');
+  assert.equal(personSeed.id, 5);
+});
+
+test('buildDiscoverRequests applies CONFIG gates: vote_count.gte and date window', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
+  // CONFIG.MIN_VOTE_COUNT = 10, CONFIG.MIN_YEAR = 1970, CONFIG.MIN_RATING = 0 (omitted).
+  assert.ok(reqs.every((r) => r.url.includes('vote_count.gte=10')), 'all reqs gated by min votes');
+  const movieReq = reqs.find((r) => r.url.includes('/discover/movie?'));
+  const tvReq = reqs.find((r) => r.url.includes('/discover/tv?'));
+  assert.ok(movieReq.url.includes('primary_release_date.gte=1970-01-01'), `got ${movieReq.url}`);
+  assert.ok(tvReq.url.includes('first_air_date.gte=1970-01-01'), `got ${tvReq.url}`);
+  // MIN_RATING is 0 -> no vote_average gate.
+  assert.ok(reqs.every((r) => !r.url.includes('vote_average.gte')), 'no vote_average gate at MIN_RATING=0');
+});
+
+test('buildDiscoverRequests builds without_genres/without_keywords from the negative profile', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, NEG_PROFILE, { pages: 1 });
+  assert.ok(reqs.every((r) => r.url.includes('without_genres=27')),
+    'expected Horror 27 in without_genres on every request');
+  assert.ok(reqs.every((r) => r.url.includes('without_keywords=12377')),
+    'expected Zombie 12377 in without_keywords on every request');
+});
+
+test('buildDiscoverRequests omits without_* when no negative profile', () => {
+  const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
+  assert.ok(reqs.every((r) => !r.url.includes('without_genres')), 'no without_genres without neg');
+  assert.ok(reqs.every((r) => !r.url.includes('without_keywords')), 'no without_keywords without neg');
 });
