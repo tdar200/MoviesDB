@@ -806,60 +806,114 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     minItems = 4,
     maxRows = 10,
     itemsPerRow = 20,
+    genreDist = null,       // basket genreHistogram for calibration + budget
+    exploreCount = 8,
+    exploreMinVote = 6.5,   // vote_average floor for a "gem"
+    exploreMaxCount = 2000, // vote_count ceiling for a "gem"
   } = opts;
 
   const rows = [];
 
-  // 1. Top picks — highest scored overall. Does not consume the themed-row claim.
+  // One global placed-Set: a title appears in at most one row.
+  const placed = new Set();
+  const recId = (r) => String(r.movie.id);
+  const num = (v) => Number(v);                       // consistent coercion everywhere
+  const seedHas = (r, type, id) =>
+    (r.movie._seeds || []).some((s) => s.type === type && num(s.id) === num(id));
+
+  // 1. Top picks — global best-N, genre-calibrated to the basket, and CLAIMS its items.
   if (ranked.length && topCount > 0) {
-    rows.push({ kind: 'top', title: 'Top picks for you', recs: ranked.slice(0, topCount) });
+    let recs;
+    if (genreDist && Object.keys(genreDist).length) {
+      recs = calibrate(ranked, genreDist, { lambda: 0.5, limit: topCount });
+    } else {
+      recs = ranked.slice(0, topCount);
+    }
+    recs.forEach((r) => placed.add(recId(r)));
+    rows.push({ kind: 'top', title: 'Top picks for you', recs });
   }
 
-  // A movie lands in at most one themed row; first themed row (by order below) wins.
-  const claimed = new Set();
-  const recId = (r) => String(r.movie.id);
   const take = (predicate) => ranked
-    .filter((r) => !claimed.has(recId(r)) && predicate(r))
+    .filter((r) => !placed.has(recId(r)) && predicate(r))
     .slice(0, itemsPerRow);
-  const claim = (recs) => recs.forEach((r) => claimed.add(recId(r)));
-  const hasSeed = (r, type, id) => (r.movie._seeds || []).some((s) => s.type === type && s.id === id);
+  const claim = (recs) => recs.forEach((r) => placed.add(recId(r)));
 
-  // 2. Because you watched X — strongest contributing titles by profile weight.
-  // Note: these also claim person-seeded recs, so a "More from <Person>" row for a
-  // person who is also in topTitles may be starved (and dropped by the minItems gate).
+  // Determine the basket genre order once: histogram mass when present, else profile weight.
+  const genreOrder = genreDist && Object.keys(genreDist).length
+    ? Object.entries(genreDist).sort((a, b) => b[1] - a[1]).map(([id]) => num(id))
+    : Object.entries(profile.genres || {})
+        .filter(([, w]) => w > 0)
+        .sort((a, b) => b[1] - a[1]).map(([id]) => num(id));
+
+  // Reserve the explore gems FIRST (high-rating, low-vote-count titles in the top basket
+  // genre) so the broader genre row below cannot claim them; the row is pushed last for
+  // display order. Deterministic selection: rarest first, then highest rating, then id.
+  const topGenre = genreOrder[0];
+  let exploreGems = [];
+  if (topGenre != null) {
+    exploreGems = ranked
+      .filter((r) => !placed.has(recId(r))
+        && (r.movie.genre_ids || []).map(num).includes(topGenre)
+        && num(r.movie.vote_average) >= exploreMinVote
+        && num(r.movie.vote_count) > 0
+        && num(r.movie.vote_count) < exploreMaxCount)
+      .sort((a, b) =>
+        (num(a.movie.vote_count) - num(b.movie.vote_count))
+        || (num(b.movie.vote_average) - num(a.movie.vote_average))
+        || (num(a.movie.id) - num(b.movie.id)))
+      .slice(0, exploreCount);
+    if (exploreGems.length >= minItems) claim(exploreGems);
+    else exploreGems = [];
+  }
+
+  // 2. Because you watched X — strongest contributing titles by profile weight (kind 'title').
   for (const t of (profile.topTitles || []).slice(0, titleRows)) {
-    const kw = new Set(t.keywordIds || []);
-    const pp = new Set(t.peopleIds || []);
+    const kw = new Set((t.keywordIds || []).map(num));
+    const pp = new Set((t.peopleIds || []).map(num));
     const recs = take((r) => (r.movie._seeds || []).some((s) =>
-      (s.type === 'keyword' && kw.has(Number(s.id))) || (s.type === 'person' && pp.has(Number(s.id)))));
+      (s.type === 'keyword' && kw.has(num(s.id))) || (s.type === 'person' && pp.has(num(s.id)))));
     if (recs.length >= minItems) {
       claim(recs);
       rows.push({ kind: 'title', title: `Because you watched ${t.title}`, recs });
     }
   }
 
-  // 3. More <Genre> — top profile genres by weight.
-  const topGenres = Object.entries(profile.genres || {})
-    .filter(([, w]) => w > 0)
-    .sort((a, b) => b[1] - a[1]).slice(0, genreRows).map(([id]) => Number(id));
-  for (const gid of topGenres) {
-    const recs = take((r) => (r.movie.genre_ids || []).map(Number).includes(gid));
+  // 3. More <Genre> — budget allocated by the basket genre histogram when present.
+  for (const gid of genreOrder.slice(0, genreRows)) {
+    // Budget proportional to histogram mass (min the row floor), capped at itemsPerRow.
+    const budget = genreDist
+      ? Math.max(minItems, Math.round((genreDist[String(gid)] || 0) * itemsPerRow))
+      : itemsPerRow;
+    const recs = ranked
+      .filter((r) => !placed.has(recId(r)) && (r.movie.genre_ids || []).map(num).includes(gid))
+      .slice(0, Math.min(budget, itemsPerRow));
     if (recs.length >= minItems) {
       claim(recs);
       rows.push({ kind: 'genre', title: `More ${GENRE_NAMES.get(gid) || 'like this'}`, recs });
     }
   }
 
-  // 4. More from <Person> — top profile people by weight.
+  // 4. More from <Person> — top profile people by weight. Contract Row.kind has no
+  // 'person' archetype, so these are 'title' rows (a person is a "because you liked" facet).
   const topPeople = Object.entries(profile.people || {})
     .sort((a, b) => b[1].weight - a[1].weight).slice(0, personRows);
   for (const [pidStr, { name }] of topPeople) {
-    const pid = Number(pidStr);
-    const recs = take((r) => hasSeed(r, 'person', pid));
+    const pid = num(pidStr);
+    const recs = take((r) => seedHas(r, 'person', pid));
     if (recs.length >= minItems) {
       claim(recs);
-      rows.push({ kind: 'person', title: `More from ${name}`, recs });
+      rows.push({ kind: 'title', title: `More from ${name}`, recs });
     }
+  }
+
+  // 5. Exactly one DETERMINISTIC explore row, pushed last for display order. Its gems were
+  // reserved + claimed above so the genre row could not absorb them.
+  if (exploreGems.length >= minItems) {
+    rows.push({
+      kind: 'explore',
+      title: `Hidden gems in ${GENRE_NAMES.get(topGenre) || 'your taste'}`,
+      recs: exploreGems,
+    });
   }
 
   return rows.slice(0, maxRows);

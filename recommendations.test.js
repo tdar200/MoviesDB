@@ -318,8 +318,9 @@ test('groupIntoRows: "More from <Person>" groups by person seed', () => {
   // No topTitles person 7 and no genre match, so these land in the person row.
   const profile = { ...GROUP_PROFILE, topTitles: [], genres: {} };
   const rows = groupIntoRows(ranked, profile, { topCount: 0, minItems: 4 });
-  const personRow = rows.find((r) => r.kind === 'person');
-  assert.equal(personRow.title, 'More from Villeneuve');
+  const personRow = rows.find((r) => r.title === 'More from Villeneuve');
+  assert.ok(personRow, 'expected a "More from Villeneuve" row');
+  assert.equal(personRow.kind, 'title'); // person rows are kind:'title' (contract Row.kind)
   assert.equal(personRow.recs.length, 4);
 });
 
@@ -327,6 +328,85 @@ test('groupIntoRows: total rows never exceed maxRows', () => {
   const ranked = Array.from({ length: 40 }, (_, i) => gr(2000 + i, { genres: [878] }));
   const rows = groupIntoRows(ranked, GROUP_PROFILE, { maxRows: 2 });
   assert.ok(rows.length <= 2);
+});
+
+// Richer scored helper that also carries quality fields the explore row reads.
+function grq(id, { seeds = [], genres = [], score = 1, va = 6, vc = 100 } = {}) {
+  return {
+    movie: { id, genre_ids: genres, _seeds: seeds, vote_average: va, vote_count: vc },
+    score, parts: {}, reasons: ['r'],
+  };
+}
+
+test('groupIntoRows: no id appears in two rows (Top Picks claims its items)', () => {
+  // 12 sci-fi recs all carrying a Nolan person seed; Top Picks takes the top 6,
+  // themed rows must not re-list them.
+  const ranked = Array.from({ length: 12 }, (_, i) =>
+    grq(100 + i, { genres: [878], score: 1 - i * 0.01,
+      seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 4 }] }));
+  const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 6, minItems: 4 });
+  const seen = new Set();
+  for (const row of rows) {
+    for (const r of row.recs) {
+      const id = String(r.movie.id);
+      assert.ok(!seen.has(id), `id ${id} duplicated across rows (row kind=${row.kind})`);
+      seen.add(id);
+    }
+  }
+});
+
+test('groupIntoRows: person row uses kind "title" and coerces string seed ids', () => {
+  // Person id arrives as a STRING on the seed; the genre profile is empty so these
+  // four land in the person row. A strict === on Number vs String would drop them.
+  const ranked = [10, 11, 12, 13].map((id) =>
+    grq(id, { seeds: [{ type: 'person', id: '7', name: 'Villeneuve', weight: 2 }] }));
+  const profile = { ...GROUP_PROFILE, topTitles: [], genres: {} };
+  const rows = groupIntoRows(ranked, profile, { topCount: 0, minItems: 4 });
+  // Person rows are part of the 'title' kind (contract Row.kind has no 'person').
+  const personRow = rows.find((r) => r.title === 'More from Villeneuve');
+  assert.ok(personRow, 'expected a "More from Villeneuve" row');
+  assert.equal(personRow.kind, 'title');
+  assert.equal(personRow.recs.length, 4);
+});
+
+test('groupIntoRows: shown genre mix approximates the basket histogram', () => {
+  // Basket histogram requests ~75% Sci-Fi(878) / 25% Drama(18).
+  const genreDist = { '878': 0.75, '18': 0.25 };
+  // Pool: 8 sci-fi (higher score) + 8 drama. With calibration the Top Picks of 8
+  // should contain at least ONE drama title (pure greedy score would take 0).
+  const ranked = [
+    ...Array.from({ length: 8 }, (_, i) => grq(200 + i, { genres: [878], score: 0.9 - i * 0.01 })),
+    ...Array.from({ length: 8 }, (_, i) => grq(300 + i, { genres: [18], score: 0.5 - i * 0.01 })),
+  ];
+  const rows = groupIntoRows(ranked, { ...GROUP_PROFILE, topTitles: [], people: {} },
+    { topCount: 8, genreDist, minItems: 4 });
+  const top = rows.find((r) => r.kind === 'top');
+  const dramaInTop = top.recs.filter((r) => r.movie.genre_ids.includes(18)).length;
+  assert.ok(dramaInTop >= 1, `expected calibration to surface >=1 drama, got ${dramaInTop}`);
+});
+
+test('groupIntoRows: exactly one deterministic explore row, stable across calls', () => {
+  // High vote_average + low vote_count gems in the top basket genre (878).
+  const ranked = [
+    ...[40, 41, 42, 43].map((id) => grq(id, { genres: [878], score: 0.9, va: 6.5, vc: 5000 })),
+    grq(50, { genres: [878], score: 0.2, va: 8.6, vc: 40 }),
+    grq(51, { genres: [878], score: 0.2, va: 8.9, vc: 25 }),
+    grq(52, { genres: [878], score: 0.2, va: 8.3, vc: 60 }),
+    grq(53, { genres: [878], score: 0.2, va: 8.7, vc: 30 }),
+  ];
+  const opts = { topCount: 0, minItems: 4, genreDist: { '878': 1 } };
+  const a = groupIntoRows(ranked, { ...GROUP_PROFILE, topTitles: [], people: {} }, opts);
+  const b = groupIntoRows(ranked, { ...GROUP_PROFILE, topTitles: [], people: {} }, opts);
+  const exploreA = a.filter((r) => r.kind === 'explore');
+  const exploreB = b.filter((r) => r.kind === 'explore');
+  assert.equal(exploreA.length, 1, 'exactly one explore row');
+  assert.deepEqual(
+    exploreA[0].recs.map((r) => r.movie.id),
+    exploreB[0].recs.map((r) => r.movie.id),
+    'explore row must be deterministic across calls'
+  );
+  // It selects the low-vote_count gems, not the popular titles.
+  assert.ok(exploreA[0].recs.every((r) => r.movie.vote_count < 100));
 });
 
 const POS = {
