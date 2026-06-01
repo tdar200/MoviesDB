@@ -1164,7 +1164,10 @@ export async function getRecommendationRows(input, opts = {}) {
   if (!input || !input.basket || input.basket.length === 0) return { rows: [] };
   const { limit = 60, now = Date.now(), groupOpts = {}, gamma } = opts;
   const { profile, recs } = await _pipeline(input, { limit, now, gamma });
-  return { rows: groupIntoRows(recs, profile, groupOpts) };
+  // Calibrate Top Picks + budget genre rows to the basket's own genre mix (Steck calibration).
+  // Derived from the raw basket (its items carry genre_ids); a caller-supplied genreDist wins.
+  const genreDist = genreHistogram(input.basket);
+  return { rows: groupIntoRows(recs, profile, { genreDist, ...groupOpts }) };
 }
 
 // Clear every per-limit session results cache entry (call after a new title is watched).
