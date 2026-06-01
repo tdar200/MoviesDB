@@ -103,6 +103,33 @@ export function recencyMultiplier(releaseDate, now) {
   return 1 - (1 - RECENCY_FLOOR) * frac;
 }
 
+// Tag-vector for a candidate: genres always; keywords/people only when the item
+// carries enrichment (_keywords/_people). Presence-weighted (1 per term).
+export function buildTagVector(item) {
+  const v = {};
+  for (const g of item.genre_ids || []) v['g:' + g] = 1;
+  for (const k of item._keywords || []) v['k:' + k.id] = 1;
+  for (const p of item._people || []) v['p:' + p.id] = 1;
+  return v;
+}
+
+// Tag-vector for the taste profile: genre/keyword/person weights -> g:/k:/p: keys.
+// Non-positive genre weights (net-negative after Rocchio) are excluded so they
+// never pull the content cosine upward.
+export function profileVector(profile) {
+  const v = {};
+  for (const [g, w] of Object.entries(profile.genres || {})) {
+    if (w > 0) v['g:' + g] = w;
+  }
+  for (const [k, o] of Object.entries(profile.keywords || {})) {
+    if (o.weight > 0) v['k:' + k] = o.weight;
+  }
+  for (const [p, o] of Object.entries(profile.people || {})) {
+    if (o.weight > 0) v['p:' + p] = o.weight;
+  }
+  return v;
+}
+
 function topNumeric(obj, n) {
   return Object.fromEntries(
     Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)

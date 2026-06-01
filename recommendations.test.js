@@ -4,6 +4,7 @@ import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations
 import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
+  buildTagVector, profileVector,
 } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -487,4 +488,40 @@ test('recencyMultiplier decays monotonically between full and floor', () => {
 test('recencyMultiplier returns full multiplier for missing/unknown date', () => {
   assert.equal(recencyMultiplier(undefined, NOW), 1);
   assert.equal(recencyMultiplier('', NOW), 1);
+});
+
+test('buildTagVector emits g: keys for genres, k:/p: only when present', () => {
+  const bare = buildTagVector({ id: 1, genre_ids: [878, 28] });
+  assert.deepEqual(bare, { 'g:878': 1, 'g:28': 1 });
+  // No _keywords/_people on a plain candidate => no k:/p: terms.
+  assert.ok(!Object.keys(bare).some((t) => t.startsWith('k:') || t.startsWith('p:')));
+});
+
+test('buildTagVector includes keyword/person terms on enriched items', () => {
+  const v = buildTagVector({
+    id: 2, genre_ids: [878],
+    _keywords: [{ id: 9, name: 'time travel' }],
+    _people: [{ id: 5, name: 'Nolan' }],
+  });
+  assert.equal(v['g:878'], 1);
+  assert.equal(v['k:9'], 1);
+  assert.equal(v['p:5'], 1);
+});
+
+test('profileVector maps profile weights to g:/k:/p: term keys', () => {
+  const v = profileVector(PROFILE); // PROFILE defined at ~L43 of this file
+  assert.equal(v['g:878'], 3);
+  assert.equal(v['g:28'], 1);
+  assert.equal(v['k:9'], 2);
+  assert.equal(v['p:5'], 2);
+});
+
+test('profileVector drops non-positive genre weights', () => {
+  const netProfile = {
+    genres: { '878': 4, '27': -5 }, keywords: {}, people: {},
+    mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [],
+  };
+  const v = profileVector(netProfile);
+  assert.equal(v['g:878'], 4);
+  assert.ok(!('g:27' in v), 'disliked genre must not enter the content vector');
 });
