@@ -38,9 +38,8 @@ test('ENDPOINTS.appendDetail builds /{type}/{id} with the four appended sub-reso
 test('ENDPOINTS.appendDetail works for tv type and appends all of recommendations/similar/keywords/credits', () => {
   const url = ENDPOINTS.appendDetail('tv', 1399);
   assert.ok(url.startsWith(`${CONFIG.BASE_URL}/tv/1399?`), url);
-  for (const part of ['recommendations', 'similar', 'keywords', 'credits']) {
-    assert.ok(url.includes(part), `expected ${part} in ${url}`);
-  }
+  // Exact value + order, mirroring the movie-type assertion (order matters per the contract).
+  assert.match(url, /[?&]append_to_response=recommendations,similar,keywords,credits(&|$)/);
 });
 
 test('ENDPOINTS.topRated builds /{type}/top_rated with default page 1', () => {
@@ -60,4 +59,6 @@ test('existing ENDPOINTS.topRatedMovies remains intact', () => {
   const url = ENDPOINTS.topRatedMovies(2);
   assert.ok(url.startsWith(`${CONFIG.BASE_URL}/movie/top_rated?`), url);
   assert.match(url, /[?&]page=2(&|$)/);
+  // Intentional equivalence: topRated('movie') generalizes topRatedMovies (guards against drift).
+  assert.equal(ENDPOINTS.topRated('movie', 2), ENDPOINTS.topRatedMovies(2));
 });
