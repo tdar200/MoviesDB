@@ -27,3 +27,18 @@ test('ENDPOINTS.similar honors an explicit page', () => {
   assert.ok(url.startsWith(`${CONFIG.BASE_URL}/tv/1399/similar?`), url);
   assert.match(url, /[?&]page=2(&|$)/);
 });
+
+test('ENDPOINTS.appendDetail builds /{type}/{id} with the four appended sub-resources', () => {
+  const url = ENDPOINTS.appendDetail('movie', 27205);
+  assert.ok(url.startsWith(`${CONFIG.BASE_URL}/movie/27205?`), url);
+  assert.match(url, /[?&]api_key=/);
+  assert.match(url, /[?&]append_to_response=recommendations,similar,keywords,credits(&|$)/);
+});
+
+test('ENDPOINTS.appendDetail works for tv type and appends all of recommendations/similar/keywords/credits', () => {
+  const url = ENDPOINTS.appendDetail('tv', 1399);
+  assert.ok(url.startsWith(`${CONFIG.BASE_URL}/tv/1399?`), url);
+  for (const part of ['recommendations', 'similar', 'keywords', 'credits']) {
+    assert.ok(url.includes(part), `expected ${part} in ${url}`);
+  }
+});

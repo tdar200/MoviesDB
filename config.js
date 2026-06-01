@@ -74,6 +74,9 @@ export const ENDPOINTS = {
   recommendations: (type, id, page = 1) => `${CONFIG.BASE_URL}/${type}/${id}/recommendations?api_key=${CONFIG.API_KEY}&page=${page}`,
   // Per-seed CONTENT fallback for obscure/new seeds whose recommendations list is thin.
   similar: (type, id, page = 1) => `${CONFIG.BASE_URL}/${type}/${id}/similar?api_key=${CONFIG.API_KEY}&page=${page}`,
+  // Single-call seed enrichment: keywords + credits (content vectors / Discover expansion)
+  // AND the seed's recommendations + similar lists, all in one request.
+  appendDetail: (type, id) => `${CONFIG.BASE_URL}/${type}/${id}?api_key=${CONFIG.API_KEY}&append_to_response=recommendations,similar,keywords,credits`,
   // Recommendation candidate generation via Discover (type = 'movie' | 'tv').
   discoverByGenres: (type, genreIdsCsv, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=50&with_genres=${genreIdsCsv}`,
   discoverByKeyword: (type, keywordId, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=50&with_keywords=${keywordId}`,
