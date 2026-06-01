@@ -32,6 +32,23 @@ export const CONFIG = {
   DEFAULT_MEDIA_TYPE: 'all'
 };
 
+// Serialize optional Discover gates into query params. Each param is emitted only when
+// its opts value is present, so a bare Discover call (no opts) yields no extra params.
+// `dateGte` maps to the per-type date field (movie => primary_release_date.gte,
+// tv => first_air_date.gte). `withoutGenres`/`withoutKeywords` are pre-built pipe/CSV
+// strings (negative steering) appended verbatim.
+function discoverOpts(type, opts = {}) {
+  const { voteCountGte, voteAverageGte, dateGte, withoutGenres, withoutKeywords } = opts;
+  const dateField = type === 'tv' ? 'first_air_date.gte' : 'primary_release_date.gte';
+  let q = '';
+  if (voteCountGte != null) q += `&vote_count.gte=${voteCountGte}`;
+  if (voteAverageGte != null) q += `&vote_average.gte=${voteAverageGte}`;
+  if (dateGte != null) q += `&${dateField}=${dateGte}`;
+  if (withoutGenres != null && withoutGenres !== '') q += `&without_genres=${withoutGenres}`;
+  if (withoutKeywords != null && withoutKeywords !== '') q += `&without_keywords=${withoutKeywords}`;
+  return q;
+}
+
 export const ENDPOINTS = {
   trending: (page) => `${CONFIG.BASE_URL}/trending/all/week?api_key=${CONFIG.API_KEY}&page=${page}`,
   search: (query) => `${CONFIG.BASE_URL}/search/multi?api_key=${CONFIG.API_KEY}&query=${encodeURIComponent(query)}`,
@@ -80,9 +97,12 @@ export const ENDPOINTS = {
   // Generalizes topRatedMovies across media type for the cold-start top-rated blend.
   topRated: (type, page = 1) => `${CONFIG.BASE_URL}/${type}/top_rated?api_key=${CONFIG.API_KEY}&page=${page}`,
   // Recommendation candidate generation via Discover (type = 'movie' | 'tv').
-  discoverByGenres: (type, genreIdsCsv, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=50&with_genres=${genreIdsCsv}`,
-  discoverByKeyword: (type, keywordId, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=50&with_keywords=${keywordId}`,
-  discoverByCast: (type, personId, page = 1) => `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&vote_count.gte=20&with_cast=${personId}`
+  discoverByGenres: (type, genreIdsCsv, page = 1, opts = {}) =>
+    `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&with_genres=${genreIdsCsv}${discoverOpts(type, opts)}`,
+  discoverByKeyword: (type, keywordId, page = 1, opts = {}) =>
+    `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&with_keywords=${keywordId}${discoverOpts(type, opts)}`,
+  discoverByCast: (type, personId, page = 1, opts = {}) =>
+    `${CONFIG.BASE_URL}/discover/${type}?api_key=${CONFIG.API_KEY}&sort_by=popularity.desc&page=${page}&with_cast=${personId}${discoverOpts(type, opts)}`
 };
 
 // Media types
