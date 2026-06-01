@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
 import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates } from './recommendations.js';
 import {
-  bayesianRating, qualityMultiplier,
+  bayesianRating, qualityMultiplier, recencyMultiplier,
 } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -458,4 +458,33 @@ test('mergeCandidates accumulates rec+similar title SeedTags from different seed
   const c1399 = merged.find((c) => c.id === 1399);
   assert.equal(c1399._seeds.length, 1);
   assert.equal(c1399._seeds[0].source, 'rec');
+});
+
+const YEAR_MS = 365 * DAY;
+
+test('recencyMultiplier is full (1.0) within RECENCY_FULL_YEARS', () => {
+  const brandNew = new Date(NOW).toISOString().slice(0, 10);                 // today
+  const oneYearAgo = new Date(NOW - 1 * YEAR_MS).toISOString().slice(0, 10);
+  assert.equal(recencyMultiplier(brandNew, NOW), 1);
+  assert.equal(recencyMultiplier(oneYearAgo, NOW), 1);
+});
+
+test('recencyMultiplier floors very old titles at RECENCY_FLOOR', () => {
+  const ancient = '1975-05-25';
+  assert.equal(recencyMultiplier(ancient, NOW), 0.85);
+});
+
+test('recencyMultiplier decays monotonically between full and floor', () => {
+  const fiveYears = new Date(NOW - 5 * YEAR_MS).toISOString().slice(0, 10);
+  const fifteenYears = new Date(NOW - 15 * YEAR_MS).toISOString().slice(0, 10);
+  const a = recencyMultiplier(fiveYears, NOW);
+  const b = recencyMultiplier(fifteenYears, NOW);
+  assert.ok(a > b, `closer title (${a}) should beat older (${b})`);
+  assert.ok(a < 1 && a > 0.85, `5y is mid-band: ${a}`);
+  assert.ok(b >= 0.85 && b < a, `15y nearer floor: ${b}`);
+});
+
+test('recencyMultiplier returns full multiplier for missing/unknown date', () => {
+  assert.equal(recencyMultiplier(undefined, NOW), 1);
+  assert.equal(recencyMultiplier('', NOW), 1);
 });

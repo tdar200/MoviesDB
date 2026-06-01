@@ -88,6 +88,21 @@ export function qualityMultiplier(voteAverage, voteCount) {
   return 0.6 + 0.5 * (bayesianRating(voteAverage, voteCount) / 10);
 }
 
+const RECENCY_DECAY_YEARS = 20; // age (yrs) past which we sit at the floor
+
+// Gentle release-date nudge. Full (1.0) within RECENCY_FULL_YEARS, then linearly
+// decays to RECENCY_FLOOR by RECENCY_DECAY_YEARS; missing/unknown date => 1.0.
+export function recencyMultiplier(releaseDate, now) {
+  if (!releaseDate || typeof releaseDate !== 'string') return 1;
+  const t = Date.parse(releaseDate);
+  if (Number.isNaN(t)) return 1;
+  const ageYears = Math.max(0, (now - t) / (365 * 24 * 60 * 60 * 1000));
+  if (ageYears <= RECENCY_FULL_YEARS) return 1;
+  const span = RECENCY_DECAY_YEARS - RECENCY_FULL_YEARS;
+  const frac = Math.min(1, (ageYears - RECENCY_FULL_YEARS) / span);
+  return 1 - (1 - RECENCY_FLOOR) * frac;
+}
+
 function topNumeric(obj, n) {
   return Object.fromEntries(
     Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)
