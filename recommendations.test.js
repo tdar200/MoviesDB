@@ -1342,3 +1342,30 @@ test('pruneMetaCache: a clean in-version cache within bounds passes through unch
   const out = pruneMetaCache(cache, NOW, { version: META_V, ttlMs: META_TTL, maxEntries: 50 });
   assert.deepEqual(out, cache);
 });
+
+const mkScored = (id, source, score, genreIds = [18]) => ({
+  movie: { id, media_type: 'movie', genre_ids: genreIds, vote_average: 7, vote_count: 100, popularity: 1,
+    _seeds: [{ source, type: source === 'trending' ? 'title' : 'genre', id, rank: 0, weight: 1 }] },
+  score, parts: { collab: 0, content: 0, quality: 1, recency: 1 }, reasons: [],
+});
+
+test('groupIntoRows: emits a single Trending this week row from trending-sourced items', () => {
+  const profile = { genres: { 18: 1 }, keywords: {}, people: {}, mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [] };
+  const ranked = [
+    mkScored(1, 'rec', 0.9),
+    mkScored(2, 'rec', 0.8),
+    mkScored(101, 'trending', 0.5),
+    mkScored(102, 'trending', 0.4),
+  ];
+  const rows = groupIntoRows(ranked, profile, {});
+  const trendingRows = rows.filter((r) => r.kind === 'trending');
+  assert.equal(trendingRows.length, 1);
+  assert.equal(trendingRows[0].title, 'Trending this week');
+  // Only trending-sourced items, and none already claimed by an earlier (e.g. 'top') row.
+  assert.ok(trendingRows[0].recs.every((r) => r.movie._seeds.some((s) => s.source === 'trending')));
+  assert.ok(trendingRows[0].recs.length >= 1);
+  const placedElsewhere = new Set(
+    rows.filter((r) => r.kind !== 'trending').flatMap((r) => r.recs.map((x) => x.movie.id))
+  );
+  assert.ok(trendingRows[0].recs.every((r) => !placedElsewhere.has(r.movie.id)));
+});

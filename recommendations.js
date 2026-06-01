@@ -866,13 +866,25 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   const seedHas = (r, type, id) =>
     (r.movie._seeds || []).some((s) => s.type === type && num(s.id) === num(id));
 
+  // 'trending' archetype: cold-start filler items whose provenance is the trending source.
+  // Reserve + claim them up-front (like the explore gems) so the personalized rows below
+  // cannot absorb them; the row itself is pushed at its display position (below the
+  // personalized rows, above explore). One deterministic row, capped like other rows. Reuses
+  // the same recId()-keyed placed-Set the function maintains — no new dedupe mechanism.
+  const trendingPicked = ranked
+    .filter((r) => (r.movie._seeds || []).some((s) => s.source === 'trending'))
+    .slice(0, opts.rowSize || 12);
+  trendingPicked.forEach((r) => placed.add(recId(r)));
+
   // 1. Top picks — global best-N, genre-calibrated to the basket, and CLAIMS its items.
+  // Trending-reserved items are excluded (already in placed) so they cannot be double-claimed.
   if (ranked.length && topCount > 0) {
+    const pool = ranked.filter((r) => !placed.has(recId(r)));
     let recs;
     if (genreDist && Object.keys(genreDist).length) {
-      recs = calibrate(ranked, genreDist, { lambda: 0.5, limit: topCount });
+      recs = calibrate(pool, genreDist, { lambda: 0.5, limit: topCount });
     } else {
-      recs = ranked.slice(0, topCount);
+      recs = pool.slice(0, topCount);
     }
     recs.forEach((r) => placed.add(recId(r)));
     rows.push({ kind: 'top', title: 'Top picks for you', recs });
@@ -949,6 +961,12 @@ export function groupIntoRows(ranked, profile, opts = {}) {
       claim(recs);
       rows.push({ kind: 'title', title: `More from ${name}`, recs });
     }
+  }
+
+  // The reserved trending row, pushed at its display position (below the personalized rows,
+  // above explore). Its items were claimed up-front so no personalized row could absorb them.
+  if (trendingPicked.length) {
+    rows.push({ kind: 'trending', title: 'Trending this week', recs: trendingPicked });
   }
 
   // 5. Exactly one DETERMINISTIC explore row, pushed last for display order. Its gems were

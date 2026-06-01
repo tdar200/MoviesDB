@@ -2093,6 +2093,7 @@ async function renderRecommendationsPage() {
     top: 'Calibrated to your basket',
     title: 'Because you liked it',
     genre: 'More of this genre',
+    trending: 'Popular this week',
     explore: 'A little different',
   };
   rows.forEach((row, i) => {
