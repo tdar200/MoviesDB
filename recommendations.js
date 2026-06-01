@@ -338,6 +338,7 @@ export function rankCandidates(candidates, profile, watchedIds, limit = 20) {
 // Network + cache layer (browser only)
 // ---------------------------------------------------------------------------
 import { ENDPOINTS } from './config.js';
+import { createFetchQueue } from './fetch-queue.js';
 
 const META_CACHE_KEY = 'recMetaCache';     // permanent per-title keywords/credits
 const RECS_CACHE_KEY = 'recResultsCache';  // session recommendations cache
@@ -364,10 +365,15 @@ function writeMetaEntry(cacheKey, meta) {
   }
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`TMDB ${res.status} for ${url}`);
-  return res.json();
+// One module-level queue: concurrency cap + 429 backoff + URL-keyed session memo.
+const _recFetchQueue = createFetchQueue({
+  fetchImpl: (url) => fetch(url),
+  maxInflight: 6,
+  storage: (typeof sessionStorage !== 'undefined') ? sessionStorage : undefined,
+});
+
+function fetchJson(url) {
+  return _recFetchQueue.fetchJson(url);
 }
 
 // Fetch keywords + top cast/director for one title, caching permanently.

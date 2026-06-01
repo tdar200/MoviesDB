@@ -150,3 +150,15 @@ test('clearMemo drops the stored entries so the next call refetches', async () =
   await q.fetchJson('https://api/clear');
   assert.equal(calls, 2, 'after clearMemo the memo is empty, so refetch');
 });
+
+test('queue preserves throw-on-!ok contract used by recommendations.js callers', async () => {
+  const storage = fakeStorage();
+  const fetchImpl = async () => jsonResponse({ status_message: 'Not Found' }, { ok: false, status: 404 });
+  const q = createFetchQueue({ fetchImpl, storage, delayImpl: async () => {}, now: () => NOW });
+
+  await assert.rejects(
+    () => q.fetchJson('https://api.themoviedb.org/3/movie/0'),
+    (err) => err instanceof Error && /404/.test(err.message),
+    'callers rely on a thrown Error carrying the HTTP status',
+  );
+});
