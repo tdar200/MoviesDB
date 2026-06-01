@@ -366,6 +366,11 @@ export function itemSim(a, b) {
 // trade-off is scale-independent. Items with no rec/similar provenance (discover/cold-start) are
 // not seed-capped (empty seedTitleIds).
 export function mmrRerank(scored, { lambda, perSeedCap = PER_SEED_CAP, limit, simFn = itemSim } = {}) {
+  // Fail loud: an undefined/out-of-range lambda makes the greedy objective NaN, which would
+  // silently return [] (NaN > -Infinity is false). lambda is a required caller-tuned knob.
+  if (!Number.isFinite(lambda) || lambda < 0 || lambda > 1) {
+    throw new RangeError(`mmrRerank: lambda must be a finite number in [0,1], got ${lambda}`);
+  }
   const sorted = [...scored].sort((a, b) => b.score - a.score);
 
   // (1) Near-duplicate collapse against already-kept (higher-scored) survivors.

@@ -829,6 +829,13 @@ test('mmrRerank: lambda=1 reproduces pure-relevance order', () => {
   assert.deepEqual(out.map((r) => r.movie.id), [1, 2, 3]);
 });
 
+test('mmrRerank: omitting or out-of-range lambda throws (never a silent empty result)', () => {
+  const scored = [sc(1, 0.9, { genres: [1] })];
+  assert.throws(() => mmrRerank(scored, { limit: 5, simFn: itemSim }), /lambda/);
+  assert.throws(() => mmrRerank(scored, { lambda: 2, limit: 5, simFn: itemSim }), /lambda/);
+  assert.throws(() => mmrRerank(scored, { lambda: NaN, limit: 5, simFn: itemSim }), /lambda/);
+});
+
 test('mmrRerank: discover candidates (no rec/similar seed) are uncapped', () => {
   // 6 discover-genre candidates with no rec/similar provenance: PER_SEED_CAP must NOT apply
   // to them (seedTitleIds empty), so all 6 survive (distinct genres => no near-dup collapse).
