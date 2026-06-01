@@ -982,25 +982,58 @@ import { CONFIG, ENDPOINTS } from './config.js';
 import { createFetchQueue } from './fetch-queue.js';
 
 const META_CACHE_KEY = 'recMetaCache';     // permanent per-title keywords/credits
+const META_CACHE_VERSION = 2;                      // bump to discard stale-schema entries
+const META_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7-day TTL on per-title enrichment
+const META_CACHE_MAX_ENTRIES = 500;                // size bound (LRU-by-savedAt)
 const RECS_CACHE_KEY = 'recResultsCache';  // session recommendations cache
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function readMetaCache() {
-  try {
-    return JSON.parse(localStorage.getItem(META_CACHE_KEY) || '{}');
-  } catch {
-    return {};
+// Pure: normalize + prune a versioned meta cache. Discards a wrong/legacy version wholesale,
+// drops entries older than ttlMs, and caps to the newest maxEntries by savedAt. Injected now.
+export function pruneMetaCache(cache, now, opts = {}) {
+  const version = opts.version ?? META_CACHE_VERSION;
+  const ttlMs = opts.ttlMs ?? META_CACHE_TTL_MS;
+  const maxEntries = opts.maxEntries ?? META_CACHE_MAX_ENTRIES;
+
+  if (!cache || typeof cache !== 'object' || cache.version !== version || !cache.entries) {
+    return { version, entries: {} };
   }
+
+  const cutoff = now - ttlMs;
+  let kept = Object.entries(cache.entries).filter(
+    ([, e]) => e && typeof e.savedAt === 'number' && e.savedAt >= cutoff
+  );
+
+  if (kept.length > maxEntries) {
+    kept = kept
+      .sort((a, b) => b[1].savedAt - a[1].savedAt) // newest first
+      .slice(0, maxEntries);
+  }
+
+  const entries = {};
+  for (const [k, e] of kept) entries[k] = e;
+  return { version, entries };
 }
 
-function writeMetaEntry(cacheKey, meta) {
-  const cache = readMetaCache();
-  cache[cacheKey] = meta;
+function readMetaCache(now = Date.now()) {
+  let raw;
   try {
-    localStorage.setItem(META_CACHE_KEY, JSON.stringify(cache));
+    raw = JSON.parse(localStorage.getItem(META_CACHE_KEY) || 'null');
+  } catch {
+    raw = null;
+  }
+  return pruneMetaCache(raw, now); // always a { version, entries } envelope
+}
+
+function writeMetaEntry(cacheKey, meta, now = Date.now()) {
+  const cache = readMetaCache(now);
+  cache.entries[cacheKey] = { meta, savedAt: now };
+  const pruned = pruneMetaCache(cache, now); // re-bound after insert
+  try {
+    localStorage.setItem(META_CACHE_KEY, JSON.stringify(pruned));
   } catch (e) {
     console.error('recMetaCache write failed:', e);
   }
@@ -1019,9 +1052,9 @@ function fetchJson(url) {
 
 // Fetch keywords + top cast/director for one title, caching permanently.
 async function fetchTitleMeta(type, id) {
-  const cache = readMetaCache();
   const cacheKey = `${type}:${id}`;
-  if (cache[cacheKey]) return cache[cacheKey];
+  const cache = readMetaCache();
+  if (cache.entries[cacheKey]) return cache.entries[cacheKey].meta;
 
   const meta = { keywords: [], people: [] };
   try {

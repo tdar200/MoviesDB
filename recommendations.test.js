@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile, signalSignature } from './recommendations.js';
-import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend } from './recommendations.js';
+import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend, pruneMetaCache } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
@@ -1290,4 +1290,55 @@ test('signalSignature: empty watchedIds is stable and distinct from non-empty', 
   const nonEmpty = signalSignature([mkSigM(1)], [], [1]);
   assert.equal(empty, signalSignature([mkSigM(1)], [], undefined));
   assert.notEqual(empty, nonEmpty);
+});
+
+const META_V = 2;                               // mirrors META_CACHE_VERSION in recommendations.js
+const META_TTL = 7 * 24 * 60 * 60 * 1000;       // mirrors META_CACHE_TTL_MS (7 days)
+const mkMetaEntry = (savedAt) => ({ meta: { keywords: [], people: [] }, savedAt });
+
+test('pruneMetaCache: wrong/missing version is discarded to an empty versioned cache', () => {
+  const legacyFlat = { 'movie:1': { keywords: [], people: [] } }; // no version envelope
+  const out = pruneMetaCache(legacyFlat, NOW, { version: META_V, ttlMs: META_TTL, maxEntries: 50 });
+  assert.deepEqual(out, { version: META_V, entries: {} });
+
+  const wrongVer = { version: 1, entries: { 'movie:1': mkMetaEntry(NOW) } };
+  const out2 = pruneMetaCache(wrongVer, NOW, { version: META_V, ttlMs: META_TTL, maxEntries: 50 });
+  assert.deepEqual(out2, { version: META_V, entries: {} });
+});
+
+test('pruneMetaCache: drops entries older than TTL, keeps fresh ones', () => {
+  const cache = {
+    version: META_V,
+    entries: {
+      fresh: mkMetaEntry(NOW - DAY),            // 1 day old -> keep
+      edge: mkMetaEntry(NOW - META_TTL + 1),    // just inside TTL -> keep
+      stale: mkMetaEntry(NOW - META_TTL - 1),   // just past TTL -> drop
+    },
+  };
+  const out = pruneMetaCache(cache, NOW, { version: META_V, ttlMs: META_TTL, maxEntries: 50 });
+  assert.equal(out.version, META_V);
+  assert.deepEqual(Object.keys(out.entries).sort(), ['edge', 'fresh']);
+});
+
+test('pruneMetaCache: caps entry count, keeping the newest by savedAt', () => {
+  const cache = {
+    version: META_V,
+    entries: {
+      a: mkMetaEntry(NOW - 4),
+      b: mkMetaEntry(NOW - 3),
+      c: mkMetaEntry(NOW - 2),
+      d: mkMetaEntry(NOW - 1),
+    },
+  };
+  const out = pruneMetaCache(cache, NOW, { version: META_V, ttlMs: META_TTL, maxEntries: 2 });
+  assert.deepEqual(Object.keys(out.entries).sort(), ['c', 'd']); // two newest survive
+});
+
+test('pruneMetaCache: a clean in-version cache within bounds passes through unchanged', () => {
+  const cache = {
+    version: META_V,
+    entries: { 'movie:1': mkMetaEntry(NOW - DAY), 'tv:2': mkMetaEntry(NOW - 2 * DAY) },
+  };
+  const out = pruneMetaCache(cache, NOW, { version: META_V, ttlMs: META_TTL, maxEntries: 50 });
+  assert.deepEqual(out, cache);
 });
