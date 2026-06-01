@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
-import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests } from './recommendations.js';
+import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
@@ -1223,4 +1223,41 @@ test('buildDiscoverRequests omits without_* when no negative profile', () => {
   const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
   assert.ok(reqs.every((r) => !r.url.includes('without_genres')), 'no without_genres without neg');
   assert.ok(reqs.every((r) => !r.url.includes('without_keywords')), 'no without_keywords without neg');
+});
+
+const mkBlendC = (id) => ({ id, media_type: 'movie', genre_ids: [], vote_average: 7, vote_count: 100, popularity: 1, _seeds: [] });
+
+test('coldStartBlend: empty basket returns filler only (100% filler)', () => {
+  const filler = [mkBlendC(10), mkBlendC(11), mkBlendC(12)];
+  const out = coldStartBlend([mkBlendC(1), mkBlendC(2)], filler, 0);
+  assert.deepEqual(out.map((c) => c.id), [10, 11, 12]);
+});
+
+test('coldStartBlend: full basket (size >= COLD_START_FULL) returns personalized only', () => {
+  const personal = [mkBlendC(1), mkBlendC(2), mkBlendC(3)];
+  const filler = [mkBlendC(10), mkBlendC(11)];
+  const out = coldStartBlend(personal, filler, 5);
+  assert.deepEqual(out.map((c) => c.id), [1, 2, 3]);
+});
+
+test('coldStartBlend: half-full basket keeps all personalized, fills filler to (1-p) of pool', () => {
+  // basketSize 2 -> p = 2/5 = 0.4 ; keep 3 personalized as the 0.4 share
+  // poolSize = round(personalCount / p) = round(3 / 0.4) = round(7.5) = 8 ; filler slots = 8 - 3 = 5
+  const personal = [mkBlendC(1), mkBlendC(2), mkBlendC(3)];
+  const filler = [mkBlendC(10), mkBlendC(11), mkBlendC(12), mkBlendC(13), mkBlendC(14), mkBlendC(15), mkBlendC(16)];
+  const out = coldStartBlend(personal, filler, 2);
+  assert.deepEqual(out.map((c) => c.id), [1, 2, 3, 10, 11, 12, 13, 14]);
+});
+
+test('coldStartBlend: dedupes filler ids already present in personalized', () => {
+  const personal = [mkBlendC(1), mkBlendC(2)];
+  const filler = [mkBlendC(2), mkBlendC(20), mkBlendC(21)];   // id 2 is a dup -> skipped
+  // p = 1/5 = 0.2 ; poolSize = round(2/0.2) = 10 ; filler slots = 8 (only 2 unique filler available)
+  const out = coldStartBlend(personal, filler, 1);
+  assert.deepEqual(out.map((c) => c.id), [1, 2, 20, 21]);
+});
+
+test('coldStartBlend: filler shortfall is fine (returns what it has)', () => {
+  const out = coldStartBlend([mkBlendC(1)], [], 0); // p=0 -> filler-only path, no filler -> empty
+  assert.deepEqual(out.map((c) => c.id), []);
 });

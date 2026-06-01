@@ -487,6 +487,51 @@ export function mergeCandidates(taggedCandidates) {
   return [...byId.values()];
 }
 
+// Blend personalized candidates with cold-start filler. personalizedWeight rises with basket
+// size: min(1, basketSize / COLD_START_FULL). Empty basket => filler only; a full basket =>
+// personalized only. Deterministic order: personalized first, then filler to fill the
+// (1 - personalizedWeight) share of the pool. Both sides deduped by id.
+export function coldStartBlend(personalCandidates, fillerCandidates, basketSize) {
+  const personal = personalCandidates || [];
+  const filler = fillerCandidates || [];
+  const p = Math.min(1, (basketSize || 0) / COLD_START_FULL);
+
+  // Empty/zero-weight basket: filler-only (deduped).
+  if (p <= 0) {
+    const out = [];
+    const seen = new Set();
+    for (const c of filler) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+    }
+    return out;
+  }
+
+  // Keep all personalized (deduped); they represent the personalizedWeight share.
+  const out = [];
+  const seen = new Set();
+  for (const c of personal) {
+    if (seen.has(c.id)) continue;
+    seen.add(c.id);
+    out.push(c);
+  }
+  if (p >= 1) return out; // full basket: personalized only.
+
+  // Size the pool so filler makes up the (1 - p) share.
+  const poolSize = Math.round(out.length / p);
+  const fillerSlots = Math.max(0, poolSize - out.length);
+  let added = 0;
+  for (const c of filler) {
+    if (added >= fillerSlots) break;
+    if (seen.has(c.id)) continue;
+    seen.add(c.id);
+    out.push(c);
+    added += 1;
+  }
+  return out;
+}
+
 // Count how many distinct watched/starred titles a candidate aligns with, via
 // its seed provenance (shared keyword/person) and shared genres.
 function contributingTitleCount(candidate, profile) {
