@@ -572,6 +572,28 @@ export function generateReasons(candidate, profile) {
   return reasons.slice(0, 2);
 }
 
+// Normalized basket genre distribution. Each item splits its genre mass to sum 1,
+// distributions are averaged over items, then renormalized. Keys are String ids.
+export function genreHistogram(items) {
+  const acc = {};
+  let counted = 0;
+  for (const it of items || []) {
+    const gids = (it.genre_ids || []).map(Number).filter((n) => Number.isFinite(n));
+    if (!gids.length) continue;
+    counted += 1;
+    const share = 1 / gids.length;
+    for (const g of gids) {
+      const key = String(g);
+      acc[key] = (acc[key] || 0) + share;
+    }
+  }
+  if (!counted) return {};
+  let total = 0;
+  for (const k of Object.keys(acc)) { acc[k] /= counted; total += acc[k]; }
+  if (total > 0) for (const k of Object.keys(acc)) acc[k] /= total;
+  return acc;
+}
+
 // App-config ids that are actually TMDB *keyword* ids despite living in the genre/theme
 // lists with type:'keyword' (e.g. Dystopia 4565, Time Travel 4379). Built once. Any id in
 // this set must go to with_keywords/without_keywords, never with_genres/without_genres.

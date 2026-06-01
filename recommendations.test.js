@@ -377,6 +377,31 @@ test('scoreCandidate: a candidate in a net-negative genre scores below a neutral
     'horror-tagged candidate must score lower due to the negative genre');
 });
 
+import { genreHistogram } from './recommendations.js';
+
+test('genreHistogram: each item splits its genres to sum 1, averaged & normalized', () => {
+  // Item A: two genres -> 0.5 each. Item B: one genre -> 1.0.
+  const items = [
+    { id: 1, genre_ids: [878, 28] },
+    { id: 2, genre_ids: [878] },
+  ];
+  const h = genreHistogram(items);
+  // Raw per-item contributions: 878 -> 0.5 + 1.0 = 1.5 ; 28 -> 0.5 + 0 = 0.5.
+  // Averaged over 2 items: 878 -> 0.75 ; 28 -> 0.25. Already sums to 1.
+  assert.ok(Math.abs(h['878'] - 0.75) < 1e-9, `878=${h['878']}`);
+  assert.ok(Math.abs(h['28'] - 0.25) < 1e-9, `28=${h['28']}`);
+  const total = Object.values(h).reduce((s, v) => s + v, 0);
+  assert.ok(Math.abs(total - 1) < 1e-9, `sum=${total}`);
+});
+
+test('genreHistogram: keys are String genre ids; empty/genreless input -> {}', () => {
+  assert.deepEqual(genreHistogram([]), {});
+  assert.deepEqual(genreHistogram([{ id: 9, genre_ids: [] }]), {});
+  const h = genreHistogram([{ id: 1, genre_ids: [18] }]);
+  assert.deepEqual(Object.keys(h), ['18']);
+  assert.equal(h['18'], 1);
+});
+
 // --- Stage 1: per-seed collaborative candidate extraction ---
 
 const SEED_ITEM = { id: 27205, title: 'Inception', media_type: 'movie' };
