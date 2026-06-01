@@ -1117,12 +1117,35 @@ function enrichmentFromAppend(json) {
   return { keywords, people };
 }
 
+// Cold-start filler source: trending (mixed media_type) + top_rated for both types.
+// Each candidate gets a provenance SeedTag (type:'title', id = producing title id, 0-based rank).
+async function fillerCandidates() {
+  const tagged = [];
+  const trendingP = fetchJson(ENDPOINTS.trending(1))
+    .then((d) => (d.results || []).forEach((m, rank) => {
+      const mediaType = m.media_type === 'tv' ? 'tv' : 'movie';
+      tagged.push({ ...m, media_type: mediaType,
+        _seeds: [{ source: 'trending', type: 'title', id: m.id, rank, weight: 1 }] });
+    }))
+    .catch(() => {});
+  const topRatedPs = ['movie', 'tv'].map((type) =>
+    fetchJson(ENDPOINTS.topRated(type, 1))
+      .then((d) => (d.results || []).forEach((m, rank) => {
+        tagged.push({ ...m, media_type: type,
+          _seeds: [{ source: 'toprated', type: 'title', id: m.id, rank, weight: 1 }] });
+      }))
+      .catch(() => {}));
+  await Promise.all([trendingP, ...topRatedPs]);
+  return mergeCandidates(tagged);
+}
+
 // Per-seed collaborative candidate generation (OWNER). For each (capped) basket seed,
 // one appendDetail call yields its recommendations + similar (→ tagged candidates via
 // extractSeedCandidates) AND its keywords/credits (→ attached to the seed in place for
 // the content profile). Returns the merged, deduped collaborative candidate pool.
-// Discover (discoverCandidates) and cold-start filler (fillerCandidates) are merged into
-// the _pipeline candidate set by their own sections via targeted edits, not here.
+// Discover (discoverCandidates) and cold-start filler (fillerCandidates) are merged here:
+// the personalized pool (collab ∪ discover) is blended with filler via coldStartBlend,
+// weighted by basket size (basketEnriched.length).
 async function generateCandidates(basketEnriched, profile, negProfile = null) {
   const seeds = topSeeds(basketEnriched);
   const tagged = [];
@@ -1150,7 +1173,9 @@ async function generateCandidates(basketEnriched, profile, negProfile = null) {
   }
   const collab = mergeCandidates(tagged);
   const discover = await discoverCandidates(profile, negProfile);
-  return mergeCandidates([...collab, ...discover]);
+  const personalPool = mergeCandidates([...collab, ...discover]);
+  const filler = await fillerCandidates();
+  return coldStartBlend(personalPool, filler, basketEnriched.length);
 }
 
 // Pull Discover candidates seeded by the profile's top genres/keywords/people.
@@ -1243,20 +1268,22 @@ async function _pipeline(input, opts = {}) {
   return { profile, recs };
 }
 
-// Home teaser orchestrator. Empty basket -> no recommendations (basket-primary cold-start).
+// Home teaser orchestrator. Empty basket -> trending-only cold-start path (never []).
 export async function getRecommendations(input, opts = {}) {
-  if (!input || !input.basket || input.basket.length === 0) return [];
-  return (await _pipeline(input, opts)).recs;
+  const safe = input || {};
+  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [] };
+  return (await _pipeline(sig, opts)).recs;
 }
 
-// Recommendation page orchestrator. Empty basket -> no rows.
+// Recommendation page orchestrator. Empty basket -> trending-only cold-start rows (never empty).
 export async function getRecommendationRows(input, opts = {}) {
-  if (!input || !input.basket || input.basket.length === 0) return { rows: [] };
+  const safe = input || {};
+  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [] };
   const { limit = 60, now = Date.now(), groupOpts = {}, gamma } = opts;
-  const { profile, recs } = await _pipeline(input, { limit, now, gamma });
+  const { profile, recs } = await _pipeline(sig, { limit, now, gamma });
   // Calibrate Top Picks + budget genre rows to the basket's own genre mix (Steck calibration).
   // Derived from the raw basket (its items carry genre_ids); a caller-supplied genreDist wins.
-  const genreDist = genreHistogram(input.basket);
+  const genreDist = genreHistogram(sig.basket);
   return { rows: groupIntoRows(recs, profile, { genreDist, ...groupOpts }) };
 }
 
