@@ -322,6 +322,40 @@ export function combineProfiles(pos, neg, opts = {}) {
 }
 
 
+// Jaccard of two id collections; empty∪empty => 0 (never NaN).
+function jaccard(setA, setB) {
+  if (setA.size === 0 && setB.size === 0) return 0;
+  let inter = 0;
+  for (const x of setA) if (setB.has(x)) inter += 1;
+  const union = setA.size + setB.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+// The basket-seed-title ids that produced a candidate (rec/similar provenance only),
+// used for the provenance-overlap term of itemSim and the per-seed cap in mmrRerank.
+// Discover/trending/toprated seeds carry facet/title ids under non-title sources and are
+// intentionally excluded so they never collapse against unrelated rec/similar provenance.
+function seedTitleIds(candidate) {
+  const ids = new Set();
+  for (const s of candidate._seeds || []) {
+    if (s.source === 'rec' || s.source === 'similar') {
+      ids.add(Number(s.seedId != null ? s.seedId : s.id));
+    }
+  }
+  return ids;
+}
+
+// Pairwise similarity for the diversity re-rank: 0.6*genreJaccard + 0.4*provenanceJaccard.
+// Identical id => 1 (the same title can't add diversity).
+export function itemSim(a, b) {
+  if (a.id === b.id) return 1;
+  const ga = new Set((a.genre_ids || []).map(Number));
+  const gb = new Set((b.genre_ids || []).map(Number));
+  const genreJ = jaccard(ga, gb);
+  const provJ = jaccard(seedTitleIds(a), seedTitleIds(b));
+  return 0.6 * genreJ + 0.4 * provJ;
+}
+
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }

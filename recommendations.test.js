@@ -721,3 +721,45 @@ test('scorePool: a genre in every candidate (negative idf) keeps content in [0,1
   }
   assert.equal(out[0].movie.id, 1, 'rare-term match wins despite the ubiquitous genre having negative idf');
 });
+
+import { itemSim } from './recommendations.js';
+
+test('itemSim: identical id short-circuits to 1', () => {
+  const a = { id: 5, genre_ids: [878], _seeds: [{ source: 'rec', type: 'title', id: 1, seedId: 1, rank: 0, weight: 1 }] };
+  const b = { id: 5, genre_ids: [28], _seeds: [{ source: 'rec', type: 'title', id: 2, seedId: 2, rank: 0, weight: 1 }] };
+  assert.equal(itemSim(a, b), 1);
+});
+
+test('itemSim: 0.6*genreJaccard + 0.4*provenanceJaccard', () => {
+  // genres: A={878,28}, B={878} => |∩|=1,|∪|=2 => 0.5
+  // provenance seed-ids: A={11,22}, B={22} => |∩|=1,|∪|=2 => 0.5
+  const a = { id: 1, genre_ids: [878, 28], _seeds: [
+    { source: 'rec', type: 'title', id: 11, seedId: 11, rank: 0, weight: 1 },
+    { source: 'similar', type: 'title', id: 22, seedId: 22, rank: 0, weight: 1 },
+  ] };
+  const b = { id: 2, genre_ids: [878], _seeds: [
+    { source: 'rec', type: 'title', id: 22, seedId: 22, rank: 0, weight: 1 },
+  ] };
+  assert.ok(Math.abs(itemSim(a, b) - (0.6 * 0.5 + 0.4 * 0.5)) < 1e-9);
+});
+
+test('itemSim: disjoint genres and provenance => 0', () => {
+  const a = { id: 1, genre_ids: [878], _seeds: [{ source: 'rec', type: 'title', id: 11, seedId: 11, rank: 0, weight: 1 }] };
+  const b = { id: 2, genre_ids: [28], _seeds: [{ source: 'rec', type: 'title', id: 22, seedId: 22, rank: 0, weight: 1 }] };
+  assert.equal(itemSim(a, b), 0);
+});
+
+test('itemSim: discover/trending provenance is ignored (only rec/similar count)', () => {
+  // Two discover candidates share the same discover-genre facet id but have NO rec/similar
+  // provenance => provenance Jaccard is empty∪empty=0; only genre overlap drives similarity.
+  // genres: A={878}, B={878} => genreJ=1 => itemSim = 0.6*1 + 0.4*0 = 0.6.
+  const a = { id: 1, genre_ids: [878], _seeds: [{ source: 'discover-genre', type: 'genre', id: 878, name: 'Sci-Fi', rank: 0, weight: 1 }] };
+  const b = { id: 2, genre_ids: [878], _seeds: [{ source: 'discover-genre', type: 'genre', id: 878, name: 'Sci-Fi', rank: 1, weight: 1 }] };
+  assert.ok(Math.abs(itemSim(a, b) - 0.6) < 1e-9);
+});
+
+test('itemSim: no genres and no provenance on either side => 0 (no NaN)', () => {
+  const a = { id: 1, genre_ids: [], _seeds: [] };
+  const b = { id: 2, genre_ids: [], _seeds: [] };
+  assert.equal(itemSim(a, b), 0);
+});
