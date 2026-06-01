@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
 import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates } from './recommendations.js';
+import {
+  bayesianRating, qualityMultiplier,
+} from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_700_000_000_000; // fixed clock for deterministic tests
@@ -22,6 +25,39 @@ test('ratingNudge maps 0-10 into 0.75..1.25, neutral when missing', () => {
   assert.equal(ratingNudge(undefined), 1);
   assert.equal(ratingNudge(10), 1.25);
   assert.equal(ratingNudge(5), 1.0);
+});
+
+test('bayesianRating shrinks a 2-vote 10.0 below a 5000-vote 8.0', () => {
+  const hype = bayesianRating(10.0, 2);       // m=500, C=6.5 defaults
+  const classic = bayesianRating(8.0, 5000);
+  // 2-vote 10.0 is dragged toward 6.5; 5000-vote 8.0 barely moves.
+  assert.ok(hype < classic, `expected shrunk hype(${hype}) < classic(${classic})`);
+  assert.ok(hype > 6.5 && hype < 6.6, `2-vote 10.0 should sit just above C: ${hype}`);
+  assert.ok(classic > 7.8 && classic <= 8.0, `5000-vote 8.0 should stay near R: ${classic}`);
+});
+
+test('bayesianRating with zero votes equals the global mean C', () => {
+  assert.equal(bayesianRating(9.0, 0), 6.5);
+  assert.equal(bayesianRating(0, 0), 6.5);
+});
+
+test('bayesianRating respects injected m and C', () => {
+  // m=0 => no shrinkage => returns R exactly (v/(v+0)=1).
+  assert.equal(bayesianRating(7.3, 100, 0, 6.5), 7.3);
+  // v==m => exactly halfway between R and C.
+  assert.equal(bayesianRating(8.0, 10, 10, 6.0), 7.0);
+});
+
+test('qualityMultiplier maps rating into ~[0.6,1.1] and is monotonic', () => {
+  const great = qualityMultiplier(8.0, 5000);
+  const meh = qualityMultiplier(4.0, 5000);
+  assert.ok(great > meh, `great(${great}) must beat meh(${meh})`);
+  assert.ok(great > 0.6 && great <= 1.1, `in range: ${great}`);
+  assert.ok(meh >= 0.6 && meh < 1.0, `in range: ${meh}`);
+  // A perfect, heavily-voted title approaches the 1.1 ceiling.
+  assert.ok(qualityMultiplier(10, 100000) > 1.05);
+  // A zero-vote title shrinks fully to C => 0.6 + 0.5*0.65 = 0.925.
+  assert.ok(Math.abs(qualityMultiplier(10, 0) - 0.925) < 1e-9);
 });
 
 test('buildTasteProfile aggregates weighted genres, keywords, people', () => {

@@ -72,6 +72,22 @@ export function ratingNudge(voteAverage) {
   return 0.75 + (voteAverage / 10) * 0.5;
 }
 
+// IMDb-style confidence-weighted rating: shrinks low-vote titles toward the
+// global mean C, leaving heavily-voted titles near their raw average.
+// WR = v/(v+m)*R + m/(v+m)*C. Returns C when there are votes-less but a prior;
+// returns R when there is neither prior nor votes (m=0,v=0 edge).
+export function bayesianRating(voteAverage, voteCount, m = BAYES_PRIOR_COUNT, C = BAYES_GLOBAL_MEAN) {
+  const R = typeof voteAverage === 'number' && voteAverage > 0 ? voteAverage : 0;
+  const v = typeof voteCount === 'number' && voteCount > 0 ? voteCount : 0;
+  if (v + m === 0) return R;             // m=0,v=0 edge: no prior, no votes => R
+  return (v / (v + m)) * R + (m / (v + m)) * C;
+}
+
+// Map the Bayesian rating (~0..10) to a gentle multiplier in ~[0.6,1.1].
+export function qualityMultiplier(voteAverage, voteCount) {
+  return 0.6 + 0.5 * (bayesianRating(voteAverage, voteCount) / 10);
+}
+
 function topNumeric(obj, n) {
   return Object.fromEntries(
     Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n)
