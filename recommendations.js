@@ -1,7 +1,7 @@
 // Content-based recommendation engine for the Movies app.
 // Pure functions (profile + scoring + reasons) are unit-tested; network/cache
 // functions live lower in the file and are exercised manually in the browser.
-import { MOVIE_GENRES, TV_GENRES } from './config.js';
+import { MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -554,6 +554,29 @@ export function generateReasons(candidate, profile) {
   const reasons = [theme];
   if (dominantTitle && theme !== 'Picked for your taste') reasons.push(`esp. ${dominantTitle}`);
   return reasons.slice(0, 2);
+}
+
+// App-config ids that are actually TMDB *keyword* ids despite living in the genre/theme
+// lists with type:'keyword' (e.g. Dystopia 4565, Time Travel 4379). Built once. Any id in
+// this set must go to with_keywords/without_keywords, never with_genres/without_genres.
+const KEYWORD_TYPED_IDS = new Set(
+  [...MOVIE_GENRES, ...THEME_KEYWORDS]
+    .filter((e) => e.type === 'keyword')
+    .map((e) => Number(e.id))
+);
+
+// Split a flat list of app-config ids into { genres, keywords } using KEYWORD_TYPED_IDS.
+// Coerces to Number, preserves input order within each bucket. Item genre_ids from TMDB
+// responses are always real genre ids, so this is only for config-sourced ids.
+export function splitGenreKeywordIds(ids) {
+  const genres = [];
+  const keywords = [];
+  for (const raw of ids || []) {
+    const id = Number(raw);
+    if (KEYWORD_TYPED_IDS.has(id)) keywords.push(id);
+    else genres.push(id);
+  }
+  return { genres, keywords };
 }
 
 // Group a ranked rec list into themed rows for the dedicated Recommendation page.

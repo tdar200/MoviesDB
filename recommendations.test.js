@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile } from './recommendations.js';
-import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates } from './recommendations.js';
+import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
@@ -863,4 +863,30 @@ test('mmrRerank: lower lambda raises intra-list diversity', () => {
   const lo = mmrRerank(build(), { lambda: 0.3, limit: 3, simFn: itemSim });
   assert.ok(ild(lo, itemSim) > ild(hi, itemSim),
     `lower lambda should raise ILD: lo=${ild(lo, itemSim)} hi=${ild(hi, itemSim)}`);
+});
+
+test('splitGenreKeywordIds routes type:keyword config ids to keywords, real genres to genres', () => {
+  // Dystopia 4565 and Time Travel 4379 are type:'keyword' in MOVIE_GENRES.
+  // 878 (Sci-Fi) and 28 (Action) are real genre ids.
+  const out = splitGenreKeywordIds([878, 4565, 28, 4379]);
+  assert.deepEqual(out.genres, [878, 28]);
+  assert.deepEqual(out.keywords, [4565, 4379]);
+});
+
+test('splitGenreKeywordIds: all-genre input yields empty keywords', () => {
+  const out = splitGenreKeywordIds([878, 28, 18]);
+  assert.deepEqual(out.genres, [878, 28, 18]);
+  assert.deepEqual(out.keywords, []);
+});
+
+test('splitGenreKeywordIds: coerces string ids to Numbers and preserves order', () => {
+  const out = splitGenreKeywordIds(['4379', '18']);
+  assert.deepEqual(out.genres, [18]);
+  assert.deepEqual(out.keywords, [4379]);
+});
+
+test('splitGenreKeywordIds: empty input yields empty buckets', () => {
+  const out = splitGenreKeywordIds([]);
+  assert.deepEqual(out.genres, []);
+  assert.deepEqual(out.keywords, []);
 });
