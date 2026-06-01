@@ -185,16 +185,8 @@ export function collabScore(candidate) {
   return s;
 }
 
-// Hybrid pool scorer (pure, zero network). Builds idf over the pool's tag-vectors,
-// idf-weights both the profile vector and each candidate vector, then:
-//   collabN  = min-max of collabScore across the pool
-//   contentN = cosine(idf(profileVector), idf(candidateVector))   [0,1]
-//   score    = (Wc*collabN + Wt*contentN) * qualityMultiplier * recencyMultiplier
-// `dislikeVector` is part of the signature for the downvote-penalty step (added
-// later); when absent it has no effect. Returns Scored[] sorted descending,
-// each with parts + reasons.
 // Fraction of a candidate's own tag-vector terms that the disliked tag-vector also contains, in
-// [0,1]. The candidate's tag-vector is built by the scorer (buildTagVector): 'g:'/'k:'/'p:' keys.
+// [0,1]. 'g:'/'k:'/'p:' keys. Drives the bounded multiplicative downvote penalty in scorePool.
 function dislikeOverlapVec(candVec, dislikeVector) {
   if (!dislikeVector) return 0;
   const terms = Object.keys(candVec || {});
@@ -204,6 +196,13 @@ function dislikeOverlapVec(candVec, dislikeVector) {
   return hit / terms.length;
 }
 
+// Hybrid pool scorer (pure, zero network). Builds idf over the pool's tag-vectors, idf-weights
+// both the profile vector and each candidate vector, then:
+//   collabN  = min-max of collabScore across the pool
+//   contentN = cosine(idf(profileVector), idf(candidateVector))   [0,1]
+//   score    = (Wc*collabN + Wt*contentN) * qualityMultiplier * recencyMultiplier
+// A non-empty `dislikeVector` applies a bounded multiplicative penalty (factor >= DOWNVOTE_SCORE_FLOOR);
+// when absent it has no effect. Returns Scored[] sorted descending, each with parts + reasons.
 export function scorePool(candidates, { profile, now = Date.now(), weights = { collab: W_COLLAB, content: W_CONTENT }, dislikeVector } = {}) {
   const tagVectors = candidates.map(buildTagVector);
   const idf = computeIdf(tagVectors);
@@ -598,8 +597,11 @@ export function splitGenreKeywordIds(ids) {
 
 // Build the shared opts (quality gates + date window + negative steering) applied to every
 // Discover request. Pure: sources floors from CONFIG and the negative profile only.
-// MIN_RATING is gated only when > 0 (0 means "no rating floor"). without_* are assembled
-// from the negative profile's genres (real TMDB genre ids) and keywords (keyword ids).
+// MIN_RATING is gated only when > 0 (0 means "no rating floor"). without_* are assembled from
+// the negative profile's genres (real TMDB genre ids) and keywords (keyword ids) — this is the
+// intentional HARD upstream filter (vs the soft Rocchio + scorePool penalty downstream).
+// buildDiscoverRequests then strips any positively-steered facet from these, so a theme that is
+// both liked and disliked is never self-excluded.
 function discoverGates(negProfile) {
   const opts = {
     voteCountGte: CONFIG.MIN_VOTE_COUNT,
