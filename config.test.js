@@ -42,3 +42,22 @@ test('ENDPOINTS.appendDetail works for tv type and appends all of recommendation
     assert.ok(url.includes(part), `expected ${part} in ${url}`);
   }
 });
+
+test('ENDPOINTS.topRated builds /{type}/top_rated with default page 1', () => {
+  const url = ENDPOINTS.topRated('movie');
+  assert.ok(url.startsWith(`${CONFIG.BASE_URL}/movie/top_rated?`), url);
+  assert.match(url, /[?&]api_key=/);
+  assert.match(url, /[?&]page=1(&|$)/);
+});
+
+test('ENDPOINTS.topRated generalizes to tv and honors an explicit page', () => {
+  const url = ENDPOINTS.topRated('tv', 4);
+  assert.ok(url.startsWith(`${CONFIG.BASE_URL}/tv/top_rated?`), url);
+  assert.match(url, /[?&]page=4(&|$)/);
+});
+
+test('existing ENDPOINTS.topRatedMovies remains intact', () => {
+  const url = ENDPOINTS.topRatedMovies(2);
+  assert.ok(url.startsWith(`${CONFIG.BASE_URL}/movie/top_rated?`), url);
+  assert.match(url, /[?&]page=2(&|$)/);
+});
