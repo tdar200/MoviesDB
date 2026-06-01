@@ -608,7 +608,7 @@ function discoverGates(negProfile) {
 // opts: { pages = 2, maxGenres = 4, maxKeywords = 6, maxPeople = 6 }
 export function buildDiscoverRequests(profile, negProfile, opts = {}) {
   const { pages = 2, maxGenres = 4, maxKeywords = 6, maxPeople = 6 } = opts;
-  const gates = discoverGates(negProfile);
+  let gates = discoverGates(negProfile);
 
   // mediaTypeBias-ordered types: heavier type first, both always present (mixed media).
   const bias = profile.mediaTypeBias || { movie: 0, tv: 0 };
@@ -636,6 +636,21 @@ export function buildDiscoverRequests(profile, negProfile, opts = {}) {
     ...topKeywords,
     ...genreKeywordIds.map((id) => ({ id, name: GENRE_NAMES.get(id) || 'keyword', weight: 1 })),
   ];
+
+  // Never list a positively-steered facet in without_*: a genre/keyword that the user both
+  // liked (net-positive after Rocchio) and downvoted would otherwise produce a self-
+  // contradictory `with_genres=X&without_genres=X` query, which TMDB answers with [] (silent).
+  const stripConflicts = (without, positiveIds) => {
+    if (!without) return without;
+    const pos = new Set(positiveIds.map(String));
+    const kept = without.split('|').filter((id) => !pos.has(id));
+    return kept.length ? kept.join('|') : undefined;
+  };
+  gates = {
+    ...gates,
+    withoutGenres: stripConflicts(gates.withoutGenres, genreIds),
+    withoutKeywords: stripConflicts(gates.withoutKeywords, keywordFacets.map((k) => k.id)),
+  };
 
   const requests = [];
   for (const type of types) {

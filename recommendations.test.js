@@ -973,6 +973,18 @@ test('buildDiscoverRequests builds without_genres/without_keywords from the nega
     'expected Zombie 12377 in without_keywords on every request');
 });
 
+test('buildDiscoverRequests: a genre both liked (net-positive) and downvoted is never self-excluded', () => {
+  // 878 is positively steered AND present in the negative profile -> must NOT land in without_genres
+  // (a with_genres=878 & without_genres=878 query returns [] from TMDB — silent degradation).
+  const neg = { genres: { '878': 2, '27': 1 }, keywords: {}, people: {} };
+  const reqs = buildDiscoverRequests(DISC_PROFILE, neg, { pages: 1 });
+  const genreReq = reqs.find((r) => r.seed.source === 'discover-genre');
+  assert.ok(genreReq.url.includes('with_genres=878'), 'genre 878 is positively steered');
+  assert.ok(!/without_genres=[^&]*878/.test(genreReq.url),
+    `liked genre 878 must not be self-excluded: ${genreReq.url}`);
+  assert.ok(/without_genres=[^&]*27/.test(genreReq.url), 'the disliked-only genre 27 is still excluded');
+});
+
 test('buildDiscoverRequests omits without_* when no negative profile', () => {
   const reqs = buildDiscoverRequests(DISC_PROFILE, null, { pages: 1 });
   assert.ok(reqs.every((r) => !r.url.includes('without_genres')), 'no without_genres without neg');
