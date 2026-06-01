@@ -537,6 +537,12 @@ export function generateReasons(candidate, profile) {
   const seeds = [...(candidate._seeds || [])].sort((a, b) => b.weight - a.weight);
   const topSeed = seeds.find((s) => s.type === 'person' || s.type === 'keyword');
 
+  // Collaborative provenance leads when present: TMDB rec/similar carry the producing
+  // basket seed's title. Strongest such seed (by weight, then lowest rank) wins.
+  const collabSeed = seeds
+    .filter((s) => (s.source === 'rec' || s.source === 'similar') && s.seedTitle)
+    .sort((a, b) => (b.weight - a.weight) || ((a.rank ?? 0) - (b.rank ?? 0)))[0];
+
   // Dominant contributing title: a watched/starred title sharing the top seed.
   let dominantTitle = null;
   if (topSeed) {
@@ -555,7 +561,8 @@ export function generateReasons(candidate, profile) {
   else if (matchedGenres[1]) themeParts.push(matchedGenres[1]);
 
   let theme;
-  if (themeParts.length >= 2) {
+  if (collabSeed) theme = `Because you liked ${collabSeed.seedTitle}`;
+  else if (themeParts.length >= 2) {
     theme = `Matches your love of ${themeParts[0]} & ${themeParts[1]}`;
   } else if (themeParts.length === 1) {
     // A single part is the matched genre only when no person/keyword was matched;

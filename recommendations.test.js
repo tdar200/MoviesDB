@@ -136,6 +136,32 @@ test('generateReasons: single person/keyword match is not labelled a genre', () 
   assert.match(reasons[0], /Nolan/);
 });
 
+test('generateReasons: rec/similar seed yields "Because you liked <seedTitle>"', () => {
+  const cand = {
+    genre_ids: [878],
+    _seeds: [
+      { source: 'rec', type: 'title', id: 1, seedId: 1, seedTitle: 'Inception', rank: 0, weight: 1 },
+    ],
+  };
+  const reasons = generateReasons(cand, PROFILE);
+  assert.equal(reasons[0], 'Because you liked Inception');
+});
+
+test('generateReasons: collaborative seed leads and dominant title still appends', () => {
+  // Has a collaborative similar seed for "Interstellar" AND a person seed (5=Nolan)
+  // shared by topTitle Inception -> the "esp. Inception" line still appends.
+  const cand = {
+    genre_ids: [878],
+    _seeds: [
+      { source: 'similar', type: 'title', id: 1, seedId: 1, seedTitle: 'Interstellar', rank: 2, weight: 1 },
+      { source: 'discover-person', type: 'person', id: 5, name: 'Nolan', weight: 2 },
+    ],
+  };
+  const reasons = generateReasons(cand, PROFILE);
+  assert.equal(reasons[0], 'Because you liked Interstellar');
+  assert.equal(reasons[1], 'esp. Inception');
+});
+
 test('rankCandidates drops already-watched and sorts by score', () => {
   const cands = [
     { id: 1, genre_ids: [878], popularity: 100, vote_average: 8, vote_count: 1000,
