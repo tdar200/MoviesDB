@@ -138,14 +138,20 @@ test('generateReasons: single person/keyword match is not labelled a genre', () 
 
 test('rankCandidates drops already-watched and sorts by score', () => {
   const cands = [
-    { id: 1, genre_ids: [878], popularity: 100, _seeds: [{ type: 'keyword', id: 9, name: 'tt', weight: 2 }] },
-    { id: 100, genre_ids: [878], popularity: 100, _seeds: [{ type: 'keyword', id: 9, name: 'tt', weight: 2 }] },
-    { id: 200, genre_ids: [28], popularity: 1, _seeds: [{ type: 'genre', id: 28, name: 'Action', weight: 1 }] },
+    { id: 1, genre_ids: [878], popularity: 100, vote_average: 8, vote_count: 1000,
+      _seeds: [{ source: 'rec', type: 'title', id: 9, seedId: 9, rank: 0, weight: 2 }] },
+    { id: 100, genre_ids: [878], popularity: 100, vote_average: 8, vote_count: 1000,
+      _seeds: [{ source: 'rec', type: 'title', id: 9, seedId: 9, rank: 0, weight: 2 }] },
+    { id: 200, genre_ids: [28], popularity: 1, vote_average: 6, vote_count: 50,
+      _seeds: [{ source: 'discover-genre', type: 'genre', id: 28, name: 'Action', rank: 0, weight: 1 }] },
   ];
-  const recs = rankCandidates(cands, PROFILE, new Set([1]), 10);
-  assert.equal(recs.length, 2);
-  assert.equal(recs[0].movie.id, 100);
-  assert.ok(recs[0].score >= recs[1].score);
+  const recs = rankCandidates(cands, PROFILE, new Set([1]), 10, NOW);
+  assert.equal(recs.length, 2);                          // watched id 1 excluded
+  assert.ok(!recs.some((r) => r.movie.id === 1));        // never resurfaces
+  assert.ok(recs.every((r) => r.parts && typeof r.score === 'number')); // scorePool shape
+  for (let i = 1; i < recs.length; i += 1) {
+    assert.ok(recs[i - 1].score >= recs[i].score, 'scores non-increasing');
+  }
 });
 
 import { engagementBoost } from './recommendations.js';

@@ -622,14 +622,15 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   return rows.slice(0, maxRows);
 }
 
-// Score, drop already-watched, sort desc, take top `limit`.
-export function rankCandidates(candidates, profile, watchedIds, limit = 20) {
+// Back-compat thin wrapper over the scoring/diversity funnel:
+//   scorePool -> exclude watched -> mmrRerank(page lambda) -> slice(limit).
+// `now` is injectable for deterministic tests; defaults to the wall clock for browser use.
+// mmrRerank already slices to `limit`, so no trailing .slice is needed.
+export function rankCandidates(candidates, profile, watchedIds, limit = 20, now = Date.now()) {
   const watched = new Set([...watchedIds].map(String));
-  return candidates
-    .filter((c) => !watched.has(String(c.id)))
-    .map((c) => ({ movie: c, score: scoreCandidate(c, profile), reasons: generateReasons(c, profile) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  const scored = scorePool(candidates, { profile, now })
+    .filter((s) => !watched.has(String(s.movie.id)));
+  return mmrRerank(scored, { lambda: MMR_LAMBDA_PAGE, limit, simFn: itemSim });
 }
 
 // ---------------------------------------------------------------------------
