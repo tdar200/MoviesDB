@@ -67,11 +67,16 @@ export function createFetchQueue({
       if (res.ok) return res.json();
 
       if (res.status === 429 && attempt < MAX_RETRIES) {
+        // Honor a numeric Retry-After (seconds); fall back to exponential backoff for
+        // a missing/empty/non-numeric header (a bad header must not yield setTimeout(NaN)).
         const retryAfter = res.headers && res.headers.get ? res.headers.get('Retry-After') : null;
-        const ms = retryAfter != null && retryAfter !== ''
-          ? Number(retryAfter) * 1000
+        const parsed = Number(retryAfter);
+        const ms = (retryAfter != null && retryAfter !== '' && !Number.isNaN(parsed))
+          ? parsed * 1000
           : BACKOFF_BASE_MS * 2 ** attempt;
         attempt++;
+        // NOTE: the retry holds its concurrency slot for the full backoff (deliberate
+        // trade-off — simple, fine for the ~dozens of URLs per recommendations run).
         await delayImpl(ms);
         continue;
       }

@@ -162,3 +162,21 @@ test('queue preserves throw-on-!ok contract used by recommendations.js callers',
     'callers rely on a thrown Error carrying the HTTP status',
   );
 });
+
+test('429 with a non-numeric Retry-After falls back to exponential backoff (no NaN delay)', async () => {
+  const storage = fakeStorage();
+  const delays = [];
+  const delayImpl = async (ms) => { delays.push(ms); };
+  let calls = 0;
+  const fetchImpl = async (url) => {
+    calls++;
+    if (calls === 1) return jsonResponse({ error: 'rate' }, { ok: false, status: 429, headers: { 'retry-after': 'soon' } });
+    return jsonResponse({ url });
+  };
+  const q = createFetchQueue({ fetchImpl, storage, delayImpl, now: () => NOW });
+
+  const out = await q.fetchJson('https://api/bad-retry-after');
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [1000], 'non-numeric Retry-After uses exponential base, never NaN');
+  assert.deepEqual(out, { url: 'https://api/bad-retry-after' });
+});
