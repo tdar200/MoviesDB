@@ -763,3 +763,91 @@ test('itemSim: no genres and no provenance on either side => 0 (no NaN)', () => 
   const b = { id: 2, genre_ids: [], _seeds: [] };
   assert.equal(itemSim(a, b), 0);
 });
+
+import { mmrRerank } from './recommendations.js';
+
+// Intra-list diversity = mean pairwise (1 - itemSim) over the output list.
+function ild(list, simFn) {
+  const items = list.map((s) => s.movie);
+  let sum = 0, pairs = 0;
+  for (let i = 0; i < items.length; i += 1) {
+    for (let j = i + 1; j < items.length; j += 1) {
+      sum += 1 - simFn(items[i], items[j]);
+      pairs += 1;
+    }
+  }
+  return pairs === 0 ? 0 : sum / pairs;
+}
+
+function sc(id, score, { genres = [], seeds = [] } = {}) {
+  return { movie: { id, genre_ids: genres, _seeds: seeds }, score, parts: {}, reasons: [] };
+}
+
+test('mmrRerank: near-duplicate high-score items collapse to one', () => {
+  // Two near-dupes: identical genres + identical provenance => itemSim = 1 > NEAR_DUP_SIM.
+  const seedsA = [{ source: 'rec', type: 'title', id: 1, seedId: 1, rank: 0, weight: 1 }];
+  const scored = [
+    sc(10, 1.0, { genres: [878, 28], seeds: seedsA }),
+    sc(11, 0.99, { genres: [878, 28], seeds: seedsA }),   // near-dup of 10
+    sc(20, 0.8, { genres: [18], seeds: [{ source: 'rec', type: 'title', id: 2, seedId: 2, rank: 0, weight: 1 }] }),
+  ];
+  const out = mmrRerank(scored, { lambda: 0.8, limit: 10, simFn: itemSim });
+  const ids = out.map((r) => r.movie.id);
+  assert.ok(ids.includes(10), 'best representative survives');
+  assert.ok(!ids.includes(11), 'near-duplicate is collapsed away');
+  assert.ok(ids.includes(20));
+});
+
+test('mmrRerank: no seedId exceeds PER_SEED_CAP in the output', () => {
+  // 6 candidates all from seedId 7; cap is 3.
+  const fromSeed7 = (id, score) => sc(id, score, {
+    genres: [878], seeds: [{ source: 'rec', type: 'title', id: 7, seedId: 7, rank: 0, weight: 1 }],
+  });
+  const scored = [
+    fromSeed7(1, 1.0), fromSeed7(2, 0.95), fromSeed7(3, 0.9),
+    fromSeed7(4, 0.85), fromSeed7(5, 0.8), fromSeed7(6, 0.75),
+  ];
+  const out = mmrRerank(scored, { lambda: 0.8, perSeedCap: 3, limit: 10, simFn: itemSim });
+  const fromSeed = out.filter((r) => (r.movie._seeds || []).some((s) => s.seedId === 7)).length;
+  assert.ok(fromSeed <= 3, `expected <= PER_SEED_CAP from seed 7, got ${fromSeed}`);
+});
+
+test('mmrRerank: lambda=1 reproduces pure-relevance order', () => {
+  // Distinct ids/genres so no near-dup collapse; only ordering is tested.
+  const scored = [
+    sc(1, 0.9, { genres: [1] }),
+    sc(2, 0.7, { genres: [2] }),
+    sc(3, 0.5, { genres: [3] }),
+  ];
+  const out = mmrRerank(scored, { lambda: 1, limit: 10, simFn: itemSim });
+  assert.deepEqual(out.map((r) => r.movie.id), [1, 2, 3]);
+});
+
+test('mmrRerank: discover candidates (no rec/similar seed) are uncapped', () => {
+  // 6 discover-genre candidates with no rec/similar provenance: PER_SEED_CAP must NOT apply
+  // to them (seedTitleIds empty), so all 6 survive (distinct genres => no near-dup collapse).
+  const disc = (id, score, g) => sc(id, score, {
+    genres: [g], seeds: [{ source: 'discover-genre', type: 'genre', id: 99, name: 'X', rank: 0, weight: 1 }],
+  });
+  const scored = [disc(1, 1.0, 1), disc(2, 0.9, 2), disc(3, 0.8, 3), disc(4, 0.7, 4), disc(5, 0.6, 5), disc(6, 0.5, 6)];
+  const out = mmrRerank(scored, { lambda: 0.8, perSeedCap: 3, limit: 10, simFn: itemSim });
+  assert.equal(out.length, 6, 'discover candidates are not seed-capped');
+});
+
+test('mmrRerank: lower lambda raises intra-list diversity', () => {
+  // A cluster of three similar high-score sci-fi items + two distinct lower-score items.
+  // High lambda keeps the similar cluster up top (low ILD); low lambda interleaves the
+  // diverse items earlier (higher ILD). Distinct seedIds so the per-seed cap never bites.
+  const sciSeed = (id, score) => sc(id, score, {
+    genres: [878, 28], seeds: [{ source: 'rec', type: 'title', id: id, seedId: id, rank: 0, weight: 1 }],
+  });
+  const build = () => [
+    sciSeed(1, 1.0), sciSeed(2, 0.95), sciSeed(3, 0.9),
+    sc(4, 0.6, { genres: [18], seeds: [{ source: 'rec', type: 'title', id: 4, seedId: 4, rank: 0, weight: 1 }] }),
+    sc(5, 0.55, { genres: [99], seeds: [{ source: 'rec', type: 'title', id: 5, seedId: 5, rank: 0, weight: 1 }] }),
+  ];
+  const hi = mmrRerank(build(), { lambda: 0.95, limit: 3, simFn: itemSim });
+  const lo = mmrRerank(build(), { lambda: 0.3, limit: 3, simFn: itemSim });
+  assert.ok(ild(lo, itemSim) > ild(hi, itemSim),
+    `lower lambda should raise ILD: lo=${ild(lo, itemSim)} hi=${ild(hi, itemSim)}`);
+});

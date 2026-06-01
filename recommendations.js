@@ -356,6 +356,70 @@ export function itemSim(a, b) {
   return 0.6 * genreJ + 0.4 * provJ;
 }
 
+// Diversity re-rank. Three stages, all pure:
+//   (1) near-duplicate / franchise collapse: drop any item whose simFn vs an already-kept,
+//       higher-scored item exceeds NEAR_DUP_SIM (best representative survives).
+//   (2) greedy Maximal Marginal Relevance: pick argmax(lambda*rel - (1-lambda)*maxSim-to-chosen).
+//   (3) per-seed cap: never let more than perSeedCap chosen items share a single rec/similar seedId.
+// `scored` is a Scored[] (scorePool, added earlier in this phase, sorts it desc by score). `rel`
+// is read from `score`, min-max normalized to [0,1] across the collapsed survivors so the lambda
+// trade-off is scale-independent. Items with no rec/similar provenance (discover/cold-start) are
+// not seed-capped (empty seedTitleIds).
+export function mmrRerank(scored, { lambda, perSeedCap = PER_SEED_CAP, limit, simFn = itemSim } = {}) {
+  const sorted = [...scored].sort((a, b) => b.score - a.score);
+
+  // (1) Near-duplicate collapse against already-kept (higher-scored) survivors.
+  const survivors = [];
+  for (const cand of sorted) {
+    const dup = survivors.some((k) => simFn(cand.movie, k.movie) > NEAR_DUP_SIM);
+    if (!dup) survivors.push(cand);
+  }
+  if (survivors.length === 0) return [];
+
+  // Normalize relevance to [0,1] across survivors (min-max; flat pool => all 1).
+  const scores = survivors.map((s) => s.score);
+  const lo = Math.min(...scores);
+  const hi = Math.max(...scores);
+  const span = hi - lo;
+  const rel = (s) => (span === 0 ? 1 : (s.score - lo) / span);
+
+  const cap = Number.isFinite(limit) ? Math.min(limit, survivors.length) : survivors.length;
+  const seedCount = new Map();
+  const seedsOf = (s) => seedTitleIds(s.movie);
+  const underCap = (s) => {
+    const ids = seedsOf(s);
+    if (ids.size === 0) return true; // no rec/similar provenance => uncapped (discover/cold-start)
+    for (const id of ids) if ((seedCount.get(id) || 0) >= perSeedCap) return false;
+    return true;
+  };
+  const bumpSeeds = (s) => {
+    for (const id of seedsOf(s)) seedCount.set(id, (seedCount.get(id) || 0) + 1);
+  };
+
+  // (2)+(3) Greedy MMR with the per-seed cap enforced at selection time.
+  const chosen = [];
+  const pool = [...survivors];
+  while (chosen.length < cap && pool.length) {
+    let best = -1;
+    let bestVal = -Infinity;
+    for (let i = 0; i < pool.length; i += 1) {
+      if (!underCap(pool[i])) continue;
+      let maxSim = 0;
+      for (const c of chosen) {
+        const sim = simFn(pool[i].movie, c.movie);
+        if (sim > maxSim) maxSim = sim;
+      }
+      const val = lambda * rel(pool[i]) - (1 - lambda) * maxSim;
+      if (val > bestVal) { bestVal = val; best = i; }
+    }
+    if (best === -1) break; // remaining items all blocked by the seed cap
+    const [picked] = pool.splice(best, 1);
+    bumpSeeds(picked);
+    chosen.push(picked);
+  }
+  return chosen;
+}
+
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
