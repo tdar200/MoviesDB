@@ -594,6 +594,69 @@ export function genreHistogram(items) {
   return acc;
 }
 
+// Steck (2018) calibrated re-ranking. Greedily picks items maximizing
+//   (1-lambda)*relevance  -  lambda*KL(target || shownDistribution-with-this-item)
+// where the shown distribution is genre-smoothed by alpha against the target so the
+// log is finite. Pure, deterministic; relevance is the existing `score`. lambda is the
+// KL weight (lambda=0 => pure relevance). Keeps gems alive (no hard relevance cutoff).
+export function calibrate(scored, targetDist, { lambda = 0.5, limit, alpha = 0.01 } = {}) {
+  const pool = [...scored];
+  const n = limit == null ? pool.length : Math.min(limit, pool.length);
+  if (n <= 0) return [];
+
+  const targetKeys = Object.keys(targetDist || {});
+  // Per-item normalized genre distribution (sums to 1; genreless => empty).
+  const itemDist = (it) => {
+    const gids = (it.movie.genre_ids || []).map(Number).filter(Number.isFinite);
+    if (!gids.length) return {};
+    const share = 1 / gids.length;
+    const d = {};
+    for (const g of gids) d[String(g)] = (d[String(g)] || 0) + share;
+    return d;
+  };
+  const dists = new Map(pool.map((s) => [s, itemDist(s)]));
+
+  // KL(target || q) with alpha-smoothing of q toward target so log is finite.
+  const kl = (aggGenre, count) => {
+    if (!count) return 0;
+    let div = 0;
+    for (const g of targetKeys) {
+      const p = targetDist[g];
+      if (p <= 0) continue;
+      const qRaw = (aggGenre[g] || 0) / count; // mean genre mass over selected
+      const q = (1 - alpha) * qRaw + alpha * p; // smoothing
+      div += p * Math.log(p / q);
+    }
+    return div;
+  };
+
+  const selected = [];
+  const agg = {};        // summed genre mass over selected items
+  const used = new Set();
+  for (let pos = 0; pos < n; pos++) {
+    let best = null;
+    let bestVal = -Infinity;
+    for (let i = 0; i < pool.length; i++) {
+      if (used.has(i)) continue;
+      const s = pool[i];
+      const d = dists.get(s);
+      // Trial-add this item's genre mass and score the marginal objective.
+      const trial = { ...agg };
+      for (const g of Object.keys(d)) trial[g] = (trial[g] || 0) + d[g];
+      const div = kl(trial, selected.length + 1);
+      const val = (1 - lambda) * s.score - lambda * div;
+      if (val > bestVal) { bestVal = val; best = i; }
+    }
+    if (best == null) break;
+    used.add(best);
+    const chosen = pool[best];
+    const d = dists.get(chosen);
+    for (const g of Object.keys(d)) agg[g] = (agg[g] || 0) + d[g];
+    selected.push(chosen);
+  }
+  return selected;
+}
+
 // App-config ids that are actually TMDB *keyword* ids despite living in the genre/theme
 // lists with type:'keyword' (e.g. Dystopia 4565, Time Travel 4379). Built once. Any id in
 // this set must go to with_keywords/without_keywords, never with_genres/without_genres.

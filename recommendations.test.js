@@ -402,6 +402,47 @@ test('genreHistogram: keys are String genre ids; empty/genreless input -> {}', (
   assert.equal(h['18'], 1);
 });
 
+import { calibrate } from './recommendations.js';
+
+// Scored helper mirroring scorePool output: { movie, score, parts, reasons }.
+// Named `csc` (not `sc`) to avoid a module-scope collision with the pre-existing
+// `sc(id, score, {...})` helper added by an earlier item in this overhaul.
+function csc(id, genres, score) {
+  return { movie: { id, genre_ids: genres, _seeds: [] }, score, parts: {}, reasons: ['r'] };
+}
+
+test('calibrate: greedy KL selection tracks the target genre mix', () => {
+  // Target wants a 50/50 Sci-Fi(878)/Drama(18) mix. Pool is relevance-sorted but
+  // Sci-Fi-heavy at the top; calibration must pull a Drama title up into the top 2.
+  const target = { '878': 0.5, '18': 0.5 };
+  const pool = [
+    csc(1, [878], 0.99),
+    csc(2, [878], 0.98),
+    csc(3, [18], 0.50),
+    csc(4, [878], 0.40),
+  ];
+  const out = calibrate(pool, target, { lambda: 0.5, limit: 2 });
+  const ids = out.map((s) => s.movie.id);
+  assert.equal(out.length, 2);
+  assert.ok(ids.includes(3), `expected the Drama title pulled in, got ${ids}`);
+});
+
+test('calibrate: lambda=0 (pure relevance) keeps the top-scored prefix', () => {
+  // lambda is the KL weight; lambda=0 => objective is pure relevance.
+  const target = { '878': 0.5, '18': 0.5 };
+  const pool = [csc(1, [878], 0.9), csc(2, [878], 0.8), csc(3, [18], 0.1)];
+  const out = calibrate(pool, target, { lambda: 0, limit: 2 });
+  assert.deepEqual(out.map((s) => s.movie.id), [1, 2]);
+});
+
+test('calibrate: returns the whole pool (re-ordered) when limit >= pool size', () => {
+  const target = { '878': 1 };
+  const pool = [csc(1, [878], 0.9), csc(2, [878], 0.8)];
+  const out = calibrate(pool, target, { limit: 10 });
+  assert.equal(out.length, 2);
+  assert.deepEqual([...out.map((s) => s.movie.id)].sort(), [1, 2]);
+});
+
 // --- Stage 1: per-seed collaborative candidate extraction ---
 
 const SEED_ITEM = { id: 27205, title: 'Inception', media_type: 'movie' };
