@@ -641,6 +641,39 @@ test('extractSeedCandidates returns [] for an empty / fieldless append payload',
   assert.deepEqual(extractSeedCandidates(SEED_ITEM, { id: 27205, recommendations: { results: [] }, similar: { results: [] } }), []);
 });
 
+import { seedStrength } from './recommendations.js';
+
+test('seedStrength rescales a normalized [0,1] weight into ~[0.5,2]', () => {
+  assert.ok(Math.abs(seedStrength(0) - 0.5) < 1e-9, 'weakest => 0.5');
+  assert.ok(Math.abs(seedStrength(1) - 2) < 1e-9, 'strongest => 2');
+  assert.ok(Math.abs(seedStrength(0.5) - 1.25) < 1e-9, 'midpoint => 1.25');
+  assert.equal(seedStrength(undefined), 0.5);
+  assert.equal(seedStrength(2), 2);
+  assert.equal(seedStrength(-1), 0.5);
+});
+test('extractSeedCandidates scales SeedTag.weight by SOURCE_WEIGHT * seedStrength', () => {
+  const out = extractSeedCandidates(SEED_ITEM, APPEND_JSON, 2);
+  assert.ok(Math.abs(out.find((c) => c.id === 155)._seeds[0].weight - 2.0) < 1e-9, 'rec 1.0*2 => 2.0');
+  assert.ok(Math.abs(out.find((c) => c.id === 49026)._seeds[0].weight - 1.0) < 1e-9, 'similar 0.5*2 => 1.0');
+});
+test('extractSeedCandidates defaults seedStrength to 1 (back-compat)', () => {
+  const out = extractSeedCandidates(SEED_ITEM, APPEND_JSON);
+  assert.equal(out.find((c) => c.id === 155)._seeds[0].weight, 1.0);
+  assert.equal(out.find((c) => c.id === 49026)._seeds[0].weight, 0.5);
+});
+test('a co-rec from a STRONG seed outranks one from a WEAK seed at equal source/rank', () => {
+  const strongSeedItem = { id: 1, title: 'Fave', media_type: 'movie' };
+  const weakSeedItem   = { id: 2, title: 'Meh',  media_type: 'movie' };
+  const json = (candId) => ({ recommendations: { results: [
+    { id: candId, title: 'Co-Rec', media_type: 'movie', genre_ids: [878], vote_average: 8, vote_count: 5000 },
+  ] }, similar: { results: [] } });
+  const fromStrong = extractSeedCandidates(strongSeedItem, json(900), seedStrength(1))[0];
+  const fromWeak   = extractSeedCandidates(weakSeedItem,   json(901), seedStrength(0))[0];
+  assert.ok(collabScore(fromStrong) > collabScore(fromWeak));
+  assert.ok(Math.abs(collabScore(fromStrong) - 2.0) < 1e-9);
+  assert.ok(Math.abs(collabScore(fromWeak) - 0.5) < 1e-9);
+});
+
 import { enrichAndExpandBasket } from './recommendations.js';
 
 test('enrichAndExpandBasket: one appendDetail call per capped seed yields enrichment + collab pool', async () => {

@@ -483,12 +483,22 @@ function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+// Rescale a normalized [0,1] basket-seed strength into the collaborative weight band ~[0.5, 2]:
+// the weakest basket seed still contributes (0.5), the strongest doubles its co-recs (2.0).
+// Out-of-range / missing => clamped. collabScore multiplies SeedTag.weight directly.
+export function seedStrength(normWeight) {
+  const w = typeof normWeight === 'number' && Number.isFinite(normWeight) ? normWeight : 0;
+  const clamped = Math.max(0, Math.min(1, w));
+  return 0.5 + 1.5 * clamped;
+}
+
 // Map one appendDetail response's recommendations (source:'rec') and similar
 // (source:'similar') lists into tagged Candidates. Each candidate keeps its REAL
 // media_type from the response (mixed movie+tv), all quality/date fields, and a
 // SeedTag recording which basket seed produced it, its 0-based list rank, and the
-// source weight (rec > similar). Pure: no network, no clock.
-export function extractSeedCandidates(seedItem, appendDetailJson) {
+// source weight (rec > similar) scaled by the producing seed's strength (item 13).
+// Pure: no network, no clock.
+export function extractSeedCandidates(seedItem, appendDetailJson, strength = 1) {
   if (!seedItem || !appendDetailJson) return [];
   const seedId = seedItem.id;
   const seedTitle = seedItem.title || seedItem.name;
@@ -502,7 +512,8 @@ export function extractSeedCandidates(seedItem, appendDetailJson) {
         : seedMediaType,
       // type:'title' tags carry no facet of their own, so `id` mirrors `seedId` (the
       // producing seed title); person/keyword-seed predicates downstream skip type:'title'.
-      _seeds: [{ source, type: 'title', id: seedId, seedId, seedTitle, rank, weight }],
+      // weight = SOURCE_WEIGHT * strength so a strong fave's co-recs outweigh a weak star's.
+      _seeds: [{ source, type: 'title', id: seedId, seedId, seedTitle, rank, weight: weight * strength }],
     }));
 
   return [
@@ -1162,13 +1173,16 @@ async function enrichWatchedTitles(watched) {
 
 // Cap the basket to the strongest MAX_SEEDS by weight to bound fan-out.
 function topSeeds(basketEnriched) {
-  // _seedWeight is a forward hook (set by a later weighting task); until then this falls
-  // back to insertion order — earlier basket items rank higher.
-  return [...basketEnriched]
-    .map((m, i) => ({ m, w: typeof m._seedWeight === 'number' ? m._seedWeight : (basketEnriched.length - i) }))
+  // Rank by _seedWeight (or a rating-based fallback: a higher-rated fave is a stronger seed),
+  // cap to MAX_SEEDS, attach a pool-normalized [0,1] _seedStrength so the basket expansion can
+  // scale each seed's co-rec weight (item 13).
+  const ranked = [...basketEnriched]
+    .map((m) => ({ m, w: typeof m._seedWeight === 'number' ? m._seedWeight : ratingNudge(m.vote_average) }))
     .sort((a, b) => b.w - a.w)
-    .slice(0, MAX_SEEDS)
-    .map((x) => x.m);
+    .slice(0, MAX_SEEDS);
+  const { min: lo, max: hi } = minMax(ranked.map((x) => x.w));
+  const span = hi - lo;
+  return ranked.map((x) => ({ ...x.m, _seedStrength: span > 0 ? (x.w - lo) / span : 1 }));
 }
 
 // Normalize the keywords/credits sub-responses of an appendDetail payload into the
@@ -1241,7 +1255,7 @@ export async function enrichAndExpandBasket(basket, { fetchImpl = fetchJson } = 
     const { keywords, people } = json ? enrichmentFromAppend(json) : { keywords: [], people: [] };
     const enrichedSeed = { ...seed, _keywords: keywords, _people: people };
     enrichedBasket.push(enrichedSeed);
-    if (json) tagged.push(...extractSeedCandidates(enrichedSeed, json));
+    if (json) tagged.push(...extractSeedCandidates(enrichedSeed, json, seedStrength(seed._seedStrength)));
   }
   // Basket items beyond the top-MAX_SEEDS cap: profile-only (genre/rating/media), not fetched.
   for (const m of (basket || [])) {
