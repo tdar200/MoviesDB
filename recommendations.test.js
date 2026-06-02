@@ -633,6 +633,65 @@ test('extractSeedCandidates returns [] for an empty / fieldless append payload',
   assert.deepEqual(extractSeedCandidates(SEED_ITEM, { id: 27205, recommendations: { results: [] }, similar: { results: [] } }), []);
 });
 
+import { enrichAndExpandBasket } from './recommendations.js';
+
+test('enrichAndExpandBasket: one appendDetail call per capped seed yields enrichment + collab pool', async () => {
+  const APPEND_WITH_META = {
+    ...APPEND_JSON,
+    keywords: { keywords: [{ id: 9882, name: 'space' }, { id: 4379, name: 'time travel' }] },
+    credits: {
+      cast: [{ id: 6193, name: 'Leonardo DiCaprio' }],
+      crew: [{ id: 525, name: 'Christopher Nolan', job: 'Director' }],
+    },
+  };
+  const basket = [
+    { id: 27205, title: 'Inception', media_type: 'movie' },
+    { id: 157336, title: 'Interstellar', media_type: 'movie' },
+  ];
+  const calls = [];
+  const fetchImpl = async (url) => { calls.push(url); return APPEND_WITH_META; };
+
+  const { enrichedBasket, collabCandidates } = await enrichAndExpandBasket(basket, { fetchImpl });
+
+  assert.equal(calls.length, 2, 'one appendDetail call per seed');
+  assert.ok(calls.every((u) => u.includes('append_to_response=')), 'used the appendDetail endpoint');
+  assert.equal(enrichedBasket.length, 2);
+  assert.deepEqual(enrichedBasket[0]._keywords, [{ id: 9882, name: 'space' }, { id: 4379, name: 'time travel' }]);
+  assert.deepEqual(
+    enrichedBasket[0]._people,
+    [{ id: 6193, name: 'Leonardo DiCaprio' }, { id: 525, name: 'Christopher Nolan' }],
+    'cast + director, same shape as enrichWatchedTitles produced',
+  );
+  assert.equal(enrichedBasket[1].id, 157336);
+  assert.ok(collabCandidates.some((c) => c.id === 155 && c._seeds.some((s) => s.source === 'rec')), 'rec candidate present');
+  assert.ok(collabCandidates.some((c) => c.id === 49026 && c._seeds.some((s) => s.source === 'similar')), 'similar candidate present');
+  assert.equal(collabCandidates.filter((c) => c.id === 155).length, 1, 'merged across seeds (deduped)');
+});
+
+test('enrichAndExpandBasket: profile sees the WHOLE basket; only top-MAX_SEEDS are fetched/expanded', async () => {
+  // 13 seeds (> MAX_SEEDS=12): the 13th must still appear in the profile (genre/rating signal),
+  // bare (no keywords/people), and must NOT be fetched. A failed fetch also stays in the profile.
+  const basket = Array.from({ length: 13 }, (_, i) => ({
+    id: 1000 + i, title: `T${i}`, media_type: 'movie', genre_ids: [878], vote_average: 7,
+  }));
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url.includes('/movie/1003?')) throw new Error('boom'); // one seed's appendDetail fails
+    return { recommendations: { results: [] }, similar: { results: [] },
+      keywords: { keywords: [{ id: 9882, name: 'space' }] }, credits: { cast: [], crew: [] } };
+  };
+
+  const { enrichedBasket } = await enrichAndExpandBasket(basket, { fetchImpl });
+
+  assert.equal(calls.length, 12, 'only the top MAX_SEEDS=12 seeds are fetched');
+  assert.equal(enrichedBasket.length, 13, 'all 13 basket items contribute to the profile');
+  const overflow = enrichedBasket.find((m) => m.id === 1012);
+  assert.deepEqual(overflow._keywords, [], 'the 13th (overflow) item is bare — not fetched');
+  assert.ok(enrichedBasket.every((m) => Array.isArray(m._keywords) && Array.isArray(m._people)),
+    'every item has _keywords/_people arrays (failed/overflow seeds default to [])');
+});
+
 test('mergeCandidates accumulates rec+similar title SeedTags from different seeds', () => {
   const merged = mergeCandidates([
     { id: 155, media_type: 'movie', genre_ids: [18, 28, 80],

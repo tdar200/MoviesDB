@@ -1159,35 +1159,53 @@ async function fillerCandidates() {
   return mergeCandidates(tagged);
 }
 
-// Per-seed collaborative candidate generation (OWNER). For each (capped) basket seed,
-// one appendDetail call yields its recommendations + similar (→ tagged candidates via
-// extractSeedCandidates) AND its keywords/credits (→ attached to the seed in place for
-// the content profile). Returns the merged, deduped collaborative candidate pool.
-// Discover (discoverCandidates) and cold-start filler (fillerCandidates) are merged here:
-// the personalized pool (collab ∪ discover) is blended with filler via coldStartBlend,
-// weighted by basket size (basketEnriched.length).
-async function generateCandidates(basketEnriched, profile, negProfile = null) {
-  const seeds = topSeeds(basketEnriched);
+// Enrich the basket seeds AND expand them in ONE appendDetail call per (capped) seed.
+// appendDetail returns keywords+credits (→ _keywords/_people for buildTasteProfile) AND
+// recommendations+similar (→ extractSeedCandidates collab pool) — both read from the SAME
+// payload, so a seed is never fetched twice. Returns { enrichedBasket, collabCandidates }.
+//
+// We fetch+expand only the top MAX_SEEDS seeds (bounds network + collab fan-out), but the
+// taste profile must see the WHOLE basket: every starred item already carries
+// genre_ids/vote_average/media_type (no fetch needed), so seeds beyond the cap — and any whose
+// appendDetail fails — are still included with empty _keywords/_people. This keeps the profile's
+// genre/rating/media signal faithful to the full basket while only fetching keyword/people
+// enrichment for the strongest seeds. fetchImpl is injectable for tests.
+export async function enrichAndExpandBasket(basket, { fetchImpl = fetchJson } = {}) {
+  const seeds = topSeeds(basket);
+  const seedIds = new Set(seeds.map((s) => s.id));
   const results = await Promise.all(
     seeds.map((seed) => {
       const type = seed.media_type === 'tv' ? 'tv' : 'movie';
-      return fetchJson(ENDPOINTS.appendDetail(type, seed.id))
+      return fetchImpl(ENDPOINTS.appendDetail(type, seed.id))
         .then((json) => ({ seed, json }))
-        .catch(() => null);
+        .catch(() => ({ seed, json: null }));
     })
   );
+  const enrichedBasket = [];
   const tagged = [];
-  for (const r of results) {
-    if (!r) continue;
-    const { keywords, people } = enrichmentFromAppend(r.json);
-    const enrichedSeed = { ...r.seed, _keywords: keywords, _people: people };
-    tagged.push(...extractSeedCandidates(enrichedSeed, r.json));
+  for (const { seed, json } of results) {
+    const { keywords, people } = json ? enrichmentFromAppend(json) : { keywords: [], people: [] };
+    const enrichedSeed = { ...seed, _keywords: keywords, _people: people };
+    enrichedBasket.push(enrichedSeed);
+    if (json) tagged.push(...extractSeedCandidates(enrichedSeed, json));
   }
-  const collab = mergeCandidates(tagged);
+  // Basket items beyond the top-MAX_SEEDS cap: profile-only (genre/rating/media), not fetched.
+  for (const m of (basket || [])) {
+    if (!seedIds.has(m.id)) enrichedBasket.push({ ...m, _keywords: [], _people: [] });
+  }
+  return { enrichedBasket, collabCandidates: mergeCandidates(tagged) };
+}
+
+// Combine the pre-expanded collaborative pool with Discover candidates, then blend
+// cold-start filler by basket size. Seed expansion now happens once in
+// enrichAndExpandBasket (called by _pipeline before buildTasteProfile), so this no
+// longer fetches appendDetail per seed.
+async function generateCandidates(collabCandidates, basketSize, profile, negProfile = null) {
+  const collab = collabCandidates || [];
   const discover = await discoverCandidates(profile, negProfile);
   const personalPool = mergeCandidates([...collab, ...discover]);
   const filler = await fillerCandidates();
-  return coldStartBlend(personalPool, filler, basketEnriched.length);
+  return coldStartBlend(personalPool, filler, basketSize);
 }
 
 // Pull Discover candidates seeded by the profile's top genres/keywords/people.
@@ -1253,7 +1271,8 @@ async function _pipeline(input, opts = {}) {
   // (combineProfiles gamma), the bounded scorePool penalty, and Discover without_*.
   const annotatePos = (arr) => arr.map((m) => ({ ...m, _starred: true, _engagement: null }));
   const annotateNeg = (arr) => arr.map((m) => ({ ...m, _starred: false, _engagement: null }));
-  const basketEnriched = annotatePos(await enrichWatchedTitles(basket));
+  const { enrichedBasket, collabCandidates } = await enrichAndExpandBasket(basket);
+  const basketEnriched = annotatePos(enrichedBasket);
   const downEnriched = annotateNeg(await enrichWatchedTitles(downvoted));
 
   const posProfile = buildTasteProfile(basketEnriched, now);
@@ -1263,7 +1282,7 @@ async function _pipeline(input, opts = {}) {
   // negProfile drives Discover without_genres/without_keywords and the bounded re-rank penalty
   // (scorePool dislikeVector). It is the negative-centroid tag-vector built by the scorer.
   const dislikeVector = negProfile ? profileVector(negProfile) : undefined;
-  const candidates = await generateCandidates(basketEnriched, profile, negProfile);
+  const candidates = await generateCandidates(collabCandidates, basket.length, profile, negProfile);
   const excludeIds = new Set(
     [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
   );
