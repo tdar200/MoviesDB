@@ -8,19 +8,37 @@ import assert from 'node:assert/strict';
 const scriptSrc = readFileSync(new URL('./script.js', import.meta.url), 'utf8');
 const styleSrc = readFileSync(new URL('./style.css', import.meta.url), 'utf8');
 
-// Extract the two pure-DOM builders from script.js by name so we exercise the REAL code.
+// Guard (follow-up d): the two template-heavy builders must be delimited by extraction markers so a
+// '}' inside a template string can't mis-slice their bodies. Fail loudly if a marker is missing.
+for (const name of ['createRecommendationCard', 'buildRecRail']) {
+  if (!scriptSrc.includes(`// >>> REC-HARNESS-EXPORT ${name}`) || !scriptSrc.includes(`// <<< REC-HARNESS-EXPORT ${name}`)) {
+    throw new Error(`rec-dom-harness: missing extraction markers for ${name} in script.js`);
+  }
+}
+
+// Extract a builder's REAL source from script.js. Prefer the REC-HARNESS-EXPORT markers (token-free:
+// a '}' inside a template string can't mis-slice); fall back to paren+brace balancing for un-marked
+// helpers (buildRecSkeleton/buildLazyRecRail/observeLazyRail/reconcileRecRails/scheduleRecRecompute).
 function slice(name) {
+  const begin = `// >>> REC-HARNESS-EXPORT ${name}`;
+  const end = `// <<< REC-HARNESS-EXPORT ${name}`;
+  const mb = scriptSrc.indexOf(begin);
+  if (mb >= 0) {
+    const bodyStart = mb + begin.length;
+    const me = scriptSrc.indexOf(end, bodyStart);
+    if (me < 0) throw new Error(`rec-dom-harness: begin marker for ${name} has no matching end marker`);
+    return scriptSrc.slice(bodyStart, me);
+  }
   const start = scriptSrc.indexOf(`function ${name}`);
   if (start < 0) throw new Error(`function ${name} not found in script.js`);
-  // Skip the parameter list first: balance the '(' ... ')' so a DESTRUCTURED param
-  // like `buildRecRail(recs, { kicker, heading })` doesn't trip the body brace-balancer.
+  // Balance the '(' ... ')' param list first so a destructured param doesn't trip the body balancer.
   let p = scriptSrc.indexOf('(', start);
   let parenDepth = 0;
   for (; p < scriptSrc.length; p++) {
     if (scriptSrc[p] === '(') parenDepth++;
     else if (scriptSrc[p] === ')') { parenDepth--; if (parenDepth === 0) { p++; break; } }
   }
-  // Now balance braces from the first '{' AFTER the parameter list (the real body).
+  // Then balance braces from the first '{' after the params (the real body).
   let i = scriptSrc.indexOf('{', p);
   let depth = 0;
   for (; i < scriptSrc.length; i++) {
@@ -80,7 +98,7 @@ const scriptTail = `
     top: 'Calibrated to your basket',
     title: 'Because you liked it',
     genre: 'More of this genre',
-    trending: 'Popular right now',
+    trending: 'Popular this week',
     explore: 'A little different',
   };
   const page = document.createElement('div');
@@ -138,6 +156,14 @@ try {
   // (b2) the trending row renders exactly once (standing Trending this week row).
   const trendingCount = await page.$$eval('[data-rec-kind="trending"]', (els) => els.length);
   assert.equal(trendingCount, 1, 'exactly one trending rail (standing Trending this week row)');
+
+  // (b3) anti-drift (follow-up b): the harness's trending kicker must equal production's
+  // REC_ROW_KICKERS.trending in script.js, so the hardcoded fixture copy can't silently drift.
+  const prodKickerBlock = scriptSrc.match(/REC_ROW_KICKERS\s*=\s*\{[\s\S]*?\}/)?.[0] || '';
+  const prodTrending = prodKickerBlock.match(/trending:\s*'([^']*)'/)?.[1];
+  assert.equal(prodTrending, 'Popular this week', 'production trending kicker changed — update the harness fixture copy');
+  const trendingKicker = railInfo.find((r) => r.kind === 'trending')?.kicker;
+  assert.equal(trendingKicker, prodTrending, 'harness trending rail kicker must match production REC_ROW_KICKERS.trending (no fixture drift)');
 
   // (c) the collaborative card exposes data-rec-source="rec" (on its .rec-because label,
   // matching the createRecommendationCard edit and the style.css `.rec-because[data-rec-source]`).

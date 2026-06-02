@@ -1866,6 +1866,7 @@ async function searchMovies(query) {
 // Build a single purpose-built recommendation card (poster-forward, reason-first).
 // Deliberately NOT createMovieCard — Discover candidates lack RT/votes/director,
 // so the heavy browse card renders empty fields. This is a lean, curated card.
+// >>> REC-HARNESS-EXPORT createRecommendationCard
 function createRecommendationCard(rec, index) {
   const movie = rec.movie;
   const displayTitle = movie.title || movie.name || 'Unknown';
@@ -1962,6 +1963,7 @@ function createRecommendationCard(rec, index) {
   });
   return card;
 }
+// <<< REC-HARNESS-EXPORT createRecommendationCard
 
 // Shimmer placeholder rails shown immediately in a VISIBLE #main while the first real
 // rows resolve. Mirrors .rec-rail-section structure so replacing a skeleton with a real
@@ -1999,6 +2001,7 @@ function buildRecSkeleton(count = 3) {
 // Render the "Recommended for you" rail at the top of the Movies home view.
 // Build one labelled recommendation rail (editorial header + edge-faded scroller of
 // rec cards). Shared by the Movies-home teaser row and the dedicated Recommendation page.
+// >>> REC-HARNESS-EXPORT buildRecRail
 function buildRecRail(recs, { kicker, heading, subline }) {
   const section = document.createElement('section');
   section.className = 'rec-rail-section';
@@ -2032,6 +2035,7 @@ function buildRecRail(recs, { kicker, heading, subline }) {
   section.appendChild(rail);
   return section;
 }
+// <<< REC-HARNESS-EXPORT buildRecRail
 
 // Below-the-fold rail: header + an empty, min-height-reserved scroller (no cards built,
 // so their poster <img>s never request data) until hydrate() runs. hydrate() is idempotent.
