@@ -51,6 +51,13 @@ test('bayesianRating respects injected m and C', () => {
   assert.equal(bayesianRating(8.0, 10, 10, 6.0), 7.0);
 });
 
+test('bayesianRating default m is 150 (few-hundred-vote calibration)', () => {
+  // A 1000-vote 8.0 keeps ~87% of its rating under m=150, vs ~62% under the old m=500.
+  const wr = bayesianRating(8.0, 1000); // = (1000/1150)*8 + (150/1150)*6.5
+  assert.ok(Math.abs(wr - 7.8043) < 1e-3, `expected ~7.804 under m=150, got ${wr}`);
+  assert.ok(wr > 7.5, 'a 1000-vote 8.0 must now sit well above the old m=500 result (~7.0)');
+});
+
 test('qualityMultiplier maps rating into ~[0.6,1.1] and is monotonic', () => {
   const great = qualityMultiplier(8.0, 5000);
   const meh = qualityMultiplier(4.0, 5000);
