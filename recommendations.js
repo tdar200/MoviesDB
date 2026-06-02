@@ -376,9 +376,10 @@ function seedTitleIds(candidate) {
 }
 
 // Pairwise similarity for the diversity re-rank: 0.6*genreJaccard + 0.4*provenanceJaccard.
-// Identical id => 1 (the same title can't add diversity).
+// Identical composite identity => 1 (the same title can't add diversity). Uses candidateKey so a
+// movie and a tv show sharing a numeric id aren't falsely treated as the same near-duplicate.
 export function itemSim(a, b) {
-  if (a.id === b.id) return 1;
+  if (candidateKey(a) === candidateKey(b)) return 1;
   const ga = a._genreSet || new Set((a.genre_ids || []).map(Number));
   const gb = b._genreSet || new Set((b.genre_ids || []).map(Number));
   const genreJ = jaccard(ga, gb);
@@ -497,11 +498,19 @@ export function extractSeedCandidates(seedItem, appendDetailJson) {
   ];
 }
 
+// Composite identity for a candidate: TMDB ids are unique only WITHIN a media_type, so a movie
+// and a tv show can share a numeric id. Keying by `${media_type}:${id}` keeps them distinct
+// through merge, the pipeline exclude set, and row placement. Missing media_type => 'movie'.
+export function candidateKey(item) {
+  const mt = item.media_type === 'tv' ? 'tv' : 'movie';
+  return `${mt}:${item.id}`;
+}
+
 // Merge Discover result lists, deduping by id and accumulating seed provenance.
 export function mergeCandidates(taggedCandidates) {
   const byId = new Map();
   for (const c of taggedCandidates) {
-    const key = String(c.id);
+    const key = candidateKey(c);
     if (byId.has(key)) {
       byId.get(key)._seeds.push(...(c._seeds || []));
     } else {
@@ -525,8 +534,8 @@ export function coldStartBlend(personalCandidates, fillerCandidates, basketSize)
     const out = [];
     const seen = new Set();
     for (const c of filler) {
-      if (seen.has(c.id)) continue;
-      seen.add(c.id);
+      if (seen.has(candidateKey(c))) continue;
+      seen.add(candidateKey(c));
       out.push(c);
     }
     return out;
@@ -536,8 +545,8 @@ export function coldStartBlend(personalCandidates, fillerCandidates, basketSize)
   const out = [];
   const seen = new Set();
   for (const c of personal) {
-    if (seen.has(c.id)) continue;
-    seen.add(c.id);
+    if (seen.has(candidateKey(c))) continue;
+    seen.add(candidateKey(c));
     out.push(c);
   }
   if (p >= 1) return out; // full basket: personalized only.
@@ -546,8 +555,8 @@ export function coldStartBlend(personalCandidates, fillerCandidates, basketSize)
   // fall back to filler-only so a fractional basket never yields a blank screen.
   if (out.length === 0) {
     for (const c of filler) {
-      if (seen.has(c.id)) continue;
-      seen.add(c.id);
+      if (seen.has(candidateKey(c))) continue;
+      seen.add(candidateKey(c));
       out.push(c);
     }
     return out;
@@ -559,8 +568,8 @@ export function coldStartBlend(personalCandidates, fillerCandidates, basketSize)
   let added = 0;
   for (const c of filler) {
     if (added >= fillerSlots) break;
-    if (seen.has(c.id)) continue;
-    seen.add(c.id);
+    if (seen.has(candidateKey(c))) continue;
+    seen.add(candidateKey(c));
     out.push(c);
     added += 1;
   }
@@ -898,7 +907,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
 
   // One global placed-Set: a title appears in at most one row.
   const placed = new Set();
-  const recId = (r) => String(r.movie.id);
+  const recId = (r) => candidateKey(r.movie);
   const num = (v) => Number(v);                       // consistent coercion everywhere
   const seedHas = (r, type, id) =>
     (r.movie._seeds || []).some((s) => s.type === type && num(s.id) === num(id));
@@ -1299,9 +1308,14 @@ async function _pipeline(input, opts = {}) {
   const watchedIds = input.watchedIds || [];
   // Built once, up front (only needs basket/downvoted/watchedIds): used both by the provisional
   // streaming emission below and the final pool filter, so we don't rebuild it later.
-  const excludeIds = new Set(
-    [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
-  );
+  // Composite-key the exclude set so a basketed/watched movie can't suppress a tv show of the
+  // same numeric id (and vice versa). watchedIds are numeric (legacy) -> exclude BOTH types.
+  const excludeIds = new Set();
+  for (const m of [...basket, ...downvoted]) excludeIds.add(candidateKey(m));
+  for (const w of watchedIds) {
+    if (w && typeof w === 'object') excludeIds.add(candidateKey(w));
+    else { excludeIds.add(`movie:${w}`); excludeIds.add(`tv:${w}`); }
+  }
 
   const sig = signalSignature(basket, downvoted, watchedIds);
   // lambda is part of the key: the teaser (0.8) and page (0.6) must not share a cache entry.
@@ -1337,7 +1351,7 @@ async function _pipeline(input, opts = {}) {
   // entirely in the collab pool); the renderer reconciles them in place by key when the final
   // rows arrive. Only fires on a cache MISS (a hit returns instantly above — no streaming needed).
   if (typeof onRow === 'function') {
-    const collabPool = collabCandidates.filter((c) => !excludeIds.has(c.id));
+    const collabPool = collabCandidates.filter((c) => !excludeIds.has(candidateKey(c)));
     const provisionalRecs = mmrRerank(scorePool(collabPool, { profile, now, dislikeVector }), { lambda, limit });
     const provisionalRows = groupIntoRows(provisionalRecs, profile, { genreDist });
     for (const row of provisionalRows) {
@@ -1346,7 +1360,7 @@ async function _pipeline(input, opts = {}) {
   }
 
   const candidates = await generateCandidates(collabCandidates, basket.length, profile, negProfile);
-  const pool = candidates.filter((c) => !excludeIds.has(c.id));
+  const pool = candidates.filter((c) => !excludeIds.has(candidateKey(c)));
   const scored = scorePool(pool, { profile, now, dislikeVector });
   const recs = mmrRerank(scored, { lambda, limit });
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recencyWeight, ratingNudge, buildTasteProfile, signalSignature } from './recommendations.js';
-import { mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend, pruneMetaCache } from './recommendations.js';
+import { candidateKey, mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend, pruneMetaCache } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
@@ -1502,4 +1502,57 @@ test('getRecommendationRows streams every final row through onRow exactly once (
   assert.deepEqual(finalStreamed.map(key).sort(), rows.map(key).sort(),
     'final streamed rows == returned rows (no dupes, no drops)');
   assert.ok(streamed.every((r) => typeof r.provisional === 'boolean'), 'every streamed row carries a provisional flag');
+});
+
+test('candidateKey composes media_type and id so movie 5 != tv 5', () => {
+  assert.equal(candidateKey({ id: 5, media_type: 'movie' }), 'movie:5');
+  assert.equal(candidateKey({ id: 5, media_type: 'tv' }), 'tv:5');
+  assert.notEqual(candidateKey({ id: 5, media_type: 'movie' }), candidateKey({ id: 5, media_type: 'tv' }));
+  assert.equal(candidateKey({ id: 5 }), 'movie:5');
+});
+test('mergeCandidates keeps a movie id 5 and a tv id 5 distinct', () => {
+  const merged = mergeCandidates([
+    { id: 5, media_type: 'movie', genre_ids: [878], _seeds: [{ source: 'rec', type: 'title', id: 1, seedId: 1, rank: 0, weight: 1 }] },
+    { id: 5, media_type: 'tv', genre_ids: [10765], _seeds: [{ source: 'rec', type: 'title', id: 2, seedId: 2, rank: 0, weight: 1 }] },
+  ]);
+  assert.equal(merged.length, 2, 'movie 5 and tv 5 must not collapse');
+  assert.deepEqual(merged.find((c) => c.media_type === 'movie').genre_ids, [878]);
+  assert.deepEqual(merged.find((c) => c.media_type === 'tv').genre_ids, [10765]);
+});
+test('mergeCandidates still accumulates seeds for the SAME media_type+id', () => {
+  const merged = mergeCandidates([
+    { id: 5, media_type: 'movie', genre_ids: [878], _seeds: [{ source: 'rec', type: 'title', id: 1, seedId: 1, rank: 0, weight: 1 }] },
+    { id: 5, media_type: 'movie', genre_ids: [878], _seeds: [{ source: 'similar', type: 'title', id: 2, seedId: 2, rank: 1, weight: 0.5 }] },
+  ]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]._seeds.length, 2);
+});
+test('groupIntoRows: a movie id 5 and a tv id 5 both survive (no cross-type claim)', () => {
+  const ranked = [
+    ...[5].map((id) => grq(id, { genres: [878], score: 1, va: 8, vc: 9000 })),
+    { movie: { id: 5, media_type: 'tv', genre_ids: [878], _seeds: [], vote_average: 8, vote_count: 9000 }, score: 0.99, parts: {}, reasons: ['r'] },
+    ...[60, 61, 62].map((id) => grq(id, { genres: [878], score: 0.5, va: 7, vc: 9000 })),
+  ];
+  ranked[0].movie.media_type = 'movie';
+  const rows = groupIntoRows(ranked, { ...GROUP_PROFILE, topTitles: [], people: {} }, { topCount: 2, minItems: 1, genreDist: { '878': 1 } });
+  const allKeys = rows.flatMap((row) => row.recs.map((r) => `${r.movie.media_type}:${r.movie.id}`));
+  assert.ok(allKeys.includes('movie:5'), 'movie 5 present');
+  assert.ok(allKeys.includes('tv:5'), 'tv 5 present (must not be dropped as a dup of movie 5)');
+});
+
+test('itemSim: a movie 5 and a tv 5 are NOT identical (composite identity, not bare id)', () => {
+  const movie5 = { id: 5, media_type: 'movie', genre_ids: [878], _seeds: [] };
+  const tv5 = { id: 5, media_type: 'tv', genre_ids: [878], _seeds: [] };
+  assert.equal(itemSim(movie5, movie5), 1, 'truly identical => 1');
+  // Same id, different media_type, same genre => genre-Jaccard only (0.6), never the identical-1.
+  assert.ok(itemSim(movie5, tv5) < 1, 'movie 5 vs tv 5 must not short-circuit to 1');
+  assert.ok(Math.abs(itemSim(movie5, tv5) - 0.6) < 1e-9, 'falls through to 0.6*genreJaccard');
+});
+
+test('coldStartBlend: a movie 5 and a tv 5 both survive the blend (composite dedup)', () => {
+  const movie5 = { id: 5, media_type: 'movie', genre_ids: [878] };
+  const tv5 = { id: 5, media_type: 'tv', genre_ids: [10765] };
+  // Full basket => personalized-only path; both must remain distinct (id-only dedup would drop one).
+  const out = coldStartBlend([movie5, tv5], [], 5);
+  assert.equal(out.length, 2, 'movie 5 and tv 5 are distinct in the blend');
 });
