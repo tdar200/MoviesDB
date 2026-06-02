@@ -1069,7 +1069,7 @@ function writeMetaEntry(cacheKey, meta, now = Date.now()) {
 // One module-level queue: concurrency cap + 429 backoff + URL-keyed session memo.
 const _recFetchQueue = createFetchQueue({
   fetchImpl: (url) => fetch(url),
-  maxInflight: 6,
+  maxInflight: 12,
   storage: (typeof sessionStorage !== 'undefined') ? sessionStorage : undefined,
 });
 
