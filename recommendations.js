@@ -1016,10 +1016,6 @@ const META_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7-day TTL on per-title enr
 const META_CACHE_MAX_ENTRIES = 500;                // size bound (LRU-by-savedAt)
 const RECS_CACHE_KEY = 'recResultsCache';  // session recommendations cache
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // Pure: normalize + prune a versioned meta cache. Discards a wrong/legacy version wholesale,
 // drops entries older than ttlMs, and caps to the newest maxEntries by savedAt. Injected now.
 export function pruneMetaCache(cache, now, opts = {}) {
@@ -1106,21 +1102,14 @@ async function fetchTitleMeta(type, id) {
   return meta;
 }
 
-// Attach _keywords/_people to each watched item. Batched to respect rate limits.
+// Attach _keywords/_people to each watched item. Concurrency is bounded by the
+// module fetch queue (maxInflight); manual batching/delay is omitted — it only
+// starved queue throughput without adding real rate-limiting.
 async function enrichWatchedTitles(watched) {
-  const BATCH = 8;
-  const enriched = [];
-  for (let i = 0; i < watched.length; i += BATCH) {
-    const slice = watched.slice(i, i + BATCH);
-    const metas = await Promise.all(
-      slice.map((m) => fetchTitleMeta(m.media_type === 'tv' ? 'tv' : 'movie', m.id))
-    );
-    slice.forEach((m, j) => {
-      enriched.push({ ...m, _keywords: metas[j].keywords, _people: metas[j].people });
-    });
-    if (i + BATCH < watched.length) await delay(300);
-  }
-  return enriched;
+  const metas = await Promise.all(
+    watched.map((m) => fetchTitleMeta(m.media_type === 'tv' ? 'tv' : 'movie', m.id))
+  );
+  return watched.map((m, j) => ({ ...m, _keywords: metas[j].keywords, _people: metas[j].people }));
 }
 
 // Cap the basket to the strongest MAX_SEEDS by weight to bound fan-out.
@@ -1179,28 +1168,20 @@ async function fillerCandidates() {
 // weighted by basket size (basketEnriched.length).
 async function generateCandidates(basketEnriched, profile, negProfile = null) {
   const seeds = topSeeds(basketEnriched);
+  const results = await Promise.all(
+    seeds.map((seed) => {
+      const type = seed.media_type === 'tv' ? 'tv' : 'movie';
+      return fetchJson(ENDPOINTS.appendDetail(type, seed.id))
+        .then((json) => ({ seed, json }))
+        .catch(() => null);
+    })
+  );
   const tagged = [];
-  const BATCH = 6;
-  for (let i = 0; i < seeds.length; i += BATCH) {
-    const slice = seeds.slice(i, i + BATCH);
-    const results = await Promise.all(
-      slice.map((seed) => {
-        const type = seed.media_type === 'tv' ? 'tv' : 'movie';
-        return fetchJson(ENDPOINTS.appendDetail(type, seed.id))
-          .then((json) => ({ seed, json }))
-          .catch(() => null);
-      })
-    );
-    for (const r of results) {
-      if (!r) continue;
-      const { keywords, people } = enrichmentFromAppend(r.json);
-      // Pass enrichment on a shallow COPY — never mutate the shared basketEnriched object
-      // (buildTasteProfile already consumed it; in-place writes would be an invisible
-      // ordering dependency). extractSeedCandidates reads only id/title/media_type.
-      const enrichedSeed = { ...r.seed, _keywords: keywords, _people: people };
-      tagged.push(...extractSeedCandidates(enrichedSeed, r.json));
-    }
-    if (i + BATCH < seeds.length) await delay(300);
+  for (const r of results) {
+    if (!r) continue;
+    const { keywords, people } = enrichmentFromAppend(r.json);
+    const enrichedSeed = { ...r.seed, _keywords: keywords, _people: people };
+    tagged.push(...extractSeedCandidates(enrichedSeed, r.json));
   }
   const collab = mergeCandidates(tagged);
   const discover = await discoverCandidates(profile, negProfile);
@@ -1215,21 +1196,17 @@ async function generateCandidates(basketEnriched, profile, negProfile = null) {
 async function discoverCandidates(profile, negProfile = null) {
   const requests = buildDiscoverRequests(profile, negProfile, {});
 
+  const results = await Promise.all(
+    requests.map((r) =>
+      fetchJson(r.url).then((d) => ({ d, seed: r.seed, url: r.url })).catch(() => null))
+  );
   const tagged = [];
-  const BATCH = 6;
-  for (let i = 0; i < requests.length; i += BATCH) {
-    const slice = requests.slice(i, i + BATCH);
-    const results = await Promise.all(
-      slice.map((r) => fetchJson(r.url).then((d) => ({ d, seed: r.seed, url: r.url })).catch(() => null))
-    );
-    for (const r of results) {
-      if (!r) continue;
-      const reqType = r.url.includes('/discover/tv?') ? 'tv' : 'movie';
-      for (const movie of (r.d.results || [])) {
-        tagged.push({ ...movie, media_type: movie.media_type || reqType, _seeds: [r.seed] });
-      }
+  for (const r of results) {
+    if (!r) continue;
+    const reqType = r.url.includes('/discover/tv?') ? 'tv' : 'movie';
+    for (const movie of (r.d.results || [])) {
+      tagged.push({ ...movie, media_type: movie.media_type || reqType, _seeds: [r.seed] });
     }
-    if (i + BATCH < requests.length) await delay(300);
   }
   return mergeCandidates(tagged);
 }
