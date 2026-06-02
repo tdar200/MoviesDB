@@ -1577,3 +1577,11 @@ main {
   .rec-skeleton .rec-skel-line,
   .rec-skel-card { animation: none; }
 }
+
+/* ---- Cross-fade on recompute (stale-while-revalidate) ---- */
+.rec-page { transition: opacity 0.32s ease; }
+.rec-page--incoming { opacity: 0; }
+.rec-page--fading { opacity: 0; position: absolute; left: 0; right: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .rec-page, .rec-page--incoming, .rec-page--fading { transition: none; }
+}

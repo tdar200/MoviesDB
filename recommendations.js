@@ -1308,7 +1308,9 @@ async function _pipeline(input, opts = {}) {
   const cacheKey = `${RECS_CACHE_KEY}:${limit}:${lambda}`;
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
-    if (cached && cached.sig === sig) return { profile: cached.profile, recs: cached.recs };
+    if (cached && cached.sig === sig && !cached.stale) {
+      return { profile: cached.profile, recs: cached.recs };
+    }
   } catch { /* ignore cache read errors */ }
 
   // Basket items are explicit positive seeds: STAR_BONUS-weighted, engagement dropped
@@ -1388,12 +1390,19 @@ export async function getRecommendationRows(input, opts = {}) {
   return { rows };
 }
 
-// Clear every per-limit session results cache entry (call after a new title is watched).
+// Mark every per-limit session results cache entry STALE (keep the payload) so the next render
+// can show the old rows immediately while recomputing (stale-while-revalidate). A successful
+// recompute writes a fresh entry with no stale flag, clearing staleness.
 export function clearRecommendationCache() {
   try {
     for (let i = sessionStorage.length - 1; i >= 0; i--) {
       const k = sessionStorage.key(i);
-      if (k && k.startsWith(RECS_CACHE_KEY)) sessionStorage.removeItem(k);
+      if (k && k.startsWith(RECS_CACHE_KEY)) {
+        try {
+          const v = JSON.parse(sessionStorage.getItem(k) || 'null');
+          if (v) { v.stale = true; sessionStorage.setItem(k, JSON.stringify(v)); }
+        } catch { sessionStorage.removeItem(k); }
+      }
     }
   } catch { /* ignore */ }
 }

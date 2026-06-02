@@ -2114,7 +2114,7 @@ async function renderRecommendationsRow() {
 // re-render whichever recommendation surface is currently showing so the change applies.
 function onSignalChanged() {
   if (tabRecommended.classList.contains('active')) {
-    renderRecommendationsPage();
+    scheduleRecRecompute();
   } else if (currentApp === 'movies' && !isWatchedMode && !isFavoritesMode && !isSearchMode && !isTop250Mode) {
     renderRecommendationsRow();
   }
@@ -2124,6 +2124,20 @@ function onSignalChanged() {
 // Bumped on each render so a slower in-flight render (e.g. from a rapid second toggle)
 // can detect it was superseded and skip mutating #main — avoids stacked duplicate pages.
 let recPageRenderToken = 0;
+
+// Rapid curation (several ★/👎) should trigger ONE heavy pipeline run, not one per click.
+// The clicked card already flips optimistically (createStar/DownvoteButton sync()); only the
+// full-page recompute is debounced.
+const REC_RECOMPUTE_DEBOUNCE_MS = 1000;
+let __recRecomputeTimer = null;
+function scheduleRecRecompute() {
+  if (__recRecomputeTimer) clearTimeout(__recRecomputeTimer);
+  __recRecomputeTimer = setTimeout(() => {
+    __recRecomputeTimer = null;
+    renderRecommendationsPage();
+  }, REC_RECOMPUTE_DEBOUNCE_MS);
+}
+
 async function renderRecommendationsPage() {
   const token = ++recPageRenderToken;
   document.getElementById('recommendations-row')?.remove();
@@ -2131,7 +2145,9 @@ async function renderRecommendationsPage() {
   displayedCount = 0;
   hasMorePages = false;
   document.getElementById('load-more-indicator')?.remove();
-  main.innerHTML = '';
+  // Stale-while-revalidate: a recompute (a .rec-page already exists) keeps the old rows
+  // visible while the new page is built DETACHED, then cross-fades in at the end.
+  const existingPage = main.querySelector('.rec-page');
   setLoading(false);            // visible #main + skeletons instead of the global spinner
   hideError();
 
@@ -2144,9 +2160,16 @@ async function renderRecommendationsPage() {
   // Reserved hero slot (top) + 2 generic skeletons below. Provisional title rows fill BELOW the
   // hero slot so the calibrated Top Picks lands in the top slot in place — nothing jumps.
   const heroSkeleton = buildRecSkeleton(1).firstChild; // single skeleton section = hero placeholder
-  page.appendChild(heroSkeleton);
-  page.appendChild(buildRecSkeleton(2));               // generic skeletons below
-  main.appendChild(page);
+  if (existingPage) {
+    // Stale-while-revalidate: keep old rows visible; build the new page DETACHED, cross-fade at end.
+    page.classList.add('rec-page--incoming');
+    page.appendChild(heroSkeleton);
+  } else {
+    main.innerHTML = '';
+    page.appendChild(heroSkeleton);
+    page.appendChild(buildRecSkeleton(2));
+    main.appendChild(page);
+  }
 
   const REC_ROW_KICKERS = {
     top: 'Calibrated to your basket', title: 'Because you liked it',
@@ -2194,11 +2217,11 @@ async function renderRecommendationsPage() {
   if (token !== recPageRenderToken) return; // superseded — don't touch #main
 
   if (failed) {
-    main.innerHTML = '<p class="no-results rec-empty">Couldn’t load recommendations right now. Try again shortly.</p>';
-    return;
+    if (!existingPage) main.innerHTML = '<p class="no-results rec-empty">Couldn’t load recommendations right now. Try again shortly.</p>';
+    return; // recompute failure: keep the last good rows, drop the detached page
   }
   if (rows.length === 0) {
-    main.innerHTML = '<p class="no-results rec-empty">No recommendations yet — keep watching to tune your taste.</p>';
+    if (!existingPage) main.innerHTML = '<p class="no-results rec-empty">No recommendations yet — keep watching to tune your taste.</p>';
     return;
   }
 
@@ -2210,6 +2233,16 @@ async function renderRecommendationsPage() {
     onLazy: (section, hydrate) => observeLazyRail(section, hydrate),
   });
   page.replaceChildren(...finalSections);
+
+  if (existingPage && existingPage.isConnected) {
+    main.appendChild(page); // incoming (opacity 0 via .rec-page--incoming)
+    requestAnimationFrame(() => {
+      page.classList.remove('rec-page--incoming');
+      existingPage.classList.add('rec-page--fading');
+      existingPage.addEventListener('transitionend', () => existingPage.remove(), { once: true });
+      setTimeout(() => existingPage.remove(), 400); // safety net (reduced-motion / no transition)
+    });
+  }
 }
 
 const STAR_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.3 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';

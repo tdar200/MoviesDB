@@ -36,6 +36,7 @@ const skeletonSrc = slice('buildRecSkeleton');
 const lazyRailSrc = slice('buildLazyRecRail');
 const observeLazySrc = slice('observeLazyRail');
 const reconcileSrc = slice('reconcileRecRails');
+const scheduleRecomputeSrc = slice('scheduleRecRecompute');
 
 // The two builders contain backtick template literals with ${...}; they must be injected
 // into the page WITHOUT being interpolated by this module's own template literals. So the
@@ -46,6 +47,13 @@ const scriptHead = `
   function createDownvoteButton() { const b = document.createElement('button'); b.className='dv-btn'; return b; }
   let played = null;
   function openPlayer(movie) { played = movie.id; window.__played = movie.id; }
+  // Stub the deps scheduleRecRecompute() closes over (it lives at module scope in script.js and
+  // calls the heavy renderRecommendationsPage). The stub just counts runs so we can assert the
+  // 1000ms debounce coalesces N rapid toggles into ONE recompute.
+  window.__recomputeCount = 0;
+  function renderRecommendationsPage() { window.__recomputeCount++; }
+  const REC_RECOMPUTE_DEBOUNCE_MS = 1000;
+  let __recRecomputeTimer = null;
 `;
 
 const scriptTail = `
@@ -90,6 +98,7 @@ const scriptTail = `
 
 const inlineScript = scriptHead + createCardSrc + '\n' + buildRailSrc + '\n'
   + skeletonSrc + '\n' + lazyRailSrc + '\n' + observeLazySrc + '\n' + reconcileSrc + '\n'
+  + scheduleRecomputeSrc + '\n'
   + scriptTail;
 
 const browser = await puppeteer.launch({
@@ -198,6 +207,15 @@ try {
   assert.ok(recon.reusedA, 'provisional title rail reused by key (same node)');
   assert.equal(recon.count, 5, 'exactly one rail per final row, no duplicates');
   assert.deepEqual(recon.lazyKinds, ['genre', 'trending'], 'rows beyond eagerRows=3 are lazy');
+
+  // (g2) debounce: 5 rapid scheduleRecRecompute() calls coalesce into exactly 1 recompute.
+  const recomputeRuns = await page.evaluate(async () => {
+    window.__recomputeCount = 0;
+    for (let i = 0; i < 5; i++) scheduleRecRecompute();
+    await new Promise((r) => setTimeout(r, 1300));
+    return window.__recomputeCount;
+  });
+  assert.equal(recomputeRuns, 1, '5 rapid toggles debounce to exactly 1 recompute');
 
   console.log('rec-dom-harness: PASS');
 } finally {
