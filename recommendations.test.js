@@ -1063,7 +1063,7 @@ test('itemSim: no genres and no provenance on either side => 0 (no NaN)', () => 
   assert.equal(itemSim(a, b), 0);
 });
 
-import { mmrRerank } from './recommendations.js';
+import { mmrRerank, minMax } from './recommendations.js';
 
 // Intra-list diversity = mean pairwise (1 - itemSim) over the output list.
 function ild(list, simFn) {
@@ -1156,6 +1156,38 @@ test('mmrRerank: lower lambda raises intra-list diversity', () => {
   const lo = mmrRerank(build(), { lambda: 0.3, limit: 3, simFn: itemSim });
   assert.ok(ild(lo, itemSim) > ild(hi, itemSim),
     `lower lambda should raise ILD: lo=${ild(lo, itemSim)} hi=${ild(hi, itemSim)}`);
+});
+
+test('minMax: single-pass result matches the spread Math.min/Math.max', () => {
+  const arr = [3, -1, 7, 7, 0, 2.5, -8];
+  assert.deepEqual(minMax(arr), { min: Math.min(...arr), max: Math.max(...arr) });
+});
+test('minMax: empty array yields {min:0,max:0} (no -Infinity/Infinity)', () => {
+  assert.deepEqual(minMax([]), { min: 0, max: 0 });
+});
+test('mmrRerank: pre-truncates to 6*limit by score, keeping the highest-scored', () => {
+  const scored = [];
+  for (let i = 0; i < 40; i += 1) {
+    scored.push(sc(1000 + i, 1 - i * 0.01, {
+      genres: [i + 1],
+      seeds: [{ source: 'rec', type: 'title', id: i, seedId: i, rank: 0, weight: 1 }],
+    }));
+  }
+  const out = mmrRerank(scored, { lambda: 1, limit: 2, simFn: itemSim });
+  assert.deepEqual(out.map((r) => r.movie.id), [1000, 1001]);
+});
+test('mmrRerank: behavior unchanged on a small pool (below the 6*limit bound)', () => {
+  const scored = [ sc(1, 0.9, { genres: [1] }), sc(2, 0.7, { genres: [2] }), sc(3, 0.5, { genres: [3] }) ];
+  const out = mmrRerank(scored, { lambda: 1, limit: 10, simFn: itemSim });
+  assert.deepEqual(out.map((r) => r.movie.id), [1, 2, 3]);
+});
+test('itemSim: cached _genreSet/_seedSet give the same result as recomputed Sets', () => {
+  const a = { id: 1, genre_ids: [878, 28], _seeds: [{ source: 'rec', type: 'title', id: 5, seedId: 5 }] };
+  const b = { id: 2, genre_ids: [878, 18], _seeds: [{ source: 'rec', type: 'title', id: 5, seedId: 5 }] };
+  const plain = itemSim(a, b);
+  const a2 = { ...a, _genreSet: new Set([878, 28]), _seedSet: new Set([5]) };
+  const b2 = { ...b, _genreSet: new Set([878, 18]), _seedSet: new Set([5]) };
+  assert.ok(Math.abs(itemSim(a2, b2) - plain) < 1e-12, 'cached Sets match recomputed');
 });
 
 test('splitGenreKeywordIds routes type:keyword config ids to keywords, real genres to genres', () => {

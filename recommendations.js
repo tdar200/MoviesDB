@@ -215,8 +215,7 @@ export function scorePool(candidates, { profile, now = Date.now(), weights = { c
   const idfDegenerate = Object.values(profVec).every((w) => w === 0);
 
   const collabRaw = candidates.map(collabScore);
-  const cMin = collabRaw.length ? Math.min(...collabRaw) : 0;
-  const cMax = collabRaw.length ? Math.max(...collabRaw) : 0;
+  const { min: cMin, max: cMax } = minMax(collabRaw);
   const cRange = cMax - cMin;
 
   const scored = candidates.map((c, i) => {
@@ -338,6 +337,21 @@ export function combineProfiles(pos, neg, opts = {}) {
 }
 
 
+// Single-pass min/max over a numeric array. Avoids Math.min(...arr)/Math.max(...arr),
+// which both spread the whole array onto the call stack (a RangeError cliff at N in the
+// tens of thousands) and walk it twice. Empty array => {min:0,max:0}.
+export function minMax(arr) {
+  if (!arr || arr.length === 0) return { min: 0, max: 0 };
+  let min = arr[0];
+  let max = arr[0];
+  for (let i = 1; i < arr.length; i += 1) {
+    const v = arr[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return { min, max };
+}
+
 // Jaccard of two id collections; empty∪empty => 0 (never NaN).
 function jaccard(setA, setB) {
   if (setA.size === 0 && setB.size === 0) return 0;
@@ -365,10 +379,12 @@ function seedTitleIds(candidate) {
 // Identical id => 1 (the same title can't add diversity).
 export function itemSim(a, b) {
   if (a.id === b.id) return 1;
-  const ga = new Set((a.genre_ids || []).map(Number));
-  const gb = new Set((b.genre_ids || []).map(Number));
+  const ga = a._genreSet || new Set((a.genre_ids || []).map(Number));
+  const gb = b._genreSet || new Set((b.genre_ids || []).map(Number));
   const genreJ = jaccard(ga, gb);
-  const provJ = jaccard(seedTitleIds(a), seedTitleIds(b));
+  const sa = a._seedSet || seedTitleIds(a);
+  const sb = b._seedSet || seedTitleIds(b);
+  const provJ = jaccard(sa, sb);
   return 0.6 * genreJ + 0.4 * provJ;
 }
 
@@ -388,19 +404,27 @@ export function mmrRerank(scored, { lambda, perSeedCap = PER_SEED_CAP, limit, si
     throw new RangeError(`mmrRerank: lambda must be a finite number in [0,1], got ${lambda}`);
   }
   const sorted = [...scored].sort((a, b) => b.score - a.score);
+  // Bound the O(N^2) re-rank: keep only the top (6*limit) by score before collapsing.
+  // `sorted` is already score-desc, so a prefix slice is the top band. No-op when unbounded.
+  const bound = Number.isFinite(limit) ? Math.min(sorted.length, 6 * limit) : sorted.length;
+  const work = sorted.slice(0, bound);
+  // Memoize each movie's genre Set + rec/similar seedId Set once so itemSim reads caches
+  // instead of rebuilding Sets on every pairwise comparison.
+  for (const s of work) {
+    if (!s.movie._genreSet) s.movie._genreSet = new Set((s.movie.genre_ids || []).map(Number));
+    if (!s.movie._seedSet) s.movie._seedSet = seedTitleIds(s.movie);
+  }
 
   // (1) Near-duplicate collapse against already-kept (higher-scored) survivors.
   const survivors = [];
-  for (const cand of sorted) {
+  for (const cand of work) {
     const dup = survivors.some((k) => simFn(cand.movie, k.movie) > NEAR_DUP_SIM);
     if (!dup) survivors.push(cand);
   }
   if (survivors.length === 0) return [];
 
   // Normalize relevance to [0,1] across survivors (min-max; flat pool => all 1).
-  const scores = survivors.map((s) => s.score);
-  const lo = Math.min(...scores);
-  const hi = Math.max(...scores);
+  const { min: lo, max: hi } = minMax(survivors.map((s) => s.score));
   const span = hi - lo;
   const rel = (s) => (span === 0 ? 1 : (s.score - lo) / span);
 
@@ -1293,7 +1317,14 @@ async function _pipeline(input, opts = {}) {
   const recs = mmrRerank(scored, { lambda, limit });
 
   try {
-    sessionStorage.setItem(cacheKey, JSON.stringify({ sig, profile, recs }));
+    // Strip the transient itemSim memo Sets (_genreSet/_seedSet) before persisting: JSON would
+    // turn them into {} and a rehydrated {} would silently break jaccard if a cached rec ever
+    // re-entered itemSim. _seeds/_keywords/_people are kept (groupIntoRows reads them).
+    const recsToCache = recs.map((r) => {
+      const { _genreSet, _seedSet, ...movie } = r.movie;
+      return { ...r, movie };
+    });
+    sessionStorage.setItem(cacheKey, JSON.stringify({ sig, profile, recs: recsToCache }));
   } catch { /* ignore quota errors */ }
   return { profile, recs };
 }
