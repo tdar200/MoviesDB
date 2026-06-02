@@ -199,6 +199,24 @@ try {
   assert.equal(lazyInfo.after, 1, 'hydrate() builds the deferred cards');
   assert.notEqual(lazyInfo.minH, '0px', 'lazy scroller reserves min-height');
 
+  // (f2) observeLazyRail returns a live IntersectionObserver (so renderRecommendationsPage can collect
+  // and disconnect it on teardown — guards the lazy-observer leak fix). A rail that never intersects
+  // must still yield a disconnectable observer.
+  const obsReturned = await page.evaluate(() => {
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const { section } = buildLazyRecRail([], { kicker: 'k', heading: 'h' });
+    host.appendChild(section);
+    let disconnected = 0;
+    const io = observeLazyRail(section, () => {});
+    if (!io || typeof io.disconnect !== 'function') return { ok: false };
+    const orig = io.disconnect.bind(io);
+    io.disconnect = () => { disconnected++; orig(); };
+    io.disconnect();
+    return { ok: true, disconnected };
+  });
+  assert.ok(obsReturned.ok, 'observeLazyRail must return a disconnectable IntersectionObserver');
+  assert.equal(obsReturned.disconnected, 1, 'the returned observer can be disconnected on teardown');
+
   // (g) reconcileRecRails: reuses provisional title rails by key, orders by final rows,
   //     no duplicates, hero ends first, rows beyond eagerRows are lazy.
   const recon = await page.evaluate(() => {

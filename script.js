@@ -2056,13 +2056,14 @@ function buildLazyRecRail(recs, { kicker, heading, subline }) {
 // Hydrate a lazy rail when it nears the viewport (rootMargin pre-empts the scroll). Falls
 // back to immediate hydration where IntersectionObserver is unavailable.
 function observeLazyRail(section, hydrate) {
-  if (typeof IntersectionObserver !== 'function') { hydrate(); return; }
+  if (typeof IntersectionObserver !== 'function') { hydrate(); return null; }
   const io = new IntersectionObserver((entries, obs) => {
     for (const e of entries) {
       if (e.isIntersecting) { hydrate(); obs.disconnect(); }
     }
   }, { rootMargin: '600px' });
   io.observe(section);
+  return io;
 }
 
 // Build the final ordered rail list from the authoritative rows, reusing already-painted
@@ -2142,7 +2143,20 @@ function scheduleRecRecompute() {
   }, REC_RECOMPUTE_DEBOUNCE_MS);
 }
 
+// Leaving the Recommended tab: cancel any pending debounced recompute and SUPERSEDE any in-flight
+// async render (bump the token so renderRecommendationsPage bails at its token guards instead of
+// finishing a now-pointless reconcile), and disconnect EVERY mounted rec-page's lazy observers —
+// during the SWR cross-fade two .rec-pages co-exist briefly, so disconnect all, not just the first.
+function leaveRecommended() {
+  if (__recRecomputeTimer) { clearTimeout(__recRecomputeTimer); __recRecomputeTimer = null; }
+  recPageRenderToken++;
+  document.querySelectorAll('.rec-page').forEach((p) => p.__recObservers?.forEach((io) => io.disconnect()));
+}
+
 async function renderRecommendationsPage() {
+  // Guard: a debounced recompute (or any deferred caller) must not paint over another tab's view.
+  // switchToRecommended() sets the active class before calling us, so a legitimate render passes.
+  if (!tabRecommended.classList.contains('active')) return;
   const token = ++recPageRenderToken;
   document.getElementById('recommendations-row')?.remove();
   filteredMovies = [];
@@ -2231,20 +2245,26 @@ async function renderRecommendationsPage() {
 
   // Authoritative reconcile in ONE atomic pass: reuse provisional title rails by key, fill the
   // hero slot in place, lazy below the fold, drop skeletons + any stale provisional rails.
+  const recObservers = [];
   const finalSections = reconcileRecRails(rows, provisional, {
     buildRail,
     eagerRows: 3,
-    onLazy: (section, hydrate) => observeLazyRail(section, hydrate),
+    onLazy: (section, hydrate) => { const io = observeLazyRail(section, hydrate); if (io) recObservers.push(io); },
   });
+  page.__recObservers = recObservers;
   page.replaceChildren(...finalSections);
 
   if (existingPage && existingPage.isConnected) {
     main.appendChild(page); // incoming (opacity 0 via .rec-page--incoming)
+    const removeOld = () => {
+      existingPage.__recObservers?.forEach((io) => io.disconnect());
+      existingPage.remove();
+    };
     requestAnimationFrame(() => {
       page.classList.remove('rec-page--incoming');
       existingPage.classList.add('rec-page--fading');
-      existingPage.addEventListener('transitionend', () => existingPage.remove(), { once: true });
-      setTimeout(() => existingPage.remove(), 400); // safety net (reduced-motion / no transition)
+      existingPage.addEventListener('transitionend', removeOld, { once: true });
+      setTimeout(removeOld, 400); // safety net (reduced-motion / no transition)
     });
   }
 }
@@ -2877,6 +2897,7 @@ document.addEventListener('click', (e) => {
 
 // Top 250 button click
 top250Btn.addEventListener('click', () => {
+  leaveRecommended();
   if (isTop250Mode) {
     // If already in Top 250 mode, go back to trending
     loadTrending();
@@ -3066,6 +3087,7 @@ function switchToRecommended() {
 }
 
 function switchToMovies() {
+  leaveRecommended();
   currentApp = 'movies';
   isWatchedMode = false;
   isFavoritesMode = false;
@@ -3084,6 +3106,7 @@ function switchToMovies() {
 }
 
 function switchToYouTube() {
+  leaveRecommended();
   document.getElementById('recommendations-row')?.remove();
   currentApp = 'youtube';
   isWatchedMode = false;
@@ -3103,6 +3126,7 @@ function switchToYouTube() {
 }
 
 function switchToWatched() {
+  leaveRecommended();
   document.getElementById('recommendations-row')?.remove();
   currentApp = 'movies';
   isWatchedMode = true;
@@ -3159,6 +3183,7 @@ async function loadWatchedHistory() {
 }
 
 function switchToFavorites() {
+  leaveRecommended();
   currentApp = 'movies';
   isWatchedMode = false;
   isFavoritesMode = true;
