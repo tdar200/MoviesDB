@@ -949,25 +949,6 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     .slice(0, itemsPerRow);
   trendingPicked.forEach((r) => placed.add(recId(r)));
 
-  // 1. Top picks — global best-N, genre-calibrated to the basket, and CLAIMS its items.
-  // Trending-reserved items are excluded (already in placed) so they cannot be double-claimed.
-  if (ranked.length && topCount > 0) {
-    const pool = ranked.filter((r) => !placed.has(recId(r)));
-    let recs;
-    if (genreDist && Object.keys(genreDist).length) {
-      recs = calibrate(pool, genreDist, { lambda: 0.5, limit: topCount });
-    } else {
-      recs = pool.slice(0, topCount);
-    }
-    recs.forEach((r) => placed.add(recId(r)));
-    rows.push({ kind: 'top', title: 'Top picks for you', recs });
-  }
-
-  const take = (predicate) => ranked
-    .filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r)) && predicate(r))
-    .slice(0, itemsPerRow);
-  const claim = (recs) => recs.forEach((r) => placed.add(recId(r)));
-
   // Determine the basket genre order once: histogram mass when present, else profile weight.
   const genreOrder = genreDist && Object.keys(genreDist).length
     ? Object.entries(genreDist).sort((a, b) => b[1] - a[1]).map(([id]) => num(id))
@@ -979,6 +960,9 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   // RESERVE them in exploreIds (skipped by every personalized row), but do NOT claim them: the
   // top-genre row gets first refusal so a thin catalog never lets "Hidden gems" starve the user's
   // #1 genre row (follow-up c). Deterministic selection: rarest first, then highest rating, then id.
+  // Reserved here, BEFORE the title rows, so a gem that also matches a seed title's collaborative
+  // provenance stays reserved for explore rather than being absorbed by its "Because you watched"
+  // row (the title reservation below skips exploreIds).
   const topGenre = genreOrder[0];
   let exploreGems = [];
   if (topGenre != null) {
@@ -997,17 +981,55 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     else exploreGems = [];   // fewer than a row's worth: don't reserve, let the genre rows use them
   }
 
-  // 2. Because you watched X — strongest contributing titles by profile weight (kind 'title').
+  // "Because you watched X" title rows — RESERVED up-front (before Top Picks claims), like trending
+  // and explore gems. Each row is the strongest COLLABORATIVE recs of a top seed title (its TMDB
+  // recommendations/similar, tagged type:'title' with the seed's id), drawn purely from the collab
+  // pool — NOT Discover keyword/person provenance. Reserving here is what makes them STABLE across
+  // the provisional (topCount:0) and final (topCount:20) passes: Top Picks can't absorb a seed's
+  // collab recs out from under its row, so the same rows form in both passes and the renderer
+  // reconciles them in place by key. They are PUSHED at their display position below (step 2),
+  // after Top Picks. Reserved gems (exploreIds) are skipped so they stay in the explore row. A title
+  // row draws from a SINGLE seed, which mmrRerank's per-seed diversity cap (PER_SEED_CAP) bounds to
+  // at most PER_SEED_CAP items in the ranked pool, so requiring the full minItems would make these
+  // rows un-producible whenever the cap is the tighter bound — use the looser of the two as the
+  // per-seed floor. titleRows caps how many seed-title rows we show.
+  const titleMinItems = Math.min(minItems, PER_SEED_CAP);
+  const titleRowsReserved = [];
   for (const t of (profile.topTitles || []).slice(0, titleRows)) {
-    const kw = new Set((t.keywordIds || []).map(num));
-    const pp = new Set((t.peopleIds || []).map(num));
-    const recs = take((r) => (r.movie._seeds || []).some((s) =>
-      (s.type === 'keyword' && kw.has(num(s.id))) || (s.type === 'person' && pp.has(num(s.id)))));
-    if (recs.length >= minItems) {
-      claim(recs);
-      rows.push({ kind: 'title', title: `Because you watched ${t.title}`, recs });
+    const recs = ranked
+      .filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r))
+        && (r.movie._seeds || []).some((s) => s.type === 'title' && num(s.id) === num(t.id)))
+      .slice(0, itemsPerRow);
+    if (recs.length >= titleMinItems) {
+      recs.forEach((r) => placed.add(recId(r)));
+      titleRowsReserved.push({ kind: 'title', title: `Because you watched ${t.title}`, recs });
     }
   }
+
+  // 1. Top picks — global best-N, genre-calibrated to the basket, and CLAIMS its items.
+  // Trending- and title-reserved items are excluded (already in placed) so they cannot be
+  // double-claimed; reserved gems (exploreIds) are likewise held out for the explore row.
+  if (ranked.length && topCount > 0) {
+    const pool = ranked.filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r)));
+    let recs;
+    if (genreDist && Object.keys(genreDist).length) {
+      recs = calibrate(pool, genreDist, { lambda: 0.5, limit: topCount });
+    } else {
+      recs = pool.slice(0, topCount);
+    }
+    recs.forEach((r) => placed.add(recId(r)));
+    rows.push({ kind: 'top', title: 'Top picks for you', recs });
+  }
+
+  const take = (predicate) => ranked
+    .filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r)) && predicate(r))
+    .slice(0, itemsPerRow);
+  const claim = (recs) => recs.forEach((r) => placed.add(recId(r)));
+
+  // 2. Because you watched X — push the rows reserved up-front (their items are already claimed),
+  // at their display position below Top Picks. See the reservation block above for the rationale
+  // (stability across the provisional/final passes via early reservation).
+  for (const row of titleRowsReserved) rows.push(row);
 
   // 3. More <Genre> — budget allocated by the basket genre histogram when present. Every genre row
   // excludes the reserved gems (they belong in the explore row); the TOP genre, if excluding them
@@ -1399,7 +1421,9 @@ async function _pipeline(input, opts = {}) {
   if (typeof onRow === 'function') {
     const collabPool = collabCandidates.filter((c) => !excludeIds.has(candidateKey(c)));
     const provisionalRecs = mmrRerank(scorePool(collabPool, { profile, now, dislikeVector }), { lambda, limit });
-    const provisionalRows = groupIntoRows(provisionalRecs, profile, { genreDist });
+    // topCount:0 so the best collab recs flow into the emitted "Because you watched X" title rows,
+    // not into a provisional Top Picks row (which isn't streamed and needs the full pool anyway).
+    const provisionalRows = groupIntoRows(provisionalRecs, profile, { genreDist, topCount: 0 });
     for (const row of provisionalRows) {
       if (row.kind === 'title') onRow({ ...row, provisional: true });
     }

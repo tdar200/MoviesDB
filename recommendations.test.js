@@ -283,34 +283,40 @@ test('groupIntoRows: top picks row is first and capped', () => {
   assert.equal(rows[0].recs.length, 20);
 });
 
-test('groupIntoRows: "Because you watched" groups by shared keyword/person seed', () => {
+test('groupIntoRows: "Because you watched" groups by seed-title (collaborative) provenance', () => {
+  // Title rows now draw from each top seed's OWN collaborative recs: candidates tagged
+  // type:'title' with the seed's id (GROUP_PROFILE.topTitles[0].id === 1). A candidate seeded by
+  // a DIFFERENT title id (id 2) and one with a non-title (genre) seed must NOT land in the row.
+  const titleSeed = { type: 'title', id: 1, seedId: 1, seedTitle: 'Inception', weight: 1 };
   const ranked = [
-    gr(10, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
-    gr(11, { seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 4 }] }),
-    gr(12, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
-    gr(13, { seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 4 }] }),
-    gr(14, { seeds: [{ type: 'genre', id: 99, name: 'Doc', weight: 1 }] }), // unrelated
+    gr(10, { seeds: [{ ...titleSeed, source: 'rec' }] }),
+    gr(11, { seeds: [{ ...titleSeed, source: 'similar' }] }),
+    gr(12, { seeds: [{ ...titleSeed, source: 'rec' }] }),
+    gr(13, { seeds: [{ ...titleSeed, source: 'rec' }] }),
+    gr(14, { seeds: [{ type: 'title', id: 2, seedId: 2, seedTitle: 'Other', weight: 1, source: 'rec' }] }), // other seed title
+    gr(15, { seeds: [{ type: 'genre', id: 99, name: 'Doc', weight: 1 }] }), // unrelated
   ];
   const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 0, minItems: 4 });
   const titleRow = rows.find((r) => r.kind === 'title');
   assert.equal(titleRow.title, 'Because you watched Inception');
-  assert.equal(titleRow.recs.length, 4); // ids 10,11,12,13 — not the unrelated 14
+  assert.deepEqual(titleRow.recs.map((r) => r.movie.id), [10, 11, 12, 13]); // not 14 (other seed) or 15
 });
 
 test('groupIntoRows: drops rows with fewer than minItems', () => {
   const ranked = [
-    gr(10, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
-    gr(11, { seeds: [{ type: 'keyword', id: 9, name: 'time travel', weight: 2 }] }),
-  ]; // only 2 match the title — below minItems 4
+    gr(10, { seeds: [{ source: 'rec', type: 'title', id: 1, seedId: 1, seedTitle: 'Inception', weight: 1 }] }),
+    gr(11, { seeds: [{ source: 'rec', type: 'title', id: 1, seedId: 1, seedTitle: 'Inception', weight: 1 }] }),
+  ]; // only 2 collab recs of seed title 1 — below the title-row floor min(minItems 4, PER_SEED_CAP 3) = 3
   const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 0, minItems: 4 });
   assert.equal(rows.find((r) => r.kind === 'title'), undefined);
 });
 
 test('groupIntoRows: genre row labelled from config and deduped against earlier rows', () => {
-  // 4 sci-fi recs share the Nolan person seed (claimed by the title row first),
-  // plus 4 fresh sci-fi recs with no person seed for the genre row.
+  // 4 sci-fi recs are collaborative recs of seed title 1 (GROUP_PROFILE.topTitles[0].id), claimed
+  // by the "Because you watched" title row first, plus 4 fresh sci-fi recs with no seed-title
+  // provenance for the genre row.
   const ranked = [
-    ...[20, 21, 22, 23].map((id) => gr(id, { genres: [878], seeds: [{ type: 'person', id: 5, name: 'Nolan', weight: 4 }] })),
+    ...[20, 21, 22, 23].map((id) => gr(id, { genres: [878], seeds: [{ source: 'rec', type: 'title', id: 1, seedId: 1, seedTitle: 'Inception', weight: 1 }] })),
     ...[30, 31, 32, 33].map((id) => gr(id, { genres: [878] })),
   ];
   const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 0, minItems: 4 });
@@ -457,20 +463,22 @@ test('groupIntoRows: a healthy pool still yields BOTH the genre row and the expl
 });
 
 test('groupIntoRows: a gem matching a title-row seed is reserved for explore, never double-placed', () => {
-  // A "Because you watched" title row keyed on keyword 99; one gem (id 51) ALSO carries seed kw 99.
-  // The gem must stay reserved for the explore row, not be absorbed by the title row (the regression
-  // a claim-deferral approach would introduce). No movie may appear in two rows.
+  // A "Because you watched X" title row drawn from seed title 7's collaborative provenance; one gem
+  // (id 51) ALSO carries a type:'title' id:7 seed, so it WOULD be a title-row candidate. It must stay
+  // reserved for the explore row (gems are reserved before the title rows), not be absorbed by the
+  // title row. No movie may appear in two rows.
+  const titleSeed = { source: 'rec', type: 'title', id: 7, seedId: 7, seedTitle: 'X', weight: 1 };
   const ranked = [
     // four NON-gem sci-fi that DON'T match the title seed (so the title row would otherwise be empty)
     ...[40, 41, 42, 43].map((id) => grq(id, { genres: [878], score: 0.9, va: 7.0, vc: 9000 })),
     grq(50, { genres: [878], score: 0.2, va: 8.6, vc: 40 }),
-    grq(51, { genres: [878], score: 0.2, va: 8.9, vc: 25, seeds: [{ type: 'keyword', id: 99 }] }),
+    grq(51, { genres: [878], score: 0.2, va: 8.9, vc: 25, seeds: [{ ...titleSeed }] }),
     grq(52, { genres: [878], score: 0.2, va: 8.7, vc: 30 }),
     grq(53, { genres: [878], score: 0.2, va: 8.3, vc: 60 }),
-    // extra title-seed matches so the title row itself can reach minItems WITHOUT the gem
-    ...[60, 61, 62, 63].map((id) => grq(id, { genres: [12], score: 0.5, va: 6.0, vc: 3000, seeds: [{ type: 'keyword', id: 99 }] })),
+    // extra title-seed matches so the title row itself can reach its floor WITHOUT the gem
+    ...[60, 61, 62, 63].map((id) => grq(id, { genres: [12], score: 0.5, va: 6.0, vc: 3000, seeds: [{ ...titleSeed }] })),
   ];
-  const profile = { ...GROUP_PROFILE, topTitles: [{ title: 'X', keywordIds: [99], peopleIds: [] }], people: {} };
+  const profile = { ...GROUP_PROFILE, topTitles: [{ id: 7, title: 'X' }], people: {} };
   const opts = { topCount: 0, minItems: 4, genreDist: { '878': 1 } };
   const rows = groupIntoRows(ranked, profile, opts);
   const counts = {};
@@ -1813,15 +1821,17 @@ test('getRecommendationRows: hermetic pipeline streams final rows (non-vacuous) 
     assert.deepEqual(finalStreamed.map(key).sort(), rows.map(key).sort(),
       'final streamed rows == returned rows (no dupes, no drops)');
 
-    // 2/3/4. Provisional streaming reconciliation. NOTE (finding): on this branch the collab pool
-    // produced by extractSeedCandidates carries ONLY type:'title' SeedTags, while the only rows
-    // groupIntoRows STREAMS provisionally are kind:'title' rows ("Because you watched X" / "More
-    // from <Person>"), whose predicates match type:'keyword'/type:'person' seeds. A collab-only
-    // pool therefore yields ZERO provisional title rows in the real pipeline (verified empirically
-    // — the provisional emission path is currently dead with this provenance). We assert the
-    // reconciliation contract CONDITIONALLY so it is exact whenever provisional rows do appear, and
-    // verify the no-emission reality otherwise (rather than asserting an impossible non-empty set).
+    // 2/3/4. Provisional streaming reconciliation — the REAL contract, asserted UNCONDITIONALLY.
+    // The collab pool produced by extractSeedCandidates carries type:'title' SeedTags whose id is
+    // the producing basket seed's id. groupIntoRows builds its "Because you watched X" title rows
+    // from exactly that provenance, so a collab-only provisional pass MUST emit at least one
+    // kind:'title' provisional row. Each such row must reconcile to a final (provisional:false)
+    // row by key and be emitted BEFORE it (so the renderer can render it early and reconcile in
+    // place). These assertions fail against the pre-fix code (zero provisional title rows).
     const finalKeys = new Set(finalStreamed.map(key));
+    const provisionalTitle = provisional.filter((r) => r.kind === 'title');
+    assert.ok(provisionalTitle.length > 0,
+      'at least one streamed row is provisional && kind:title (Because you watched X)');
     for (const pr of provisional) {
       assert.equal(pr.kind, 'title', 'only kind:title rows are streamed provisionally');
       assert.ok(finalKeys.has(key(pr)), 'each provisional title row reconciles to a final row by key');
@@ -1830,7 +1840,7 @@ test('getRecommendationRows: hermetic pipeline streams final rows (non-vacuous) 
       const finIdx = streamed.findIndex((r) => r.provisional === false && key(r) === key(pr));
       assert.ok(provIdx < finIdx, 'provisional title row emitted before its matching final row');
     }
-    // 3 (superset): every provisional key is a final key (trivially holds when provisional is empty).
+    // 3 (superset): every provisional key is a final key.
     assert.ok([...new Set(provisional.map(key))].every((k) => finalKeys.has(k)),
       'final row key set is a superset of the provisional ones');
 
