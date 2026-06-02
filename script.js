@@ -1944,6 +1944,8 @@ function createRecommendationCard(rec, index) {
     '<svg class="rec-spark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l1.6 5.2L19 9l-5.4 1.8L12 16l-1.6-5.2L5 9l5.4-1.8z"/></svg>';
   const theme = rec.reasons[0] || 'Picked for your taste';
   because.appendChild(document.createTextNode(theme));
+  const collab = (movie._seeds || []).find((s) => s.source === 'rec' || s.source === 'similar');
+  if (collab) because.setAttribute('data-rec-source', collab.source);
   const espMatch = (rec.reasons[1] || '').match(/^esp\. (.+)$/);
   if (espMatch) {
     because.appendChild(document.createTextNode(' · esp. '));
@@ -2059,11 +2061,7 @@ async function renderRecommendationsPage() {
   hideError();
 
   const items = buildSignalItems();
-  if (items.basket.length === 0) {
-    setLoading(false);
-    main.innerHTML = '<p class="no-results rec-empty">Add titles to your basket with ★ to build your recommendations.</p>';
-    return;
-  }
+  const coldStart = items.basket.length === 0;
 
   let rows = [];
   let failed = false;
@@ -2088,7 +2086,26 @@ async function renderRecommendationsPage() {
 
   const page = document.createElement('div');
   page.className = 'rec-page';
-  rows.forEach((row) => page.appendChild(buildRecRail(row.recs, { heading: row.title })));
+  if (coldStart) page.classList.add('rec-cold-start');
+  // Kickers only for the row kinds groupIntoRows builds; the filler phase supplies
+  // the 'trending' kicker when it appends that row.
+  const REC_ROW_KICKERS = {
+    top: 'Calibrated to your basket',
+    title: 'Because you liked it',
+    genre: 'More of this genre',
+    trending: 'Popular this week',
+    explore: 'A little different',
+  };
+  rows.forEach((row, i) => {
+    // Cold start: the engine returns a filler-led path; relabel the lead rail.
+    const heading = coldStart && i === 0 ? 'Trending to get started' : row.title;
+    const kicker = coldStart && i === 0 ? 'Popular right now' : (REC_ROW_KICKERS[row.kind] || null);
+    const railSection = buildRecRail(row.recs, { kicker, heading });
+    railSection.classList.add(`rec-row-${row.kind}`);
+    railSection.setAttribute('data-rec-kind', row.kind);
+    if (row.kind === 'explore') railSection.classList.add('rec-explore');
+    page.appendChild(railSection);
+  });
   main.appendChild(page);
 }
 
