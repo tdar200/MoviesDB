@@ -21,24 +21,43 @@ export function createFetchQueue({
   const waiters = [];           // queued runners awaiting a concurrency slot
   let active = 0;
 
-  function readMemo() {
-    if (!storage) return {};
+  // In-memory mirror of the URL->json memo, seeded ONCE from storage at creation.
+  // Reads serve from this object; writes go through to it and schedule a single
+  // debounced flush of storage.setItem (instead of parse+stringify of the whole blob
+  // per fetch). dirty/flushScheduled bound the flush to one microtask per write burst.
+  let memo = {};
+  if (storage) {
     try {
-      return JSON.parse(storage.getItem(MEMO_KEY) || '{}');
+      memo = JSON.parse(storage.getItem(MEMO_KEY) || '{}');
     } catch {
-      return {};
+      memo = {};
     }
   }
+  let dirty = false;
+  let flushScheduled = false;
 
-  function writeMemo(url, json) {
-    if (!storage) return;
-    const memo = readMemo();
-    memo[url] = json;
+  function flushMemo() {
+    flushScheduled = false;
+    if (!storage || !dirty) return;
+    dirty = false;
     try {
       storage.setItem(MEMO_KEY, JSON.stringify(memo));
     } catch {
-      // storage full / unavailable -> memo is best-effort only
+      // storage full / unavailable -> mirror remains the source of truth this session.
     }
+  }
+
+  function scheduleFlush() {
+    if (flushScheduled) return;
+    flushScheduled = true;
+    Promise.resolve().then(flushMemo);
+  }
+
+  function writeMemo(url, json) {
+    memo[url] = json;           // synchronous in-memory write (dedup works immediately)
+    if (!storage) return;
+    dirty = true;
+    scheduleFlush();
   }
 
   function pump() {
@@ -85,7 +104,6 @@ export function createFetchQueue({
   }
 
   function fetchJson(url) {
-    const memo = readMemo();
     if (Object.prototype.hasOwnProperty.call(memo, url)) {
       return Promise.resolve(memo[url]);
     }
@@ -105,6 +123,8 @@ export function createFetchQueue({
   }
 
   function clearMemo() {
+    memo = {};
+    dirty = false;
     if (storage) storage.removeItem(MEMO_KEY);
   }
 

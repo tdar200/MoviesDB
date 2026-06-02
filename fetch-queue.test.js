@@ -180,3 +180,43 @@ test('429 with a non-numeric Retry-After falls back to exponential backoff (no N
   assert.deepEqual(delays, [1000], 'non-numeric Retry-After uses exponential base, never NaN');
   assert.deepEqual(out, { url: 'https://api/bad-retry-after' });
 });
+
+// Wrap fakeStorage to count getItem(MEMO_KEY) reads.
+function countingStorage() {
+  const s = fakeStorage();
+  let getItemCount = 0;
+  return {
+    getItem: (k) => { getItemCount++; return s.getItem(k); },
+    setItem: (k, v) => s.setItem(k, v),
+    removeItem: (k) => s.removeItem(k),
+    _map: s._map,
+    _getItemCount: () => getItemCount,
+  };
+}
+
+test('memo mirror: storage.getItem is read once at creation, not per fetch', async () => {
+  const storage = countingStorage();
+  const fetchImpl = async (url) => jsonResponse({ url });
+  const q = createFetchQueue({ fetchImpl, storage, delayImpl: async () => {}, now: () => NOW });
+  assert.equal(storage._getItemCount(), 1, 'mirror seeded by exactly one getItem at creation');
+  await q.fetchJson('https://api/m/1');
+  await q.fetchJson('https://api/m/2');
+  await q.fetchJson('https://api/m/1'); // memo hit
+  await flush();
+  assert.equal(storage._getItemCount(), 1, 'no further getItem reads per fetch (served from mirror)');
+});
+
+test('memo mirror: writes flush through to storage and de-dupe/persist across a new queue', async () => {
+  const storage = fakeStorage();
+  let calls = 0;
+  const fetchImpl = async (url) => { calls++; return jsonResponse({ url }); };
+  const q1 = createFetchQueue({ fetchImpl, storage, delayImpl: async () => {}, now: () => NOW });
+  await q1.fetchJson('https://api/persist');
+  await flush();
+  assert.equal(calls, 1);
+  assert.ok(storage.getItem('recFetchMemo'), 'memo flushed to storage');
+  const q2 = createFetchQueue({ fetchImpl, storage, delayImpl: async () => {}, now: () => NOW });
+  const out = await q2.fetchJson('https://api/persist');
+  assert.deepEqual(out, { url: 'https://api/persist' });
+  assert.equal(calls, 1, 'new queue serves the persisted entry from its mirror, no refetch');
+});
