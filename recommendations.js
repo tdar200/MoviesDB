@@ -1161,27 +1161,33 @@ function enrichmentFromAppend(json) {
   return { keywords, people };
 }
 
-// Cold-start filler source: trending (mixed media_type) + top_rated for both types.
-// Each candidate gets a provenance SeedTag (type:'title', id = producing title id, 0-based rank).
-async function fillerCandidates() {
+// Standing Trending source: one /trending/all/week call (mixed media_type). Always fetched
+// and merged into the pool so "Trending this week" is a row on every basket. Each candidate
+// gets a provenance SeedTag (source:'trending', id = title id, 0-based rank).
+async function trendingCandidates() {
   const tagged = [];
-  const trendingP = fetchJson(ENDPOINTS.trending(1))
+  await fetchJson(ENDPOINTS.trending(1))
     .then((d) => (d.results || []).forEach((m, rank) => {
-      // /trending/all/week can include person results — keep only movie/tv.
       const mediaType = m.media_type === 'tv' ? 'tv' : m.media_type === 'movie' ? 'movie' : null;
       if (!mediaType) return;
       tagged.push({ ...m, media_type: mediaType,
         _seeds: [{ source: 'trending', type: 'title', id: m.id, rank, weight: 1 }] });
     }))
     .catch(() => {});
-  const topRatedPs = ['movie', 'tv'].map((type) =>
+  return mergeCandidates(tagged);
+}
+
+// Cold-start-only filler: two /top_rated calls (movie + tv). Fetched ONLY for thin baskets
+// (the generateCandidates caller gates on basketSize), so a full basket never pays for it.
+async function topRatedFiller() {
+  const tagged = [];
+  await Promise.all(['movie', 'tv'].map((type) =>
     fetchJson(ENDPOINTS.topRated(type, 1))
       .then((d) => (d.results || []).forEach((m, rank) => {
         tagged.push({ ...m, media_type: type,
           _seeds: [{ source: 'toprated', type: 'title', id: m.id, rank, weight: 1 }] });
       }))
-      .catch(() => {}));
-  await Promise.all([trendingP, ...topRatedPs]);
+      .catch(() => {})));
   return mergeCandidates(tagged);
 }
 
@@ -1228,10 +1234,19 @@ export async function enrichAndExpandBasket(basket, { fetchImpl = fetchJson } = 
 // longer fetches appendDetail per seed.
 async function generateCandidates(collabCandidates, basketSize, profile, negProfile = null) {
   const collab = collabCandidates || [];
-  const discover = await discoverCandidates(profile, negProfile);
+  const [discover, trending] = await Promise.all([
+    discoverCandidates(profile, negProfile),
+    trendingCandidates(),
+  ]);
   const personalPool = mergeCandidates([...collab, ...discover]);
-  const filler = await fillerCandidates();
-  return coldStartBlend(personalPool, filler, basketSize);
+  // Top-rated filler only for cold/thin baskets; a full basket never fetches it.
+  const blended = basketSize < COLD_START_FULL
+    ? coldStartBlend(personalPool, await topRatedFiller(), basketSize)
+    : personalPool;
+  // Trending is a STANDING row on EVERY basket — merged AFTER the cold-start blend so it
+  // survives even an empty basket (coldStartBlend(p=0) returns filler-only and would
+  // otherwise drop a pre-merged trending pool).
+  return mergeCandidates([...blended, ...trending]);
 }
 
 // Pull Discover candidates seeded by the profile's top genres/keywords/people.

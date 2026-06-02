@@ -53,6 +53,10 @@ const scriptTail = `
       { movie: { id: 2, title: 'Arrival', media_type: 'movie', vote_average: 7.9, vote_count: 20000, _seeds: [] },
         score: 0.9, reasons: ['Matches your love of Sci-Fi'] },
     ] },
+    { kind: 'trending', title: 'Trending this week', recs: [
+      { movie: { id: 4, title: 'Dune', media_type: 'movie', vote_average: 8.0, vote_count: 50000, _seeds: [{ source: 'trending', type: 'title', id: 4, rank: 0, weight: 1 }] },
+        score: 0.8, reasons: ['Trending this week'] },
+    ] },
     { kind: 'explore', title: 'Hidden gems in Sci-Fi', recs: [
       { movie: { id: 3, title: 'Coherence', media_type: 'movie', vote_average: 8.6, vote_count: 40, _seeds: [] },
         score: 0.3, reasons: ['A rarer pick'] },
@@ -63,6 +67,7 @@ const scriptTail = `
     top: 'Calibrated to your basket',
     title: 'Because you liked it',
     genre: 'More of this genre',
+    trending: 'Popular right now',
     explore: 'A little different',
   };
   const page = document.createElement('div');
@@ -110,6 +115,10 @@ try {
   // (b) exactly one explore rail.
   const exploreCount = await page.$$eval('.rec-explore', (els) => els.length);
   assert.equal(exploreCount, 1, 'exactly one .rec-explore rail');
+
+  // (b2) the trending row renders exactly once (standing Trending this week row).
+  const trendingCount = await page.$$eval('[data-rec-kind="trending"]', (els) => els.length);
+  assert.equal(trendingCount, 1, 'exactly one trending rail (standing Trending this week row)');
 
   // (c) the collaborative card exposes data-rec-source="rec" (on its .rec-because label,
   // matching the createRecommendationCard edit and the style.css `.rec-because[data-rec-source]`).
