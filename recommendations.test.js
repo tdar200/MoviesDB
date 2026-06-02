@@ -1029,6 +1029,38 @@ test('scorePool: a genre in every candidate (negative idf) keeps content in [0,1
   assert.equal(out[0].movie.id, 1, 'rare-term match wins despite the ubiquitous genre having negative idf');
 });
 
+test('scorePool cold-start: empty-profile pool produces NON-ZERO, quality-ordered scores', () => {
+  const profile = { genres: {}, keywords: {}, people: {}, mediaTypeBias: { movie: 0, tv: 0 }, topTitles: [] };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  const greatPopular = { id: 1, media_type: 'movie', genre_ids: [878], vote_average: 8.5, vote_count: 20000, release_date: rd, _seeds: [] };
+  const obscureLow   = { id: 2, media_type: 'movie', genre_ids: [878], vote_average: 5.0, vote_count: 30, release_date: rd, _seeds: [] };
+  const out = scorePool([greatPopular, obscureLow], { profile, now: NOW });
+  assert.equal(out[0].movie.id, 1, 'high-vote great title leads on the quality floor');
+  assert.ok(out[0].score > 0, 'cold-start top score must be non-zero (was exactly 0 before)');
+  const scores = out.map((o) => o.score);
+  assert.ok(Math.max(...scores) - Math.min(...scores) > 0, 'cold-start scores must vary');
+});
+test('scorePool exposes parts.qualityN (min-max normalized bayesian rating) in [0,1]', () => {
+  const profile = { genres: {}, keywords: {}, people: {}, mediaTypeBias: { movie: 0, tv: 0 }, topTitles: [] };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  const hiQ = { id: 1, media_type: 'movie', genre_ids: [878], vote_average: 9, vote_count: 50000, release_date: rd, _seeds: [] };
+  const loQ = { id: 2, media_type: 'movie', genre_ids: [878], vote_average: 4, vote_count: 50000, release_date: rd, _seeds: [] };
+  const out = scorePool([hiQ, loQ], { profile, now: NOW });
+  assert.equal(out.find((o) => o.movie.id === 1).parts.qualityN, 1, 'highest bayesian rating => 1');
+  assert.equal(out.find((o) => o.movie.id === 2).parts.qualityN, 0, 'lowest => 0');
+});
+test('scorePool weights are 0.55 collab / 0.30 content / 0.15 prior (defaults)', () => {
+  const profile = { genres: { '878': 5 }, keywords: {}, people: {}, mediaTypeBias: { movie: 1, tv: 0 }, topTitles: [] };
+  const rd = new Date(NOW).toISOString().slice(0, 10);
+  const collabMax = { id: 1, media_type: 'movie', genre_ids: [99], vote_average: 7, vote_count: 1000, release_date: rd, _seeds: [{ source: 'rec', type: 'title', id: 9, rank: 0, weight: 1 }] };
+  const contentMax = { id: 2, media_type: 'movie', genre_ids: [878], vote_average: 7, vote_count: 1000, release_date: rd, _seeds: [{ source: 'similar', type: 'title', id: 9, rank: 7, weight: 1 }] };
+  const out = scorePool([collabMax, contentMax], { profile, now: NOW });
+  const a = out.find((o) => o.movie.id === 1);
+  const b = out.find((o) => o.movie.id === 2);
+  assert.ok(Math.abs(a.score - 0.55) < 1e-9, `collab-max => 0.55, got ${a.score}`);
+  assert.ok(Math.abs(b.score - 0.30) < 1e-9, `content-max => 0.30, got ${b.score}`);
+});
+
 import { itemSim } from './recommendations.js';
 
 test('itemSim: identical id short-circuits to 1', () => {

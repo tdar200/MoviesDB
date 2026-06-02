@@ -26,8 +26,9 @@ const DOWNVOTE_SCORE_STRENGTH = 0.4;        // how hard disliked-vector overlap 
 export const DOWNVOTE_SCORE_FLOOR = 0.5;    // a strongly-disliked candidate keeps >= half its score (never zeroed)
 
 // --- Recommendation engine tuning (contract constants; declared once) ---
-const W_COLLAB = 0.6;               // collaborative score weight in the hybrid
-const W_CONTENT = 0.4;              // content (cosine) score weight in the hybrid
+const W_COLLAB = 0.55;              // collaborative score weight in the hybrid
+const W_CONTENT = 0.30;             // content (cosine) score weight in the hybrid
+const W_PRIOR = 0.15;               // quality-prior weight: a cold-start floor so empty-profile pools sort by rating
 const MMR_LAMBDA_TEASER = 0.8;      // home-teaser MMR relevance/diversity tradeoff
 const MMR_LAMBDA_PAGE = 0.6;        // full rec-page MMR relevance/diversity tradeoff
 const PER_SEED_CAP = 3;             // max candidates kept per producing seed in MMR
@@ -200,10 +201,16 @@ function dislikeOverlapVec(candVec, dislikeVector) {
 // both the profile vector and each candidate vector, then:
 //   collabN  = min-max of collabScore across the pool
 //   contentN = cosine(idf(profileVector), idf(candidateVector))   [0,1]
-//   score    = (Wc*collabN + Wt*contentN) * qualityMultiplier * recencyMultiplier
+//   qualityN = min-max of bayesianRating across the pool — an ADDITIVE cold-start floor so an
+//              empty-profile pool (collab 0, content 0) still sorts by rating instead of all-zero
+//   score    = (Wc*collabN + Wt*contentN + Wp*qualityN) * recencyMultiplier
 // A non-empty `dislikeVector` applies a bounded multiplicative penalty (factor >= DOWNVOTE_SCORE_FLOOR);
 // when absent it has no effect. Returns Scored[] sorted descending, each with parts + reasons.
-export function scorePool(candidates, { profile, now = Date.now(), weights = { collab: W_COLLAB, content: W_CONTENT }, dislikeVector } = {}) {
+// (qualityMultiplier is still computed for parts.quality back-compat reads, but no longer scales score.)
+export function scorePool(candidates, { profile, now = Date.now(), weights = { collab: W_COLLAB, content: W_CONTENT, prior: W_PRIOR }, dislikeVector } = {}) {
+  const wCollab = typeof weights.collab === 'number' ? weights.collab : W_COLLAB;
+  const wContent = typeof weights.content === 'number' ? weights.content : W_CONTENT;
+  const wPrior = typeof weights.prior === 'number' ? weights.prior : W_PRIOR;
   const tagVectors = candidates.map(buildTagVector);
   const idf = computeIdf(tagVectors);
   const rawProfVec = profileVector(profile);
@@ -218,14 +225,20 @@ export function scorePool(candidates, { profile, now = Date.now(), weights = { c
   const { min: cMin, max: cMax } = minMax(collabRaw);
   const cRange = cMax - cMin;
 
+  // Pooled quality min-max drives the additive cold-start floor (qualityN below).
+  const qualityRaw = candidates.map((c) => bayesianRating(c.vote_average, c.vote_count));
+  const { min: qMin, max: qMax } = minMax(qualityRaw);
+  const qRange = qMax - qMin;
+
   const scored = candidates.map((c, i) => {
     const collabN = cRange > 0 ? (collabRaw[i] - cMin) / cRange : 0;
     const contentN = idfDegenerate
       ? cosineSim(rawProfVec, tagVectors[i])
       : cosineSim(profVec, applyIdf(tagVectors[i], idf));
-    const quality = qualityMultiplier(c.vote_average, c.vote_count);
+    const qualityN = qRange > 0 ? (qualityRaw[i] - qMin) / qRange : 0;
+    const quality = qualityMultiplier(c.vote_average, c.vote_count); // parts back-compat only
     const recency = recencyMultiplier(c.release_date || c.first_air_date, now);
-    let score = (weights.collab * collabN + weights.content * contentN) * quality * recency;
+    let score = (wCollab * collabN + wContent * contentN + wPrior * qualityN) * recency;
     const overlap = dislikeOverlapVec(tagVectors[i], dislikeVector);
     if (overlap > 0) {
       score *= Math.max(DOWNVOTE_SCORE_FLOOR, 1 - DOWNVOTE_SCORE_STRENGTH * overlap);
@@ -233,7 +246,7 @@ export function scorePool(candidates, { profile, now = Date.now(), weights = { c
     return {
       movie: c,
       score,
-      parts: { collab: collabN, content: contentN, quality, recency },
+      parts: { collab: collabN, content: contentN, quality, qualityN, recency },
       reasons: generateReasons(c, profile),
     };
   });
