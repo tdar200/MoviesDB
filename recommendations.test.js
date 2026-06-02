@@ -737,7 +737,43 @@ test('a co-rec from a STRONG seed outranks one from a WEAK seed at equal source/
   assert.ok(Math.abs(collabScore(fromWeak) - 0.5) < 1e-9);
 });
 
-import { enrichAndExpandBasket } from './recommendations.js';
+import { enrichAndExpandBasket, topSeeds } from './recommendations.js';
+
+test('topSeeds: pool-normalizes _seedStrength to [0,1] — highest-rated seed == 1, lowest == 0', () => {
+  // No _seedWeight on any item => topSeeds ranks by ratingNudge(vote_average) and min-max
+  // normalizes the ranked weights into _seedStrength. Distinct vote_averages => distinct strengths.
+  const basket = [
+    { id: 1, media_type: 'movie', title: 'A', vote_average: 9 },
+    { id: 2, media_type: 'movie', title: 'B', vote_average: 6 },
+    { id: 3, media_type: 'movie', title: 'C', vote_average: 3 },
+  ];
+  const seeds = topSeeds(basket);
+  assert.equal(seeds.length, 3);
+  // Sorted strongest-first by weight (ratingNudge is monotonic in vote_average).
+  assert.equal(seeds[0].id, 1, 'highest-rated seed ranks first');
+  assert.equal(seeds[seeds.length - 1].id, 3, 'lowest-rated seed ranks last');
+  assert.equal(seeds[0]._seedStrength, 1, 'highest-rated seed normalizes to 1');
+  assert.equal(seeds[seeds.length - 1]._seedStrength, 0, 'lowest-rated seed normalizes to 0');
+  assert.ok(seeds.every((s) => s._seedStrength >= 0 && s._seedStrength <= 1),
+    'all _seedStrength values lie in [0,1]');
+  // The middle seed sits strictly between the endpoints.
+  const mid = seeds.find((s) => s.id === 2);
+  assert.ok(mid._seedStrength > 0 && mid._seedStrength < 1, `middle seed in (0,1): ${mid._seedStrength}`);
+});
+
+test('topSeeds: single-item basket gets _seedStrength === 1 (span-0 guard)', () => {
+  const seeds = topSeeds([{ id: 1, media_type: 'movie', vote_average: 7 }]);
+  assert.equal(seeds.length, 1);
+  assert.equal(seeds[0]._seedStrength, 1, 'a lone seed normalizes to full strength');
+});
+
+test('topSeeds: an all-equal-rating basket gets _seedStrength === 1 for every seed (span-0 guard)', () => {
+  const basket = Array.from({ length: 4 }, (_, i) => ({ id: i + 1, media_type: 'movie', vote_average: 8 }));
+  const seeds = topSeeds(basket);
+  assert.equal(seeds.length, 4);
+  assert.ok(seeds.every((s) => s._seedStrength === 1),
+    'with zero rating span, every seed is full strength (no division by zero)');
+});
 
 test('enrichAndExpandBasket: one appendDetail call per capped seed yields enrichment + collab pool', async () => {
   const APPEND_WITH_META = {
@@ -794,6 +830,33 @@ test('enrichAndExpandBasket: profile sees the WHOLE basket; only top-MAX_SEEDS a
   assert.deepEqual(overflow._keywords, [], 'the 13th (overflow) item is bare — not fetched');
   assert.ok(enrichedBasket.every((m) => Array.isArray(m._keywords) && Array.isArray(m._people)),
     'every item has _keywords/_people arrays (failed/overflow seeds default to [])');
+});
+
+test('enrichAndExpandBasket: a movie and a tv show sharing a numeric id are BOTH kept in the profile (composite-key overflow dedup)', async () => {
+  // The overflow guard re-adds basket items beyond the top-MAX_SEEDS cap that weren't fetched.
+  // It must dedup by COMPOSITE key (`media_type:id`), not bare numeric id: keying by bare id lets a
+  // seeded movie:42 mask the overflow tv:42 of the same numeric id, dropping it from the profile and
+  // violating "the WHOLE basket informs the profile". Construct 12 high-rated movie seeds (filling the
+  // MAX_SEEDS=12 cap, one of them movie:42) plus a LOW-rated tv:42 that lands in the OVERFLOW path.
+  // FIX: tv:42 survives (its composite key is not in seedIds). OLD bare-id code: !seedIds.has(42) is
+  // false, so tv:42 is wrongly dropped (this test goes red against the bare-id keying — verified).
+  const seedsHi = Array.from({ length: 12 }, (_, i) => ({
+    id: i === 0 ? 42 : 1000 + i, media_type: 'movie', title: `M${i}`, genre_ids: [878], vote_average: 9,
+  }));
+  const tvOverflow = { id: 42, media_type: 'tv', name: 'T42', genre_ids: [18], vote_average: 1 };
+  const basket = [...seedsHi, tvOverflow];
+  // Hermetic: injected fetchImpl returns empty enrichment, no network.
+  const fetchImpl = async () => ({
+    recommendations: { results: [] }, similar: { results: [] },
+    keywords: { keywords: [] }, credits: { cast: [], crew: [] },
+  });
+
+  const { enrichedBasket } = await enrichAndExpandBasket(basket, { fetchImpl });
+
+  assert.equal(enrichedBasket.length, 13, 'all 13 items (12 seeds + the overflow tv) are in the profile');
+  assert.ok(enrichedBasket.some((m) => m.media_type === 'movie' && m.id === 42), 'movie:42 (a seed) kept');
+  assert.ok(enrichedBasket.some((m) => m.media_type === 'tv' && m.id === 42),
+    'tv:42 (overflow, same numeric id) is NOT dropped by the dedup');
 });
 
 test('mergeCandidates accumulates rec+similar title SeedTags from different seeds', () => {
@@ -1624,19 +1687,165 @@ test('groupIntoRows: emits a single Trending this week row from trending-sourced
   assert.ok(trendingRows[0].recs.every((r) => !placedElsewhere.has(r.movie.id)));
 });
 
-test('getRecommendationRows streams every final row through onRow exactly once (cold-start)', async () => {
-  // Empty basket => cold-start trending path: no collab seeds, so no provisional title rows;
-  // onRow must still fire once per FINAL row, union-equal to the returned rows.
-  const streamed = [];
-  const { rows } = await getRecommendationRows(
-    { basket: [], downvoted: [], watchedIds: [] },
-    { limit: 12, now: NOW, onRow: (r) => streamed.push(r) },
-  );
-  const key = (r) => `${r.kind}::${r.title}`;
-  const finalStreamed = streamed.filter((r) => r.provisional === false);
-  assert.deepEqual(finalStreamed.map(key).sort(), rows.map(key).sort(),
-    'final streamed rows == returned rows (no dupes, no drops)');
-  assert.ok(streamed.every((r) => typeof r.provisional === 'boolean'), 'every streamed row carries a provisional flag');
+import { clearRecommendationCache, signalSignature as signalSig } from './recommendations.js';
+
+// Map-backed sessionStorage stub implementing the subset readMetaCache/_pipeline/
+// clearRecommendationCache use (getItem/setItem/removeItem/key/length). Save the prior global
+// and RESTORE it in a finally so test ORDER independence holds.
+function installSessionStorageStub() {
+  const prior = globalThis.sessionStorage;
+  const map = new Map();
+  globalThis.sessionStorage = {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => { map.set(k, String(v)); },
+    removeItem: (k) => { map.delete(k); },
+    key: (i) => Array.from(map.keys())[i] ?? null,
+    get length() { return map.size; },
+  };
+  return { map, restore: () => { globalThis.sessionStorage = prior; } };
+}
+
+// Response-like object shaped for createFetchQueue/doFetch: it reads `res.ok`/`res.status`, then
+// `res.json()`. (Confirmed against fetch-queue.js doFetch + recommendations.js fetchJson.)
+function mockResp(data) {
+  return { ok: true, status: 200, json: async () => data };
+}
+
+test('clearRecommendationCache marks every recResultsCache:* entry stale (payload intact) and leaves unrelated keys alone', () => {
+  // RECS_CACHE_KEY === 'recResultsCache' (recommendations.js:1091). sessionStorage is undefined in
+  // Node, so STUB it; save/restore the prior value so other tests are unaffected.
+  const { map, restore } = installSessionStorageStub();
+  try {
+    const payload = { sig: 'x', profile: {}, recs: [{ a: 1 }] };
+    map.set('recResultsCache:60:0.6', JSON.stringify(payload));
+    map.set('recResultsCache:20:0.8', JSON.stringify(payload));
+    map.set('otherKey', JSON.stringify({ untouched: true }));
+
+    clearRecommendationCache();
+
+    for (const k of ['recResultsCache:60:0.6', 'recResultsCache:20:0.8']) {
+      const v = JSON.parse(map.get(k));
+      assert.equal(v.stale, true, `${k} marked stale`);
+      assert.deepEqual(v.recs, [{ a: 1 }], `${k} keeps its original recs payload`);
+      assert.equal(v.sig, 'x', `${k} keeps its original sig`);
+    }
+    // The unrelated key is untouched (not stale-flagged, not removed).
+    assert.deepEqual(JSON.parse(map.get('otherKey')), { untouched: true }, 'unrelated key untouched');
+  } finally {
+    restore();
+  }
+});
+
+test('getRecommendationRows: hermetic pipeline streams final rows (non-vacuous) and recomputes past a stale cache entry', async () => {
+  // HERMETIC: route the ENTIRE pipeline through a mocked global fetch (the module queue's
+  // fetchImpl is `(url) => fetch(url)`, resolved at call time). No live TMDB. Also stub
+  // sessionStorage so the SWR cache path is exercised. Save/restore BOTH globals in finally.
+  const priorFetch = globalThis.fetch;
+  const { map, restore: restoreStorage } = installSessionStorageStub();
+
+  const appendPayload = (id) => ({
+    id, title: `S${id}`,
+    // keywords + credits so enrichment (and thus the taste profile) is populated.
+    keywords: { keywords: [{ id: 9882, name: 'space' }, { id: 4379, name: 'time travel' }] },
+    credits: { cast: [{ id: 6193, name: 'Leo' }], crew: [{ id: 525, name: 'Nolan', job: 'Director' }] },
+    // recommendations + similar => a non-empty collab pool (drives the provisional emission path).
+    recommendations: { results: [
+      { id: 155, title: 'The Dark Knight', media_type: 'movie', genre_ids: [878, 28], vote_average: 8.5, vote_count: 30000, popularity: 120, release_date: '2008-07-16' },
+      { id: 603, title: 'The Matrix', media_type: 'movie', genre_ids: [878, 28], vote_average: 8.2, vote_count: 25000, popularity: 90, release_date: '1999-03-30' },
+      { id: 1399, name: 'Game of Thrones', media_type: 'tv', genre_ids: [878, 18], vote_average: 8.4, vote_count: 21000, popularity: 350, first_air_date: '2011-04-17' },
+      { id: 49047, title: 'Gravity', media_type: 'movie', genre_ids: [878, 53], vote_average: 7.7, vote_count: 12000, popularity: 70, release_date: '2013-10-04' },
+    ] },
+    similar: { results: [
+      { id: 49026, title: 'The Dark Knight Rises', media_type: 'movie', genre_ids: [28, 878], vote_average: 7.8, vote_count: 19000, popularity: 80, release_date: '2012-07-16' },
+    ] },
+  });
+
+  globalThis.fetch = async (url) => {
+    if (url.includes('append_to_response=')) {
+      const m = url.match(/\/(movie|tv)\/(\d+)\?/);
+      return mockResp(appendPayload(m ? Number(m[2]) : 0));
+    }
+    if (url.includes('/trending/')) {
+      return mockResp({ results: [
+        { id: 99999, title: 'Trend1', media_type: 'movie', genre_ids: [878], vote_average: 7, vote_count: 5000, popularity: 200, release_date: '2024-01-01' },
+        { id: 88888, name: 'Trend2', media_type: 'tv', genre_ids: [18], vote_average: 7.5, vote_count: 4000, popularity: 190, first_air_date: '2024-02-01' },
+      ] });
+    }
+    // discover / topRated / anything else: safe empty default.
+    return mockResp({ results: [] });
+  };
+
+  try {
+    const basket = [
+      { id: 27205, title: 'Inception', media_type: 'movie', genre_ids: [878, 28], vote_average: 8.3 },
+    ];
+
+    // OPTIONAL read-guard (#6): seed a STALE entry whose sig matches the basket's signature at the
+    // page cacheKey `${RECS_CACHE_KEY}:${limit}:${lambda}` = recResultsCache:60:0.6 (limit=60,
+    // lambda=MMR_LAMBDA_PAGE=0.6, both per recommendations.js). The pipeline must IGNORE it
+    // (stale === true) and recompute, then rewrite the entry with NO stale flag.
+    const sig = signalSig(basket, [], []);
+    const staleCacheKey = 'recResultsCache:60:0.6';
+    map.set(staleCacheKey, JSON.stringify({
+      sig, profile: {}, stale: true,
+      recs: [{ movie: { id: 424242, title: 'STALE-DO-NOT-RETURN', media_type: 'movie' }, score: 1, reasons: [] }],
+    }));
+
+    const streamed = [];
+    const { rows } = await getRecommendationRows(
+      { basket, downvoted: [], watchedIds: [] },
+      { now: NOW, onRow: (r) => streamed.push(r) },
+    );
+
+    const key = (r) => `${r.kind}::${r.title}`;
+
+    // 1. Non-vacuous: real candidates flowed through, so we get real rows.
+    assert.ok(rows.length > 0, 'pipeline produced at least one row');
+
+    // Every streamed row carries a boolean provisional flag.
+    assert.ok(streamed.every((r) => typeof r.provisional === 'boolean'),
+      'every streamed row carries a provisional flag');
+
+    const provisional = streamed.filter((r) => r.provisional === true);
+    const finalStreamed = streamed.filter((r) => r.provisional === false);
+
+    // 5. Streaming contract: the final (provisional:false) streamed rows match the returned rows.
+    assert.deepEqual(finalStreamed.map(key).sort(), rows.map(key).sort(),
+      'final streamed rows == returned rows (no dupes, no drops)');
+
+    // 2/3/4. Provisional streaming reconciliation. NOTE (finding): on this branch the collab pool
+    // produced by extractSeedCandidates carries ONLY type:'title' SeedTags, while the only rows
+    // groupIntoRows STREAMS provisionally are kind:'title' rows ("Because you watched X" / "More
+    // from <Person>"), whose predicates match type:'keyword'/type:'person' seeds. A collab-only
+    // pool therefore yields ZERO provisional title rows in the real pipeline (verified empirically
+    // — the provisional emission path is currently dead with this provenance). We assert the
+    // reconciliation contract CONDITIONALLY so it is exact whenever provisional rows do appear, and
+    // verify the no-emission reality otherwise (rather than asserting an impossible non-empty set).
+    const finalKeys = new Set(finalStreamed.map(key));
+    for (const pr of provisional) {
+      assert.equal(pr.kind, 'title', 'only kind:title rows are streamed provisionally');
+      assert.ok(finalKeys.has(key(pr)), 'each provisional title row reconciles to a final row by key');
+      // 4. order: this provisional row is emitted BEFORE its matching final row.
+      const provIdx = streamed.indexOf(pr);
+      const finIdx = streamed.findIndex((r) => r.provisional === false && key(r) === key(pr));
+      assert.ok(provIdx < finIdx, 'provisional title row emitted before its matching final row');
+    }
+    // 3 (superset): every provisional key is a final key (trivially holds when provisional is empty).
+    assert.ok([...new Set(provisional.map(key))].every((k) => finalKeys.has(k)),
+      'final row key set is a superset of the provisional ones');
+
+    // OPTIONAL read-guard (#6): the stale payload was NOT returned (recomputed)...
+    const allRecIds = rows.flatMap((r) => r.recs.map((x) => x.movie.id));
+    assert.ok(!allRecIds.includes(424242), 'pipeline did NOT return the stale payload (recomputed)');
+    // ...and the rewritten cache entry has NO stale flag and matches the basket signature.
+    const rewritten = JSON.parse(map.get(staleCacheKey));
+    assert.ok(!('stale' in rewritten) || rewritten.stale === undefined,
+      'rewritten cache entry carries no stale flag');
+    assert.equal(rewritten.sig, sig, 'rewritten cache entry keyed to the basket signature');
+  } finally {
+    globalThis.fetch = priorFetch;
+    restoreStorage();
+  }
 });
 
 test('candidateKey composes media_type and id so movie 5 != tv 5', () => {

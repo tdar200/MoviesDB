@@ -1187,7 +1187,7 @@ async function enrichWatchedTitles(watched) {
 }
 
 // Cap the basket to the strongest MAX_SEEDS by weight to bound fan-out.
-function topSeeds(basketEnriched) {
+export function topSeeds(basketEnriched) {
   // Rank by _seedWeight (or a rating-based fallback: a higher-rated fave is a stronger seed),
   // cap to MAX_SEEDS, attach a pool-normalized [0,1] _seedStrength so the basket expansion can
   // scale each seed's co-rec weight (item 13).
@@ -1255,7 +1255,11 @@ async function topRatedFiller() {
 // enrichment for the strongest seeds. fetchImpl is injectable for tests.
 export async function enrichAndExpandBasket(basket, { fetchImpl = fetchJson } = {}) {
   const seeds = topSeeds(basket);
-  const seedIds = new Set(seeds.map((s) => s.id));
+  // Composite-key the seed set so a movie and a tv show sharing a numeric id are tracked
+  // independently: keying by bare `id` would let one media-type's seed mask the other in the
+  // overflow loop below, dropping it from the profile (violating "the WHOLE basket informs
+  // the profile"). candidateKey == `${media_type}:${id}`.
+  const seedIds = new Set(seeds.map((s) => candidateKey(s)));
   const results = await Promise.all(
     seeds.map((seed) => {
       const type = seed.media_type === 'tv' ? 'tv' : 'movie';
@@ -1274,7 +1278,7 @@ export async function enrichAndExpandBasket(basket, { fetchImpl = fetchJson } = 
   }
   // Basket items beyond the top-MAX_SEEDS cap: profile-only (genre/rating/media), not fetched.
   for (const m of (basket || [])) {
-    if (!seedIds.has(m.id)) enrichedBasket.push({ ...m, _keywords: [], _people: [] });
+    if (!seedIds.has(candidateKey(m))) enrichedBasket.push({ ...m, _keywords: [], _people: [] });
   }
   return { enrichedBasket, collabCandidates: mergeCandidates(tagged) };
 }
