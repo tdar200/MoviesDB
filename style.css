@@ -1553,3 +1553,27 @@ main {
   transition: background 0.15s ease, color 0.15s ease;
 }
 .basket-seg.active { background: #e9b955; color: #1a1a2e; border-color: transparent; font-weight: 600; }
+
+/* ---- Skeleton rails + shimmer (perceived-speed loading state) ---- */
+@keyframes recShimmer {
+  to { background-position: -200% 0; }
+}
+.rec-skeleton .rec-skel-line,
+.rec-skel-card {
+  background: linear-gradient(90deg,
+    rgba(255, 255, 255, 0.05) 25%,
+    rgba(255, 255, 255, 0.12) 37%,
+    rgba(255, 255, 255, 0.05) 63%);
+  background-size: 200% 100%;
+  animation: recShimmer 1.4s ease-in-out infinite;
+  border-radius: 10px;
+}
+.rec-skel-line { height: 0.85rem; width: 7rem; margin-bottom: 0.5rem; }
+.rec-skel-line--wide { height: 1.4rem; width: 16rem; }
+.rec-skel-card { flex: 0 0 182px; width: 182px; aspect-ratio: 2 / 3; }
+/* Reserve a below-the-fold rail's height so hydration causes no layout shift. */
+.rec-scroller--reserved { min-height: 273px; }
+@media (prefers-reduced-motion: reduce) {
+  .rec-skeleton .rec-skel-line,
+  .rec-skel-card { animation: none; }
+}

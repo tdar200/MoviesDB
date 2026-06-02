@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 const scriptSrc = readFileSync(new URL('./script.js', import.meta.url), 'utf8');
+const styleSrc = readFileSync(new URL('./style.css', import.meta.url), 'utf8');
 
 // Extract the two pure-DOM builders from script.js by name so we exercise the REAL code.
 function slice(name) {
@@ -31,6 +32,10 @@ function slice(name) {
 
 const createCardSrc = slice('createRecommendationCard');
 const buildRailSrc = slice('buildRecRail');
+const skeletonSrc = slice('buildRecSkeleton');
+const lazyRailSrc = slice('buildLazyRecRail');
+const observeLazySrc = slice('observeLazyRail');
+const reconcileSrc = slice('reconcileRecRails');
 
 // The two builders contain backtick template literals with ${...}; they must be injected
 // into the page WITHOUT being interpolated by this module's own template literals. So the
@@ -83,7 +88,9 @@ const scriptTail = `
   document.getElementById('main').appendChild(page);
 `;
 
-const inlineScript = scriptHead + createCardSrc + '\n' + buildRailSrc + '\n' + scriptTail;
+const inlineScript = scriptHead + createCardSrc + '\n' + buildRailSrc + '\n'
+  + skeletonSrc + '\n' + lazyRailSrc + '\n' + observeLazySrc + '\n' + reconcileSrc + '\n'
+  + scriptTail;
 
 const browser = await puppeteer.launch({
   headless: 'new',
@@ -97,6 +104,9 @@ try {
   // Load a minimal document with the #main mount, then inject the REAL builders via
   // addScriptTag (avoids document.write HTML-parsing pitfalls with the inlined SVG source).
   await page.setContent('<!doctype html><html><head><meta charset="utf8"></head><body><main id="main"></main></body></html>', { waitUntil: 'load' });
+  // Inject the REAL style.css so layout-reserving rules (e.g. .rec-scroller--reserved
+  // min-height, the no-CLS guarantee) are exercised, not just the DOM builders.
+  await page.addStyleTag({ content: styleSrc });
   await page.addScriptTag({ content: inlineScript });
 
   // (a) every rail-section carries a rec-row-<kind> class AND a non-empty .rec-kicker.
@@ -129,6 +139,65 @@ try {
   await page.$eval('.rec-card', (el) => el.click());
   const played = await page.evaluate(() => window.__played);
   assert.equal(played, 1, 'clicking the first card opens its player');
+
+  // (e) skeletons render synchronously with shimmer cards.
+  const skeletonInfo = await page.evaluate(() => {
+    const host = document.createElement('div'); document.body.appendChild(host);
+    host.appendChild(buildRecSkeleton(3));
+    return { sections: host.querySelectorAll('.rec-rail-section.rec-skeleton').length,
+             cards: host.querySelectorAll('.rec-skel-card').length };
+  });
+  assert.equal(skeletonInfo.sections, 3, 'expected 3 skeleton rail sections');
+  assert.ok(skeletonInfo.cards >= 3, 'skeleton rails carry shimmer cards');
+
+  // (f) lazy rail builds 0 cards until hydrate(), and reserves min-height (no CLS).
+  const lazyInfo = await page.evaluate(() => {
+    const recs = [{ movie: { id: 9, title: 'Primer', media_type: 'movie', vote_average: 7, vote_count: 100, _seeds: [] }, score: 0.5, reasons: ['x'] }];
+    const { section, hydrate } = buildLazyRecRail(recs, { kicker: 'k', heading: 'More Sci-Fi' });
+    document.body.appendChild(section);
+    const before = section.querySelectorAll('.rec-card').length;
+    const minH = getComputedStyle(section.querySelector('.rec-scroller')).minHeight;
+    hydrate();
+    return { before, after: section.querySelectorAll('.rec-card').length, minH };
+  });
+  assert.equal(lazyInfo.before, 0, 'lazy rail builds no cards until hydrate()');
+  assert.equal(lazyInfo.after, 1, 'hydrate() builds the deferred cards');
+  assert.notEqual(lazyInfo.minH, '0px', 'lazy scroller reserves min-height');
+
+  // (g) reconcileRecRails: reuses provisional title rails by key, orders by final rows,
+  //     no duplicates, hero ends first, rows beyond eagerRows are lazy.
+  const recon = await page.evaluate(() => {
+    const mk = (kind, title) => { const s = document.createElement('section'); s.dataset.recKey = `${kind}::${title}`; return s; };
+    const provisional = new Map([
+      ['title::Because you liked A', mk('title', 'Because you liked A')],
+      ['title::Because you liked B', mk('title', 'Because you liked B')],
+    ]);
+    const provA = provisional.get('title::Because you liked A');
+    const rows = [
+      { kind: 'top', title: 'Top picks for you', recs: [] },
+      { kind: 'title', title: 'Because you liked A', recs: [] },
+      { kind: 'title', title: 'Because you liked B', recs: [] },
+      { kind: 'genre', title: 'More Sci-Fi', recs: [] },
+      { kind: 'trending', title: 'Trending this week', recs: [] },
+    ];
+    const lazied = [];
+    const buildRail = (row, i, lazy) => {
+      const s = document.createElement('section');
+      s.dataset.recKind = row.kind; s.dataset.built = lazy ? 'lazy' : 'eager';
+      return { section: s, hydrate: () => {} };
+    };
+    const out = reconcileRecRails(rows, provisional, { buildRail, eagerRows: 3, onLazy: (s) => lazied.push(s.dataset.recKind) });
+    return {
+      order: out.map((s) => s.dataset.recKind || s.dataset.recKey),
+      reusedA: out[1] === provA,
+      count: out.length,
+      lazyKinds: lazied,
+    };
+  });
+  assert.deepEqual(recon.order, ['top', 'title::Because you liked A', 'title::Because you liked B', 'genre', 'trending'], 'hero first, final order, provisional reused');
+  assert.ok(recon.reusedA, 'provisional title rail reused by key (same node)');
+  assert.equal(recon.count, 5, 'exactly one rail per final row, no duplicates');
+  assert.deepEqual(recon.lazyKinds, ['genre', 'trending'], 'rows beyond eagerRows=3 are lazy');
 
   console.log('rec-dom-harness: PASS');
 } finally {

@@ -1963,6 +1963,39 @@ function createRecommendationCard(rec, index) {
   return card;
 }
 
+// Shimmer placeholder rails shown immediately in a VISIBLE #main while the first real
+// rows resolve. Mirrors .rec-rail-section structure so replacing a skeleton with a real
+// rail causes no layout shift. Card count is fixed so the reserved height is deterministic.
+function buildRecSkeleton(count = 3) {
+  const frag = document.createDocumentFragment();
+  for (let s = 0; s < count; s++) {
+    const section = document.createElement('section');
+    section.className = 'rec-rail-section rec-skeleton';
+    const header = document.createElement('div');
+    header.className = 'rec-header';
+    const kick = document.createElement('span');
+    kick.className = 'rec-kicker rec-skel-line';
+    header.appendChild(kick);
+    const head = document.createElement('h2');
+    head.className = 'rec-heading rec-skel-line rec-skel-line--wide';
+    header.appendChild(head);
+    section.appendChild(header);
+    const rail = document.createElement('div');
+    rail.className = 'rec-rail';
+    const scroller = document.createElement('div');
+    scroller.className = 'rec-scroller';
+    for (let c = 0; c < 6; c++) {
+      const card = document.createElement('div');
+      card.className = 'rec-skel-card';
+      scroller.appendChild(card);
+    }
+    rail.appendChild(scroller);
+    section.appendChild(rail);
+    frag.appendChild(section);
+  }
+  return frag;
+}
+
 // Render the "Recommended for you" rail at the top of the Movies home view.
 // Build one labelled recommendation rail (editorial header + edge-faded scroller of
 // rec cards). Shared by the Movies-home teaser row and the dedicated Recommendation page.
@@ -1998,6 +2031,51 @@ function buildRecRail(recs, { kicker, heading, subline }) {
   rail.appendChild(scroller);
   section.appendChild(rail);
   return section;
+}
+
+// Below-the-fold rail: header + an empty, min-height-reserved scroller (no cards built,
+// so their poster <img>s never request data) until hydrate() runs. hydrate() is idempotent.
+function buildLazyRecRail(recs, { kicker, heading, subline }) {
+  const section = buildRecRail([], { kicker, heading, subline });
+  const scroller = section.querySelector('.rec-scroller');
+  scroller.classList.add('rec-scroller--reserved');
+  let hydrated = false;
+  const hydrate = () => {
+    if (hydrated) return;
+    hydrated = true;
+    scroller.classList.remove('rec-scroller--reserved');
+    recs.forEach((rec, index) => scroller.appendChild(createRecommendationCard(rec, index)));
+  };
+  return { section, hydrate };
+}
+
+// Hydrate a lazy rail when it nears the viewport (rootMargin pre-empts the scroll). Falls
+// back to immediate hydration where IntersectionObserver is unavailable.
+function observeLazyRail(section, hydrate) {
+  if (typeof IntersectionObserver !== 'function') { hydrate(); return; }
+  const io = new IntersectionObserver((entries, obs) => {
+    for (const e of entries) {
+      if (e.isIntersecting) { hydrate(); obs.disconnect(); }
+    }
+  }, { rootMargin: '600px' });
+  io.observe(section);
+}
+
+// Build the final ordered rail list from the authoritative rows, reusing already-painted
+// provisional rails by key (no rebuild → no flicker), building the rest. Rows beyond
+// `eagerRows` are built lazy and registered via onLazy. Pure of #main; returns sections to
+// hand to replaceChildren. Provisional rails consumed here are deleted from the map so any
+// leftover (stale, not in final) can be dropped by the caller.
+function reconcileRecRails(rows, provisional, { buildRail, eagerRows = 3, onLazy }) {
+  return rows.map((row, i) => {
+    const key = `${row.kind}::${row.title}`;
+    const reused = provisional.get(key);
+    if (reused) { provisional.delete(key); return reused; }
+    const lazy = i >= eagerRows;
+    const { section, hydrate } = buildRail(row, i, lazy);
+    if (lazy && hydrate && onLazy) onLazy(section, hydrate);
+    return section;
+  });
 }
 
 async function renderRecommendationsRow() {
@@ -2049,32 +2127,72 @@ let recPageRenderToken = 0;
 async function renderRecommendationsPage() {
   const token = ++recPageRenderToken;
   document.getElementById('recommendations-row')?.remove();
-  // Neutralize the Movies infinite-scroll lifecycle so scrolling this page can't
-  // append movie tiles or replace it with the trending grid (the global scroll
-  // listener is not tab-aware). Matches what Watched/Favorites do.
   filteredMovies = [];
   displayedCount = 0;
   hasMorePages = false;
   document.getElementById('load-more-indicator')?.remove();
   main.innerHTML = '';
-  setLoading(true);
+  setLoading(false);            // visible #main + skeletons instead of the global spinner
   hideError();
 
   const items = buildSignalItems();
   const coldStart = items.basket.length === 0;
 
+  const page = document.createElement('div');
+  page.className = 'rec-page';
+  if (coldStart) page.classList.add('rec-cold-start');
+  // Reserved hero slot (top) + 2 generic skeletons below. Provisional title rows fill BELOW the
+  // hero slot so the calibrated Top Picks lands in the top slot in place — nothing jumps.
+  const heroSkeleton = buildRecSkeleton(1).firstChild; // single skeleton section = hero placeholder
+  page.appendChild(heroSkeleton);
+  page.appendChild(buildRecSkeleton(2));               // generic skeletons below
+  main.appendChild(page);
+
+  const REC_ROW_KICKERS = {
+    top: 'Calibrated to your basket', title: 'Because you liked it',
+    genre: 'More of this genre', trending: 'Popular this week', explore: 'A little different',
+  };
+  const keyOf = (row) => `${row.kind}::${row.title}`;
+  const buildRail = (row, i, lazy) => {
+    const heading = coldStart && i === 0 ? 'Trending to get started' : row.title;
+    const kicker = coldStart && i === 0 ? 'Popular right now' : (REC_ROW_KICKERS[row.kind] || null);
+    const built = lazy ? buildLazyRecRail(row.recs, { kicker, heading })
+                       : { section: buildRecRail(row.recs, { kicker, heading }), hydrate: null };
+    built.section.classList.add(`rec-row-${row.kind}`);
+    built.section.setAttribute('data-rec-kind', row.kind);
+    built.section.setAttribute('data-rec-key', keyOf(row));
+    if (row.kind === 'explore') built.section.classList.add('rec-explore');
+    return built;
+  };
+
+  // Provisional preview: paint title rows below the hero slot as they stream in.
+  const provisional = new Map();
+  let belowCleared = false;
+  const onStream = (row) => {
+    if (token !== recPageRenderToken) return;
+    if (!row || row.provisional !== true || row.kind !== 'title') return;
+    const key = keyOf(row);
+    if (provisional.has(key)) return;
+    if (!belowCleared) {
+      // drop the generic below-hero skeletons (keep the hero slot) before the first preview row
+      page.querySelectorAll('.rec-skeleton').forEach((sk) => { if (sk !== heroSkeleton) sk.remove(); });
+      belowCleared = true;
+    }
+    const { section } = buildRail(row, 1, false); // eager preview, i!=0 (below hero)
+    page.appendChild(section);
+    provisional.set(key, section);
+  };
+
   let rows = [];
   let failed = false;
   try {
-    ({ rows } = await getRecommendationRows(items, { limit: 60 }));
+    ({ rows } = await getRecommendationRows(items, { limit: 60, onRow: onStream }));
   } catch (e) {
     console.warn('Recommendation page failed:', e);
     failed = true;
   }
+  if (token !== recPageRenderToken) return; // superseded — don't touch #main
 
-  if (token !== recPageRenderToken) return; // superseded by a newer render — don't touch #main
-
-  setLoading(false);
   if (failed) {
     main.innerHTML = '<p class="no-results rec-empty">Couldn’t load recommendations right now. Try again shortly.</p>';
     return;
@@ -2084,29 +2202,14 @@ async function renderRecommendationsPage() {
     return;
   }
 
-  const page = document.createElement('div');
-  page.className = 'rec-page';
-  if (coldStart) page.classList.add('rec-cold-start');
-  // Kickers only for the row kinds groupIntoRows builds; the filler phase supplies
-  // the 'trending' kicker when it appends that row.
-  const REC_ROW_KICKERS = {
-    top: 'Calibrated to your basket',
-    title: 'Because you liked it',
-    genre: 'More of this genre',
-    trending: 'Popular this week',
-    explore: 'A little different',
-  };
-  rows.forEach((row, i) => {
-    // Cold start: the engine returns a filler-led path; relabel the lead rail.
-    const heading = coldStart && i === 0 ? 'Trending to get started' : row.title;
-    const kicker = coldStart && i === 0 ? 'Popular right now' : (REC_ROW_KICKERS[row.kind] || null);
-    const railSection = buildRecRail(row.recs, { kicker, heading });
-    railSection.classList.add(`rec-row-${row.kind}`);
-    railSection.setAttribute('data-rec-kind', row.kind);
-    if (row.kind === 'explore') railSection.classList.add('rec-explore');
-    page.appendChild(railSection);
+  // Authoritative reconcile in ONE atomic pass: reuse provisional title rails by key, fill the
+  // hero slot in place, lazy below the fold, drop skeletons + any stale provisional rails.
+  const finalSections = reconcileRecRails(rows, provisional, {
+    buildRail,
+    eagerRows: 3,
+    onLazy: (section, hydrate) => observeLazyRail(section, hydrate),
   });
-  main.appendChild(page);
+  page.replaceChildren(...finalSections);
 }
 
 const STAR_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.3 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';
