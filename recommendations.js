@@ -1288,8 +1288,8 @@ async function _pipeline(input, opts = {}) {
   const excludeIds = new Set(
     [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
   );
-  const scored = scorePool(candidates, { profile, now, dislikeVector })
-    .filter((s) => !excludeIds.has(s.movie.id));
+  const pool = candidates.filter((c) => !excludeIds.has(c.id));
+  const scored = scorePool(pool, { profile, now, dislikeVector });
   const recs = mmrRerank(scored, { lambda, limit });
 
   try {
