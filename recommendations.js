@@ -1293,10 +1293,15 @@ export function signalSignature(basket, downvoted, watchedIds) {
 // → candidates → rank, excluding watched ∪ downvoted ∪ basket. `input` is
 // { basket: [movie], downvoted: [movie], watchedIds: [id] }. Cached per (signature, limit).
 async function _pipeline(input, opts = {}) {
-  const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA, lambda = MMR_LAMBDA_PAGE } = opts;
+  const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA, lambda = MMR_LAMBDA_PAGE, onRow, genreDist } = opts;
   const basket = input.basket || [];
   const downvoted = input.downvoted || [];
   const watchedIds = input.watchedIds || [];
+  // Built once, up front (only needs basket/downvoted/watchedIds): used both by the provisional
+  // streaming emission below and the final pool filter, so we don't rebuild it later.
+  const excludeIds = new Set(
+    [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
+  );
 
   const sig = signalSignature(basket, downvoted, watchedIds);
   // lambda is part of the key: the teaser (0.8) and page (0.6) must not share a cache entry.
@@ -1323,10 +1328,22 @@ async function _pipeline(input, opts = {}) {
   // negProfile drives Discover without_genres/without_keywords and the bounded re-rank penalty
   // (scorePool dislikeVector). It is the negative-centroid tag-vector built by the scorer.
   const dislikeVector = negProfile ? profileVector(negProfile) : undefined;
+
+  // Progressive streaming: the collaborative pool is already resolved (enrichAndExpandBasket),
+  // so score+rank+group it NOW and emit the "Because you liked X" (title) rows before Discover/
+  // trending land. These are stable (title rows draw only from rec/similar provenance, which is
+  // entirely in the collab pool); the renderer reconciles them in place by key when the final
+  // rows arrive. Only fires on a cache MISS (a hit returns instantly above — no streaming needed).
+  if (typeof onRow === 'function') {
+    const collabPool = collabCandidates.filter((c) => !excludeIds.has(c.id));
+    const provisionalRecs = mmrRerank(scorePool(collabPool, { profile, now, dislikeVector }), { lambda, limit });
+    const provisionalRows = groupIntoRows(provisionalRecs, profile, { genreDist });
+    for (const row of provisionalRows) {
+      if (row.kind === 'title') onRow({ ...row, provisional: true });
+    }
+  }
+
   const candidates = await generateCandidates(collabCandidates, basket.length, profile, negProfile);
-  const excludeIds = new Set(
-    [...basket, ...downvoted].map((m) => m.id).concat(watchedIds)
-  );
   const pool = candidates.filter((c) => !excludeIds.has(c.id));
   const scored = scorePool(pool, { profile, now, dislikeVector });
   const recs = mmrRerank(scored, { lambda, limit });
@@ -1356,12 +1373,19 @@ export async function getRecommendations(input, opts = {}) {
 export async function getRecommendationRows(input, opts = {}) {
   const safe = input || {};
   const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [] };
-  const { limit = 60, now = Date.now(), groupOpts = {}, gamma } = opts;
-  const { profile, recs } = await _pipeline(sig, { limit, now, gamma });
+  const { limit = 60, now = Date.now(), groupOpts = {}, gamma, onRow } = opts;
   // Calibrate Top Picks + budget genre rows to the basket's own genre mix (Steck calibration).
-  // Derived from the raw basket (its items carry genre_ids); a caller-supplied genreDist wins.
+  // Derived from the raw basket (its items carry genre_ids). Threaded into _pipeline so the
+  // provisional streaming rows use the same calibration as the final rows.
   const genreDist = genreHistogram(sig.basket);
-  return { rows: groupIntoRows(recs, profile, { genreDist, ...groupOpts }) };
+  const { profile, recs } = await _pipeline(sig, { limit, now, gamma, onRow, genreDist });
+  const rows = groupIntoRows(recs, profile, { genreDist, ...groupOpts });
+  // Final, authoritative rows. When streaming, announce them (provisional:false) so the renderer
+  // reconciles the early provisional title rows in place and fills the held hero/genre/trending.
+  if (typeof onRow === 'function') {
+    for (const row of rows) onRow({ ...row, provisional: false });
+  }
+  return { rows };
 }
 
 // Clear every per-limit session results cache entry (call after a new title is watched).

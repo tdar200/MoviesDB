@@ -7,6 +7,7 @@ import {
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
   collabScore, scorePool, DOWNVOTE_SCORE_FLOOR,
 } from './recommendations.js';
+import { getRecommendationRows } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_700_000_000_000; // fixed clock for deterministic tests
@@ -1486,4 +1487,19 @@ test('groupIntoRows: emits a single Trending this week row from trending-sourced
     rows.filter((r) => r.kind !== 'trending').flatMap((r) => r.recs.map((x) => x.movie.id))
   );
   assert.ok(trendingRows[0].recs.every((r) => !placedElsewhere.has(r.movie.id)));
+});
+
+test('getRecommendationRows streams every final row through onRow exactly once (cold-start)', async () => {
+  // Empty basket => cold-start trending path: no collab seeds, so no provisional title rows;
+  // onRow must still fire once per FINAL row, union-equal to the returned rows.
+  const streamed = [];
+  const { rows } = await getRecommendationRows(
+    { basket: [], downvoted: [], watchedIds: [] },
+    { limit: 12, now: NOW, onRow: (r) => streamed.push(r) },
+  );
+  const key = (r) => `${r.kind}::${r.title}`;
+  const finalStreamed = streamed.filter((r) => r.provisional === false);
+  assert.deepEqual(finalStreamed.map(key).sort(), rows.map(key).sort(),
+    'final streamed rows == returned rows (no dupes, no drops)');
+  assert.ok(streamed.every((r) => typeof r.provisional === 'boolean'), 'every streamed row carries a provisional flag');
 });
