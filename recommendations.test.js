@@ -1284,6 +1284,33 @@ test('buildDiscoverRequests omits without_* when no negative profile', () => {
   assert.ok(reqs.every((r) => !r.url.includes('without_keywords')), 'no without_keywords without neg');
 });
 
+test('buildDiscoverRequests caps keyword facets AFTER concat and honors page/people caps', () => {
+  const DISC_CAP_PROFILE = {
+    genres: { '878': 5, '28': 4, '4565': 3 }, // 4565 Dystopia is type:'keyword'
+    keywords: {
+      '4379': { name: 'Time Travel', weight: 6 },
+      '9882': { name: 'Space', weight: 5 },
+      '12377': { name: 'Zombie', weight: 4 },
+      '818': { name: 'Based on Novel', weight: 3 },
+      '9748': { name: 'Revenge', weight: 2 },
+    },
+    people: { '1': { name: 'A', weight: 5 }, '2': { name: 'B', weight: 4 }, '3': { name: 'C', weight: 3 }, '4': { name: 'D', weight: 2 } },
+    mediaTypeBias: { movie: 5, tv: 1 },
+    topTitles: [],
+  };
+  const reqs = buildDiscoverRequests(DISC_CAP_PROFILE, null, { pages: 1, maxKeywords: 4, maxPeople: 3 });
+  assert.ok(reqs.every((r) => r.url.includes('page=1')), 'pages:1 only');
+  assert.ok(!reqs.some((r) => r.url.includes('page=2')), 'no page=2 at pages:1');
+  const movieKwIds = new Set(reqs
+    .filter((r) => r.seed.type === 'keyword' && r.url.includes('/discover/movie?'))
+    .map((r) => r.seed.id));
+  assert.ok(movieKwIds.size <= 4, `keyword facets must be <= maxKeywords after concat, got ${movieKwIds.size}`);
+  const moviePeople = new Set(reqs
+    .filter((r) => r.seed.type === 'person' && r.url.includes('/discover/movie?'))
+    .map((r) => r.seed.id));
+  assert.ok(moviePeople.size <= 3, `people facets must be <= maxPeople, got ${moviePeople.size}`);
+});
+
 const mkBlendC = (id) => ({ id, media_type: 'movie', genre_ids: [], vote_average: 7, vote_count: 100, popularity: 1, _seeds: [] });
 
 test('coldStartBlend: empty basket returns filler only (100% filler)', () => {

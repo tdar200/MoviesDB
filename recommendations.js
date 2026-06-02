@@ -798,11 +798,13 @@ export function buildDiscoverRequests(profile, negProfile, opts = {}) {
     .slice(0, maxPeople)
     .map(([id, { name, weight }]) => ({ id: Number(id), name, weight }));
 
-  // Keyword facets = real theme keywords + any keyword-typed ids misfiled under genres.
+  // Keyword facets = real theme keywords + any keyword-typed ids misfiled under genres,
+  // then capped to maxKeywords AFTER concatenation so genre-derived keyword ids don't
+  // inflate the facet count past the cap.
   const keywordFacets = [
     ...topKeywords,
     ...genreKeywordIds.map((id) => ({ id, name: GENRE_NAMES.get(id) || 'keyword', weight: 1 })),
-  ];
+  ].slice(0, maxKeywords);
 
   // Never list a positively-steered facet in without_*: a genre/keyword that the user both
   // liked (net-positive after Rocchio) and downvoted would otherwise produce a self-
@@ -1212,7 +1214,7 @@ async function generateCandidates(collabCandidates, basketSize, profile, negProf
 // Deeper (pages 1-2), pipe-OR multi-facet, both media types, gated + negatively steered.
 // Returns merged Candidate[] (de-duped + seed-union via mergeCandidates).
 async function discoverCandidates(profile, negProfile = null) {
-  const requests = buildDiscoverRequests(profile, negProfile, {});
+  const requests = buildDiscoverRequests(profile, negProfile, { pages: 1, maxKeywords: 4, maxPeople: 3 });
 
   const results = await Promise.all(
     requests.map((r) =>
