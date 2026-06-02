@@ -417,6 +417,69 @@ test('groupIntoRows: exactly one deterministic explore row, stable across calls'
   assert.ok(exploreA[0].recs.every((r) => r.movie.vote_count < 100));
 });
 
+test('groupIntoRows: thin top-genre pool keeps the genre row alive (gems do not starve it)', () => {
+  // 5 sci-fi(878) titles total in the top genre; 4 are gems (hi-rating, lo-votes) — enough to clear
+  // the old reserve guard (exploreGems.length >= minItems). Pre-fix, those 4 gems were claimed
+  // up-front, leaving the genre row with only the 1 popular title (< minItems 4) → the genre row was
+  // DROPPED and an explore-only layout shipped. Gated: the top-genre row reclaims the gems (it would
+  // otherwise starve) and no explore row is pushed.
+  const ranked = [
+    grq(40, { genres: [878], score: 0.9, va: 7.0, vc: 9000 }),  // popular, not a gem
+    grq(50, { genres: [878], score: 0.2, va: 8.6, vc: 40 }),    // gem
+    grq(51, { genres: [878], score: 0.2, va: 8.9, vc: 25 }),    // gem
+    grq(52, { genres: [878], score: 0.2, va: 8.7, vc: 30 }),    // gem
+    grq(53, { genres: [878], score: 0.2, va: 8.3, vc: 60 }),    // gem
+  ];
+  const opts = { topCount: 0, minItems: 4, genreDist: { '878': 1 } };
+  const rows = groupIntoRows(ranked, { ...GROUP_PROFILE, topTitles: [], people: {} }, opts);
+  const genreRow = rows.find((r) => r.kind === 'genre');
+  assert.ok(genreRow, 'the top-genre row must survive a thin catalog (was dropped pre-fix)');
+  assert.equal(genreRow.recs.length, 5, 'genre row keeps all 5 titles (gems reclaimed, not pre-reserved)');
+  assert.equal(rows.filter((r) => r.kind === 'explore').length, 0, 'no explore row when it would starve the genre row');
+});
+
+test('groupIntoRows: a healthy pool still yields BOTH the genre row and the explore row', () => {
+  const ranked = [
+    ...[40, 41, 42, 43].map((id) => grq(id, { genres: [878], score: 0.9, va: 7.0, vc: 9000 })),
+    grq(50, { genres: [878], score: 0.2, va: 8.6, vc: 40 }),
+    grq(51, { genres: [878], score: 0.2, va: 8.9, vc: 25 }),
+    grq(52, { genres: [878], score: 0.2, va: 8.7, vc: 30 }),
+    grq(53, { genres: [878], score: 0.2, va: 8.3, vc: 60 }),
+  ];
+  const opts = { topCount: 0, minItems: 4, genreDist: { '878': 1 } };
+  const rows = groupIntoRows(ranked, { ...GROUP_PROFILE, topTitles: [], people: {} }, opts);
+  const genreRow = rows.find((r) => r.kind === 'genre');
+  const explore = rows.find((r) => r.kind === 'explore');
+  assert.ok(genreRow && genreRow.recs.length >= 4, 'genre row satisfied');
+  assert.ok(explore && explore.recs.length >= 4, 'explore row satisfied');
+  const g = new Set(genreRow.recs.map((r) => r.movie.id));
+  assert.ok(explore.recs.every((r) => !g.has(r.movie.id)), 'genre and explore rows are disjoint');
+});
+
+test('groupIntoRows: a gem matching a title-row seed is reserved for explore, never double-placed', () => {
+  // A "Because you watched" title row keyed on keyword 99; one gem (id 51) ALSO carries seed kw 99.
+  // The gem must stay reserved for the explore row, not be absorbed by the title row (the regression
+  // a claim-deferral approach would introduce). No movie may appear in two rows.
+  const ranked = [
+    // four NON-gem sci-fi that DON'T match the title seed (so the title row would otherwise be empty)
+    ...[40, 41, 42, 43].map((id) => grq(id, { genres: [878], score: 0.9, va: 7.0, vc: 9000 })),
+    grq(50, { genres: [878], score: 0.2, va: 8.6, vc: 40 }),
+    grq(51, { genres: [878], score: 0.2, va: 8.9, vc: 25, seeds: [{ type: 'keyword', id: 99 }] }),
+    grq(52, { genres: [878], score: 0.2, va: 8.7, vc: 30 }),
+    grq(53, { genres: [878], score: 0.2, va: 8.3, vc: 60 }),
+    // extra title-seed matches so the title row itself can reach minItems WITHOUT the gem
+    ...[60, 61, 62, 63].map((id) => grq(id, { genres: [12], score: 0.5, va: 6.0, vc: 3000, seeds: [{ type: 'keyword', id: 99 }] })),
+  ];
+  const profile = { ...GROUP_PROFILE, topTitles: [{ title: 'X', keywordIds: [99], peopleIds: [] }], people: {} };
+  const opts = { topCount: 0, minItems: 4, genreDist: { '878': 1 } };
+  const rows = groupIntoRows(ranked, profile, opts);
+  const counts = {};
+  rows.forEach((row) => row.recs.forEach((r) => { counts[r.movie.id] = (counts[r.movie.id] || 0) + 1; }));
+  assert.ok(Object.values(counts).every((c) => c === 1), 'no movie appears in two rows');
+  const explore = rows.find((r) => r.kind === 'explore');
+  assert.ok(explore && explore.recs.some((r) => r.movie.id === 51), 'the seed-matching gem stays in the explore row, not the title row');
+});
+
 const POS = {
   genres: { '878': 4, '18': 2 },
   keywords: { '9': { name: 'time travel', weight: 3 }, '7': { name: 'space', weight: 1 } },

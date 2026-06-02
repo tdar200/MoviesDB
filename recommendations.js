@@ -931,6 +931,9 @@ export function groupIntoRows(ranked, profile, opts = {}) {
 
   // One global placed-Set: a title appears in at most one row.
   const placed = new Set();
+  // Gems reserved for the explore row are skipped by every personalized row (title/genre/person)
+  // and may only be RECLAIMED by the top-genre row when excluding them would starve it (follow-up c).
+  const exploreIds = new Set();
   const recId = (r) => candidateKey(r.movie);
   const num = (v) => Number(v);                       // consistent coercion everywhere
   const seedHas = (r, type, id) =>
@@ -961,7 +964,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   }
 
   const take = (predicate) => ranked
-    .filter((r) => !placed.has(recId(r)) && predicate(r))
+    .filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r)) && predicate(r))
     .slice(0, itemsPerRow);
   const claim = (recs) => recs.forEach((r) => placed.add(recId(r)));
 
@@ -972,9 +975,10 @@ export function groupIntoRows(ranked, profile, opts = {}) {
         .filter(([, w]) => w > 0)
         .sort((a, b) => b[1] - a[1]).map(([id]) => num(id));
 
-  // Reserve the explore gems FIRST (high-rating, low-vote-count titles in the top basket
-  // genre) so the broader genre row below cannot claim them; the row is pushed last for
-  // display order. Deterministic selection: rarest first, then highest rating, then id.
+  // Select the explore gems (high-rating, low-vote-count titles in the top basket genre) and
+  // RESERVE them in exploreIds (skipped by every personalized row), but do NOT claim them: the
+  // top-genre row gets first refusal so a thin catalog never lets "Hidden gems" starve the user's
+  // #1 genre row (follow-up c). Deterministic selection: rarest first, then highest rating, then id.
   const topGenre = genreOrder[0];
   let exploreGems = [];
   if (topGenre != null) {
@@ -989,8 +993,8 @@ export function groupIntoRows(ranked, profile, opts = {}) {
         || (num(b.movie.vote_average) - num(a.movie.vote_average))
         || (num(a.movie.id) - num(b.movie.id)))
       .slice(0, exploreCount);
-    if (exploreGems.length >= minItems) claim(exploreGems);
-    else exploreGems = [];
+    if (exploreGems.length >= minItems) exploreGems.forEach((r) => exploreIds.add(recId(r)));
+    else exploreGems = [];   // fewer than a row's worth: don't reserve, let the genre rows use them
   }
 
   // 2. Because you watched X — strongest contributing titles by profile weight (kind 'title').
@@ -1005,15 +1009,24 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     }
   }
 
-  // 3. More <Genre> — budget allocated by the basket genre histogram when present.
+  // 3. More <Genre> — budget allocated by the basket genre histogram when present. Every genre row
+  // excludes the reserved gems (they belong in the explore row); the TOP genre, if excluding them
+  // would drop it below minItems, RECLAIMS the gems into itself and cancels the explore row.
   for (const gid of genreOrder.slice(0, genreRows)) {
-    // Budget proportional to histogram mass (min the row floor), capped at itemsPerRow.
     const budget = genreDist
       ? Math.max(minItems, Math.round((genreDist[String(gid)] || 0) * itemsPerRow))
       : itemsPerRow;
-    const recs = ranked
-      .filter((r) => !placed.has(recId(r)) && (r.movie.genre_ids || []).map(num).includes(gid))
+    const inGenre = (r) => !placed.has(recId(r)) && (r.movie.genre_ids || []).map(num).includes(gid);
+    const isTopGenre = gid === topGenre;
+    let recs = ranked
+      .filter((r) => inGenre(r) && !exploreIds.has(recId(r)))
       .slice(0, Math.min(budget, itemsPerRow));
+    if (isTopGenre && recs.length < minItems) {
+      // Thin catalog: the top-genre row needs the gems. Reclaim them and cancel the explore row.
+      recs = ranked.filter(inGenre).slice(0, Math.min(budget, itemsPerRow));
+      exploreGems = [];
+      exploreIds.clear();
+    }
     if (recs.length >= minItems) {
       claim(recs);
       rows.push({ kind: 'genre', title: `More ${GENRE_NAMES.get(gid) || 'like this'}`, recs });
@@ -1039,8 +1052,10 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     rows.push({ kind: 'trending', title: 'Trending this week', recs: trendingPicked });
   }
 
-  // 5. Exactly one DETERMINISTIC explore row, pushed last for display order. Its gems were
-  // reserved + claimed above so the genre row could not absorb them.
+  // 5. Exactly one DETERMINISTIC explore row, pushed last. The gems were RESERVED (excluded from
+  // every personalized row) and survive only if the top-genre row didn't need to reclaim them
+  // (follow-up c) — so a thin catalog emits no explore row. They were never claimed, so they are
+  // inherently disjoint from the other rows.
   if (exploreGems.length >= minItems) {
     rows.push({
       kind: 'explore',
