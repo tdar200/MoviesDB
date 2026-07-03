@@ -966,12 +966,18 @@ async function fetchOmdbData(title, year, type) {
       persistOmdbEntry(cacheKey, result);
       return result;
     }
+
+    // Definitive not-found: persist so we don't re-spend quota on it for 24h.
+    omdbCache.set(cacheKey, null);
+    persistOmdbEntry(cacheKey, null);
+    return null;
   } catch (error) {
     console.error('OMDb fetch error:', error);
   }
 
+  // Transient error (network/throttle): remember for this session only, so the
+  // next visit retries instead of pinning a false null for a day.
   omdbCache.set(cacheKey, null);
-  persistOmdbEntry(cacheKey, null);
   return null;
 }
 
@@ -1871,11 +1877,17 @@ function resetFetchState() {
 async function processAndDisplayMovies(movies, isSearch = false) {
   const filtered = applyFilters(movies, isSearch);
 
-  // Fetch RT ratings for filtered movies (limit to first 100 to avoid too many API calls)
-  const moviesToEnrich = filtered.slice(0, 100);
-  await enrichMoviesWithRatings(moviesToEnrich);
-
+  // Enrich the provisional top 100 (per the active sort), not the first 100 in fetch
+  // order: fetch order is trending/popularity, so rank contenders outside it would
+  // never receive their IMDb/RT cross-check. Rank with TMDB-only scores first, enrich
+  // the titles about to be displayed, then re-sort with the enriched ratings.
+  // sortMovies returns copies, so map the top ids back to the pool objects and enrich
+  // those in place - enrichment then persists across re-renders like before.
   const stats = calculateStats(filtered);
+  const provisional = sortMovies(filtered, stats).slice(0, 100);
+  const topKeys = new Set(provisional.map(m => `${m.media_type}:${m.id}`));
+  await enrichMoviesWithRatings(filtered.filter(m => topKeys.has(`${m.media_type}:${m.id}`)));
+
   filteredMovies = sortMovies(filtered, stats);
   displayedCount = 0;
   main.innerHTML = '';
