@@ -910,6 +910,14 @@ async function loadTop250() {
   }
 }
 
+// Write-through for the OMDB cache: the free tier is 1000 req/day, so page
+// reloads must not re-spend quota. 24h TTL keeps young titles' ratings fresh.
+function persistOmdbEntry(cacheKey, value) {
+  try {
+    localStorage.setItem(`omdb:${cacheKey}`, JSON.stringify({ t: Date.now(), v: value }));
+  } catch (e) { /* quota/private mode: in-memory cache still applies */ }
+}
+
 // Fetch OMDb data for a movie (includes RT ratings)
 async function fetchOmdbData(title, year, type) {
   // Skip if no API key configured
@@ -924,6 +932,17 @@ async function fetchOmdbData(title, year, type) {
   }
 
   try {
+    const stored = localStorage.getItem(`omdb:${cacheKey}`);
+    if (stored) {
+      const { t, v } = JSON.parse(stored);
+      if (Date.now() - t < 24 * 60 * 60 * 1000) {
+        omdbCache.set(cacheKey, v);
+        return v;
+      }
+    }
+  } catch (e) { /* private mode or corrupted entry: fall through to network */ }
+
+  try {
     const mediaType = type === 'tv' ? 'series' : 'movie';
     const url = `${CONFIG.OMDB_BASE_URL}/?apikey=${CONFIG.OMDB_API_KEY}&t=${encodeURIComponent(title)}&y=${year}&type=${mediaType}`;
     const response = await fetch(url);
@@ -933,15 +952,18 @@ async function fetchOmdbData(title, year, type) {
       const rtRating = data.Ratings?.find(r => r.Source === 'Rotten Tomatoes');
       const imdbRating = data.imdbRating !== 'N/A' ? parseFloat(data.imdbRating) : null;
       const rtScore = rtRating ? parseInt(rtRating.Value) : null; // e.g., "85%" -> 85
+      const imdbVotes = data.imdbVotes && data.imdbVotes !== 'N/A' ? parseInt(data.imdbVotes.replace(/,/g, ''), 10) : null;
 
       const result = {
         imdbRating,
+        imdbVotes,
         rtScore,
         imdbId: data.imdbID,
         metascore: data.Metascore !== 'N/A' ? parseInt(data.Metascore) : null
       };
 
       omdbCache.set(cacheKey, result);
+      persistOmdbEntry(cacheKey, result);
       return result;
     }
   } catch (error) {
@@ -949,6 +971,7 @@ async function fetchOmdbData(title, year, type) {
   }
 
   omdbCache.set(cacheKey, null);
+  persistOmdbEntry(cacheKey, null);
   return null;
 }
 
@@ -965,6 +988,7 @@ async function enrichMoviesWithRatings(movies) {
       if (omdbData) {
         movie.rtScore = omdbData.rtScore;
         movie.imdbRating = omdbData.imdbRating;
+        movie.imdbVotes = omdbData.imdbVotes;
         movie.metascore = omdbData.metascore;
       }
     }

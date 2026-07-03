@@ -4,17 +4,40 @@
 // Votes act as confidence via the shared IMDb-style Bayesian shrink.
 import { bayesianRating } from './recommendations.js';
 
-// Confidence-weighted quality score. When an RT critic score is present it is
-// averaged with the TMDB rating (both on 0-10) before the Bayesian shrink.
+// Stronger prior than the rec engine's m=150: the browse pool is full of brand-new
+// titles whose first few hundred TMDB votes are self-selected fans, so a few hundred
+// votes should NOT be enough to fully claim a 9.x rating.
+const BROWSE_PRIOR_COUNT = 500;
+
+// Rating blend weights. IMDb counts double: its voter base is 10-100x larger and
+// general-audience, so it is the strongest single check against TMDB fan inflation.
+const W_TMDB = 1;
+const W_IMDB = 2;
+const W_RT = 1;
+
+// Confidence-weighted quality score. Blends whichever sources are present
+// (TMDB always; IMDb and RT via OMDB enrichment, all normalized to 0-10),
+// then shrinks toward the global mean using TMDB+IMDb votes as confidence.
 export function calculateScore(movie) {
-  const voteCount = movie.vote_count || 0;
+  const tmdbVotes = movie.vote_count || 0;
   const tmdbRating = movie.vote_average || 0;
+  const imdbRating = typeof movie.imdbRating === 'number' ? movie.imdbRating : null;
+  const imdbVotes = typeof movie.imdbVotes === 'number' ? movie.imdbVotes : 0;
   const rtScore = movie.rtScore; // 0-100 scale
-  let combinedRating = tmdbRating;
-  if (rtScore !== null && rtScore !== undefined) {
-    combinedRating = (tmdbRating + rtScore / 10) / 2;
+
+  let weightedSum = tmdbRating * W_TMDB;
+  let weightTotal = W_TMDB;
+  if (imdbRating !== null) {
+    weightedSum += imdbRating * W_IMDB;
+    weightTotal += W_IMDB;
   }
-  return bayesianRating(combinedRating, voteCount);
+  if (rtScore !== null && rtScore !== undefined) {
+    weightedSum += (rtScore / 10) * W_RT;
+    weightTotal += W_RT;
+  }
+  const combinedRating = weightedSum / weightTotal;
+
+  return bayesianRating(combinedRating, tmdbVotes + imdbVotes, BROWSE_PRIOR_COUNT);
 }
 
 // Recency ladder relative to the current year (age 0 => 15x, -2x per year, floor 1x).

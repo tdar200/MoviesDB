@@ -11,7 +11,7 @@ export const CONFIG = {
   // OMDb API (for Rotten Tomatoes ratings)
   // Get free key at: http://www.omdbapi.com/apikey.aspx
   // Replace with your own key below:
-  OMDB_API_KEY: '',  // <-- ADD YOUR OMDB API KEY HERE
+  OMDB_API_KEY: 'fffe8d6e',  // free tier: 1000 req/day (cached in localStorage, 24h TTL)
   OMDB_BASE_URL: 'https://www.omdbapi.com',
 
   // YouTube Data API v3
