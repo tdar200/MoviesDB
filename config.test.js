@@ -161,3 +161,37 @@ test('discoverByCast: bare call still valid (default page, no opts)', () => {
   assert.ok(url.includes('page=1'));
   assert.ok(!url.includes('vote_count.gte'), `bare call must not hardcode a vote floor, got ${url}`);
 });
+
+// --- Quality-gems discover: rating-sorted pool widening ---
+
+test('ENDPOINTS.discoverMoviesByRating sorts by vote_average with a 300-vote floor', () => {
+  const url = ENDPOINTS.discoverMoviesByRating(2, 0, null, null, null, 0, '2023-01-01');
+  assert.ok(url.startsWith(`${CONFIG.BASE_URL}/discover/movie?`), url);
+  assert.ok(url.includes('sort_by=vote_average.desc'), url);
+  assert.ok(url.includes('vote_count.gte=300'), url);
+  assert.ok(url.includes('primary_release_date.gte=2023-01-01'), url);
+  assert.ok(url.includes('page=2'), url);
+  assert.ok(url.includes('watch_region=US'), url);
+});
+
+test('ENDPOINTS.discoverMoviesByRating honors a user minVotes above the floor', () => {
+  const url = ENDPOINTS.discoverMoviesByRating(1, 0, null, null, null, 1000, '2023-01-01');
+  assert.ok(url.includes('vote_count.gte=1000'), url);
+});
+
+test('ENDPOINTS.discoverMoviesByRating threads provider/keyword/genre/language filters', () => {
+  const url = ENDPOINTS.discoverMoviesByRating(1, 8, '9715', '16,27', 'en', 0, '2023-01-01');
+  assert.ok(url.includes('with_watch_providers=8'), url);
+  assert.ok(url.includes('with_keywords=9715'), url);
+  assert.ok(url.includes('without_genres=16,27'), url);
+  assert.ok(url.includes('with_original_language=en'), url);
+});
+
+test('ENDPOINTS.discoverTvByRating uses first_air_date for the recency window', () => {
+  const url = ENDPOINTS.discoverTvByRating(3, 0, null, null, null, 0, '2023-01-01');
+  assert.ok(url.startsWith(`${CONFIG.BASE_URL}/discover/tv?`), url);
+  assert.ok(url.includes('sort_by=vote_average.desc'), url);
+  assert.ok(url.includes('vote_count.gte=300'), url);
+  assert.ok(url.includes('first_air_date.gte=2023-01-01'), url);
+  assert.ok(url.includes('page=3'), url);
+});

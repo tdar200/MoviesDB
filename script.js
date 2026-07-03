@@ -2,6 +2,7 @@ import { CONFIG, ENDPOINTS, MOVIE_GENRES, TV_GENRES, THEME_KEYWORDS } from './co
 import { initYouTube, activateYouTube } from './youtube.js';
 import { getRecommendations, getRecommendationRows, clearRecommendationCache } from './recommendations.js';
 import { createWatchTimer } from './watch-timer.js';
+import { calculateScore, newestWeightedScore } from './scoring.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -1638,33 +1639,8 @@ function calculateStats(movies) {
   return { minCount, maxCount, minRating, maxRating, meanRating };
 }
 
-// Calculate score: (rating - baseline) * log of vote count
-// This penalizes lower ratings - only the "above average" portion counts
-// Calculate combined score using TMDB rating and RT score
-// If RT score is available, combine both for better accuracy
-function calculateScore(movie) {
-  const voteCount = movie.vote_count || 1;
-  const tmdbRating = movie.vote_average || 0;
-  const rtScore = movie.rtScore; // 0-100 scale
-
-  // Convert RT score to 0-10 scale if available
-  let combinedRating;
-  if (rtScore !== null && rtScore !== undefined) {
-    const rtRating = rtScore / 10; // Convert 85% -> 8.5
-    // Average of TMDB and RT ratings (both on 0-10 scale)
-    combinedRating = (tmdbRating + rtRating) / 2;
-  } else {
-    combinedRating = tmdbRating;
-  }
-
-  // Score formula with vote count as primary factor:
-  // Votes contribute independently via sqrt, rating is a smaller multiplier
-  const ratingFactor = Math.max(0.1, combinedRating - 5.0); // Min 0.1 to avoid zero scores
-  const voteBase = Math.sqrt(voteCount); // sqrt gives strong vote differentiation
-  return voteBase * (1 + ratingFactor * 0.3); // Rating adds up to ~30% bonus
-}
-
-// Sort movies based on selected sort option
+// Sort movies based on selected sort option; scoring lives in scoring.js
+// (Bayesian rating-first: the weighted score IS a confidence-weighted 0-10 rating).
 function sortMovies(movies, stats) {
   if (!movies || movies.length === 0) return [];
 
@@ -1689,24 +1665,10 @@ function sortMovies(movies, stats) {
         return (b.vote_count || 0) - (a.vote_count || 0);
 
       case 'newest-weighted':
-        // Sort by weighted score with strong recency multiplier
-        const currentYearNW = new Date().getFullYear();
+        // Recency ladder applied to the above-baseline portion of the weighted score
         const yearANW = parseInt((a.release_date || a.first_air_date || '0').split('-')[0]) || 0;
         const yearBNW = parseInt((b.release_date || b.first_air_date || '0').split('-')[0]) || 0;
-        // Recency boost: 2020=3x, 2021=5x, 2022=7x, 2023=9x, 2024=11x, 2025=13x, 2026=15x, older=1x
-        const getBoost = (year) => {
-          if (year >= 2026) return 15;
-          if (year === 2025) return 13;
-          if (year === 2024) return 11;
-          if (year === 2023) return 9;
-          if (year === 2022) return 7;
-          if (year === 2021) return 5;
-          if (year === 2020) return 3;
-          return 1;
-        };
-        const adjustedScoreA = a.weightedScore * getBoost(yearANW);
-        const adjustedScoreB = b.weightedScore * getBoost(yearBNW);
-        return adjustedScoreB - adjustedScoreA;
+        return newestWeightedScore(b.weightedScore, yearBNW) - newestWeightedScore(a.weightedScore, yearANW);
 
       case 'year-new':
         const yearA = parseInt((a.release_date || a.first_air_date || '0').split('-')[0]) || 0;
@@ -1821,6 +1783,54 @@ async function fetchMoreTrending(pagesToFetch = 5) {
 
   allMovies = [...allMovies, ...allNewMovies];
   return allNewMovies;
+}
+
+// Quality-gems pool widening: trending/popularity feeds only supply titles with buzz, so a
+// well-rated low-buzz release can never appear no matter how the client sorts. This pass pulls
+// rating-sorted discover pages (vote floor 300, last 3 years) with the same active filters and
+// merges them into the pool so "good but not famous" titles are sortable at all.
+const GEM_PAGES_PER_TYPE = 5;
+const GEM_WINDOW_YEARS = 3;
+
+async function fetchQualityGems(pagesPerType = GEM_PAGES_PER_TYPE) {
+  const providerId = currentFilters.provider;
+  const excludeGenres = currentFilters.excludeGenres.length > 0 ? currentFilters.excludeGenres.join(',') : null;
+  const language = currentFilters.language || null;
+  const mediaType = currentFilters.mediaType;
+  const minVotes = currentFilters.minVotes || 0;
+  let keywordId = currentFilters.theme;
+  if (currentFilters.genreIsKeyword && currentFilters.genre > 0) {
+    keywordId = keywordId > 0 ? `${keywordId},${currentFilters.genre}` : currentFilters.genre;
+  }
+  const dateGte = `${new Date().getFullYear() - GEM_WINDOW_YEARS}-01-01`;
+
+  const promises = [];
+  for (let page = 1; page <= pagesPerType; page++) {
+    if (mediaType === 'all' || mediaType === 'movie') {
+      promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMoviesByRating(page, providerId, keywordId, excludeGenres, language, minVotes, dateGte)).catch(() => null));
+    }
+    if (mediaType === 'all' || mediaType === 'tv') {
+      promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTvByRating(page, providerId, keywordId, excludeGenres, language, minVotes, dateGte)).catch(() => null));
+    }
+  }
+
+  const responses = await Promise.all(promises);
+  const gems = [];
+  responses.forEach(data => {
+    if (!data?.results) return;
+    data.results.forEach(movie => {
+      if (!seenIds.has(movie.id)) {
+        seenIds.add(movie.id);
+        if (!movie.media_type) {
+          movie.media_type = movie.title ? 'movie' : 'tv';
+        }
+        gems.push(movie);
+      }
+    });
+  });
+
+  allMovies = [...allMovies, ...gems];
+  return gems;
 }
 
 // Reset fetch state
@@ -2654,6 +2664,7 @@ async function loadTrending() {
     }
     
     await fetchMoreTrending(pagesToFetch);
+    await fetchQualityGems();
     await processAndDisplayMovies(allMovies);
   } catch (error) {
     console.error('Error loading trending movies:', error);
