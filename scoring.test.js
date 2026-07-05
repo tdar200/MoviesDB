@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { calculateScore, recencyBoost, newestWeightedScore } from './scoring.js';
 
 // --- calculateScore: Bayesian rating-first (votes are confidence, not the score) ---
-// Browse prior m=500, C=6.5. Rating blend weights: TMDB 1, IMDb 2, RT 1.
+// Browse prior m=500, C=6.5. Rating blend weights: TMDB 1, IMDb 2, RT 0.5.
+// Above 10k combined votes a log-scale proven-at-scale bonus (0.15/decade, cap +0.4)
+// separates mass-vetted titles from equal-rated ones the prior can no longer tell apart.
 
 test('calculateScore keeps a heavily-voted title near its raw rating', () => {
   // 7.7 avg, 8000 votes, m=500 -> (7.7*8000 + 6.5*500) / 8500 = 7.63
@@ -49,7 +51,38 @@ test('calculateScore deflates a TMDB fan-inflated title that IMDb rates much low
   const tmdbOnly = calculateScore({ vote_average: 8.95, vote_count: 1847 });
   assert.ok(withImdb < tmdbOnly - 0.5, `expected a >=0.5 drop: ${tmdbOnly} -> ${withImdb}`);
   // blend (8.95 + 14.6)/3 = 7.85, votes 15908 -> (7.85*15908 + 3250)/16408 = 7.81
-  assert.ok(Math.abs(withImdb - 7.81) < 0.01, `expected ~7.81, got ${withImdb}`);
+  // + scale bonus 0.15*log10(1.59) = 0.03 -> 7.84
+  assert.ok(Math.abs(withImdb - 7.84) < 0.01, `expected ~7.84, got ${withImdb}`);
+});
+
+// --- Proven-at-scale bonus: votes keep mattering past the prior's saturation point ---
+
+test('calculateScore separates equal ratings by vote mass above the pivot', () => {
+  // 8.0@30k -> bayes 7.975 + 0.15*log10(3) = 8.05; 8.0@1k -> bayes 7.50, no bonus
+  const proven = calculateScore({ vote_average: 8.0, vote_count: 30000 });
+  const thin = calculateScore({ vote_average: 8.0, vote_count: 1000 });
+  assert.ok(Math.abs(proven - 8.05) < 0.01, `expected ~8.05, got ${proven}`);
+  assert.ok(Math.abs(thin - 7.50) < 0.01, `expected ~7.50, got ${thin}`);
+  assert.ok(proven - thin > 0.4, `expected a >0.4 gap, got ${proven - thin}`);
+});
+
+test('calculateScore counts IMDb votes toward the scale bonus', () => {
+  // Matrix numbers: blend (8.25 + 17.4 + 4.15)/3.5 = 8.51 @ 2.27M votes
+  // -> bayes ~8.51 + 0.15*log10(227) = +0.354 -> ~8.86
+  const score = calculateScore({ vote_average: 8.25, vote_count: 28121, imdbRating: 8.7, imdbVotes: 2243093, rtScore: 83 });
+  assert.ok(Math.abs(score - 8.86) < 0.01, `expected ~8.86, got ${score}`);
+});
+
+test('calculateScore never punishes a small title via the scale bonus', () => {
+  // below the 10k pivot the bonus is exactly zero, not negative
+  const gem = calculateScore({ vote_average: 8.5, vote_count: 800 });
+  assert.ok(Math.abs(gem - 7.73) < 0.01, `expected unchanged ~7.73, got ${gem}`);
+});
+
+test('calculateScore caps the scale bonus so popularity cannot outrank quality', () => {
+  // 10M votes would earn +0.45 uncapped; cap holds it at +0.4
+  const score = calculateScore({ vote_average: 8.0, vote_count: 10000000 });
+  assert.ok(Math.abs(score - 8.4) < 0.01, `expected ~8.4, got ${score}`);
 });
 
 test('calculateScore blends all three sources with TMDB 1 / IMDb 2 / RT 0.5 weights', () => {

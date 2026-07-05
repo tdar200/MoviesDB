@@ -18,6 +18,21 @@ const W_TMDB = 1;
 const W_IMDB = 2;
 const W_RT = 0.5;
 
+// Proven-at-scale bonus. The Bayesian prior separates 1k from 10k votes but
+// saturates past that — 30k and 2.5M votes score identically. Above the pivot,
+// each decade of combined votes adds a small log-scale edge so a title vetted by
+// millions outranks an equal-rated one vetted by thousands. Reward-only (small
+// titles are never punished, low-buzz gems keep their shot) and capped so
+// popularity can never buy back a rating deficit.
+const VOTE_SCALE_PIVOT = 10000;
+const VOTE_SCALE_WEIGHT = 0.15; // per decade of votes above the pivot
+const VOTE_SCALE_CAP = 0.4;
+
+function provenAtScaleBonus(votes) {
+  if (votes <= VOTE_SCALE_PIVOT) return 0;
+  return Math.min(VOTE_SCALE_WEIGHT * Math.log10(votes / VOTE_SCALE_PIVOT), VOTE_SCALE_CAP);
+}
+
 // Confidence-weighted quality score. Blends whichever sources are present
 // (TMDB always; IMDb and RT via OMDB enrichment, all normalized to 0-10),
 // then shrinks toward the global mean using TMDB+IMDb votes as confidence.
@@ -39,8 +54,9 @@ export function calculateScore(movie) {
     weightTotal += W_RT;
   }
   const combinedRating = weightedSum / weightTotal;
+  const totalVotes = tmdbVotes + imdbVotes;
 
-  return bayesianRating(combinedRating, tmdbVotes + imdbVotes, BROWSE_PRIOR_COUNT);
+  return bayesianRating(combinedRating, totalVotes, BROWSE_PRIOR_COUNT) + provenAtScaleBonus(totalVotes);
 }
 
 // Recency ladder relative to the current year (age 0 => 15x, -2x per year, floor 1x).
