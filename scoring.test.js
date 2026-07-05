@@ -23,10 +23,10 @@ test('calculateScore ranks a well-rated gem above a lower-rated blockbuster', ()
   assert.ok(gem > blockbuster, `gem ${gem} should beat blockbuster ${blockbuster}`);
 });
 
-test('calculateScore averages TMDB with RT when rtScore is present', () => {
-  // (7.7 + 9.4)/2 = 8.55 combined, 8000 votes -> (8.55*8000 + 3250)/8500 = 8.43
+test('calculateScore averages TMDB with half-weight RT when rtScore is present', () => {
+  // (7.7 + 9.4*0.5)/1.5 = 8.267 combined, 8000 votes -> (8.267*8000 + 3250)/8500 = 8.16
   const score = calculateScore({ vote_average: 7.7, vote_count: 8000, rtScore: 94 });
-  assert.ok(Math.abs(score - 8.43) < 0.01, `expected ~8.43, got ${score}`);
+  assert.ok(Math.abs(score - 8.16) < 0.01, `expected ~8.16, got ${score}`);
 });
 
 test('calculateScore returns the global mean for a vote-less title', () => {
@@ -52,10 +52,17 @@ test('calculateScore deflates a TMDB fan-inflated title that IMDb rates much low
   assert.ok(Math.abs(withImdb - 7.81) < 0.01, `expected ~7.81, got ${withImdb}`);
 });
 
-test('calculateScore blends all three sources with TMDB 1 / IMDb 2 / RT 1 weights', () => {
-  // (8.0 + 2*7.0 + 8.0)/4 = 7.5, votes 1000+10000 -> (7.5*11000 + 3250)/11500 = 7.46
+test('calculateScore blends all three sources with TMDB 1 / IMDb 2 / RT 0.5 weights', () => {
+  // (8.0 + 2*7.0 + 8.0*0.5)/3.5 = 7.43, votes 1000+10000 -> (7.43*11000 + 3250)/11500 = 7.39
   const score = calculateScore({ vote_average: 8.0, vote_count: 1000, imdbRating: 7.0, imdbVotes: 10000, rtScore: 80 });
-  assert.ok(Math.abs(score - 7.46) < 0.01, `expected ~7.46, got ${score}`);
+  assert.ok(Math.abs(score - 7.39) < 0.01, `expected ~7.39, got ${score}`);
+});
+
+test('calculateScore does not drag a critic-lukewarm audience favorite below its audience consensus', () => {
+  // Interstellar: TMDB 8.48@40k, IMDb 8.7@2.5M, RT only 73%. Audience sources say ~8.6;
+  // half-weight RT must keep the score above 8.4 (full-weight RT sank it to 8.29).
+  const score = calculateScore({ vote_average: 8.48, vote_count: 40196, imdbRating: 8.7, imdbVotes: 2516752, rtScore: 73 });
+  assert.ok(score > 8.4, `expected > 8.4, got ${score}`);
 });
 
 test('calculateScore ignores null imdbRating and non-numeric imdbVotes', () => {

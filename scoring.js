@@ -11,9 +11,12 @@ const BROWSE_PRIOR_COUNT = 500;
 
 // Rating blend weights. IMDb counts double: its voter base is 10-100x larger and
 // general-audience, so it is the strongest single check against TMDB fan inflation.
+// RT is the critic Tomatometer (no free audience-score API exists), so it counts
+// half: audience sources (TMDB+IMDb) outweigh critics 6:1 and a critic-lukewarm
+// audience favorite (Interstellar, 73% RT vs IMDb 8.7@2.5M) is not dragged down.
 const W_TMDB = 1;
 const W_IMDB = 2;
-const W_RT = 1;
+const W_RT = 0.5;
 
 // Confidence-weighted quality score. Blends whichever sources are present
 // (TMDB always; IMDb and RT via OMDB enrichment, all normalized to 0-10),
