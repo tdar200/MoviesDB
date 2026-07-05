@@ -195,3 +195,15 @@ test('ENDPOINTS.discoverTvByRating uses first_air_date for the recency window', 
   assert.ok(url.includes('first_air_date.gte=2023-01-01'), url);
   assert.ok(url.includes('page=3'), url);
 });
+
+test('ENDPOINTS.discoverMoviesByRating omits the date floor for all-time classics', () => {
+  const url = ENDPOINTS.discoverMoviesByRating(1, 0, null, null, null, 5000, null);
+  assert.ok(!url.includes('primary_release_date.gte'), url);
+  assert.ok(url.includes('vote_count.gte=5000'), url);
+});
+
+test('ENDPOINTS.discoverTvByRating omits the date floor for all-time classics', () => {
+  const url = ENDPOINTS.discoverTvByRating(1, 0, null, null, null, 2000, null);
+  assert.ok(!url.includes('first_air_date.gte'), url);
+  assert.ok(url.includes('vote_count.gte=2000'), url);
+});

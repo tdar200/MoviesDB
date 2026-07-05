@@ -1816,11 +1816,14 @@ async function fetchMoreTrending(pagesToFetch = 5) {
 }
 
 // Quality-gems pool widening: trending/popularity feeds only supply titles with buzz, so a
-// well-rated low-buzz release can never appear no matter how the client sorts. This pass pulls
-// rating-sorted discover pages (vote floor 300, last 3 years) with the same active filters and
-// merges them into the pool so "good but not famous" titles are sortable at all.
+// well-rated low-buzz release can never appear no matter how the client sorts. Two passes:
+// recent gems (vote floor 300, last 3 years) so "good but not famous" new titles are sortable,
+// and all-time classics (no date floor, high vote floor) so the weighted sort can surface
+// established greats like Interstellar or The Matrix that never trend anymore.
 const GEM_PAGES_PER_TYPE = 5;
 const GEM_WINDOW_YEARS = 3;
+const CLASSIC_VOTE_FLOOR_MOVIE = 5000;
+const CLASSIC_VOTE_FLOOR_TV = 2000;
 
 async function fetchQualityGems(pagesPerType = GEM_PAGES_PER_TYPE) {
   const providerId = currentFilters.provider;
@@ -1841,6 +1844,16 @@ async function fetchQualityGems(pagesPerType = GEM_PAGES_PER_TYPE) {
     }
     if (mediaType === 'all' || mediaType === 'tv') {
       promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTvByRating(page, providerId, keywordId, excludeGenres, language, minVotes, dateGte)).catch(() => null));
+    }
+  }
+
+  // All-time classics pass: no date floor, high vote floor keeps it to established titles
+  for (let page = 1; page <= pagesPerType; page++) {
+    if (mediaType === 'all' || mediaType === 'movie') {
+      promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMoviesByRating(page, providerId, keywordId, excludeGenres, language, Math.max(minVotes, CLASSIC_VOTE_FLOOR_MOVIE), null)).catch(() => null));
+    }
+    if (mediaType === 'all' || mediaType === 'tv') {
+      promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTvByRating(page, providerId, keywordId, excludeGenres, language, Math.max(minVotes, CLASSIC_VOTE_FLOOR_TV), null)).catch(() => null));
     }
   }
 
