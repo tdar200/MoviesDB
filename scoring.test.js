@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { calculateScore, recencyBoost, newestWeightedScore } from './scoring.js';
 
 // --- calculateScore: Bayesian rating-first (votes are confidence, not the score) ---
-// Browse prior m=500, C=6.5. Rating blend weights: TMDB 1, IMDb 2, RT 0.5.
+// Browse prior m=500, C=6.5. Rating blend: TMDB 1, IMDb 2 — audience sources only;
+// RT (critic Tomatometer) is display-only and excluded from the score.
 // Above 10k combined votes a log-scale proven-at-scale bonus (0.15/decade, cap +0.4)
 // separates mass-vetted titles from equal-rated ones the prior can no longer tell apart.
+// TV scores carry a -0.25 calibration offset: series ratings run structurally hotter
+// (only fans finish and rate a show), so raw cross-media comparison biases against film.
 
 test('calculateScore keeps a heavily-voted title near its raw rating', () => {
   // 7.7 avg, 8000 votes, m=500 -> (7.7*8000 + 6.5*500) / 8500 = 7.63
@@ -25,10 +28,10 @@ test('calculateScore ranks a well-rated gem above a lower-rated blockbuster', ()
   assert.ok(gem > blockbuster, `gem ${gem} should beat blockbuster ${blockbuster}`);
 });
 
-test('calculateScore averages TMDB with half-weight RT when rtScore is present', () => {
-  // (7.7 + 9.4*0.5)/1.5 = 8.267 combined, 8000 votes -> (8.267*8000 + 3250)/8500 = 8.16
-  const score = calculateScore({ vote_average: 7.7, vote_count: 8000, rtScore: 94 });
-  assert.ok(Math.abs(score - 8.16) < 0.01, `expected ~8.16, got ${score}`);
+test('calculateScore ignores rtScore — critic Tomatometer is display-only', () => {
+  const withRt = calculateScore({ vote_average: 7.7, vote_count: 8000, rtScore: 94 });
+  const withoutRt = calculateScore({ vote_average: 7.7, vote_count: 8000 });
+  assert.equal(withRt, withoutRt);
 });
 
 test('calculateScore returns the global mean for a vote-less title', () => {
@@ -67,10 +70,24 @@ test('calculateScore separates equal ratings by vote mass above the pivot', () =
 });
 
 test('calculateScore counts IMDb votes toward the scale bonus', () => {
-  // Matrix numbers: blend (8.25 + 17.4 + 4.15)/3.5 = 8.51 @ 2.27M votes
-  // -> bayes ~8.51 + 0.15*log10(227) = +0.354 -> ~8.86
+  // Matrix numbers: blend (8.25 + 17.4)/3 = 8.55 @ 2.27M votes
+  // -> bayes ~8.55 + 0.15*log10(227) = +0.354 -> ~8.90
   const score = calculateScore({ vote_average: 8.25, vote_count: 28121, imdbRating: 8.7, imdbVotes: 2243093, rtScore: 83 });
-  assert.ok(Math.abs(score - 8.86) < 0.01, `expected ~8.86, got ${score}`);
+  assert.ok(Math.abs(score - 8.90) < 0.01, `expected ~8.90, got ${score}`);
+});
+
+// --- TV calibration: series ratings run hotter than film ratings ---
+
+test('calculateScore applies a -0.25 calibration offset to TV titles', () => {
+  const base = { vote_average: 8.5, vote_count: 20000, imdbRating: 8.7, imdbVotes: 500000 };
+  const asMovie = calculateScore({ ...base, media_type: 'movie' });
+  const asTv = calculateScore({ ...base, media_type: 'tv' });
+  assert.ok(Math.abs(asMovie - asTv - 0.25) < 0.001, `expected 0.25 gap, got ${asMovie - asTv}`);
+});
+
+test('calculateScore treats a missing media_type as film (no offset)', () => {
+  const base = { vote_average: 8.5, vote_count: 20000 };
+  assert.equal(calculateScore(base), calculateScore({ ...base, media_type: 'movie' }));
 });
 
 test('calculateScore never punishes a small title via the scale bonus', () => {
@@ -85,17 +102,18 @@ test('calculateScore caps the scale bonus so popularity cannot outrank quality',
   assert.ok(Math.abs(score - 8.4) < 0.01, `expected ~8.4, got ${score}`);
 });
 
-test('calculateScore blends all three sources with TMDB 1 / IMDb 2 / RT 0.5 weights', () => {
-  // (8.0 + 2*7.0 + 8.0*0.5)/3.5 = 7.43, votes 1000+10000 -> (7.43*11000 + 3250)/11500 = 7.39
+test('calculateScore blends TMDB 1 / IMDb 2 and ignores RT entirely', () => {
+  // (8.0 + 2*7.0)/3 = 7.33, votes 1000+10000 -> (7.33*11000 + 3250)/11500 = 7.30
+  // + scale bonus 0.15*log10(1.1) = 0.006 -> 7.30
   const score = calculateScore({ vote_average: 8.0, vote_count: 1000, imdbRating: 7.0, imdbVotes: 10000, rtScore: 80 });
-  assert.ok(Math.abs(score - 7.39) < 0.01, `expected ~7.39, got ${score}`);
+  assert.ok(Math.abs(score - 7.30) < 0.01, `expected ~7.30, got ${score}`);
 });
 
 test('calculateScore does not drag a critic-lukewarm audience favorite below its audience consensus', () => {
-  // Interstellar: TMDB 8.48@40k, IMDb 8.7@2.5M, RT only 73%. Audience sources say ~8.6;
-  // half-weight RT must keep the score above 8.4 (full-weight RT sank it to 8.29).
+  // Interstellar: TMDB 8.48@40k, IMDb 8.7@2.5M, RT only 73%. With RT out of the blend:
+  // (8.48 + 17.4)/3 = 8.63 @ 2.56M votes + scale bonus 0.36 -> ~8.99
   const score = calculateScore({ vote_average: 8.48, vote_count: 40196, imdbRating: 8.7, imdbVotes: 2516752, rtScore: 73 });
-  assert.ok(score > 8.4, `expected > 8.4, got ${score}`);
+  assert.ok(Math.abs(score - 8.99) < 0.01, `expected ~8.99, got ${score}`);
 });
 
 test('calculateScore ignores null imdbRating and non-numeric imdbVotes', () => {
