@@ -20,6 +20,14 @@ export const CONFIG = {
   YOUTUBE_API_KEY: '',  // <-- ADD YOUR YOUTUBE API KEY HERE
   YOUTUBE_BASE_URL: 'https://www.googleapis.com/youtube/v3',
 
+  // YTS torrent stream helper (stream-server.mjs). Leave '' to use the same origin
+  // (local `npm start`). To enable the YTS source on a DEPLOYED site, host the
+  // helper on an always-on machine reachable over HTTPS (e.g. your machine behind
+  // a Cloudflare Tunnel) and put its base URL here, e.g. 'https://helper.example.com'.
+  // No trailing slash. Can also be set per-device at runtime with
+  // ?helper=<url> (persists) or localStorage.streamHelperBase — those win over this.
+  STREAM_HELPER_BASE: '',
+
   // Performance settings
   MAX_PAGES: 10,
   CACHE_DURATION: 300000,  // 5 minutes in milliseconds

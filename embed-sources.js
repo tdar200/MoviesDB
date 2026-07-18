@@ -9,20 +9,25 @@
 // Video embed sources - Updated Jul 18, 2026
 // Ordered BEST -> WORST. This array order IS the ranking shown in the app's
 // source dropdown (populateSourceSelector renders it top-to-bottom), and index 0
-// is the default source. Ranking basis: real end-to-end playback tests
-// (playback-tester.mjs, Jul 18 2026) — providers proven to actually stream come
-// first (most reliable at top), then reachable real-user fallbacks, then the
-// duplicate-backend mirrors. Dead hosts stay in BLOCKED_PROVIDERS (hidden).
+// is the default source.
+//
+// Ranking basis: what loads reliably in a REAL browser first (this is the
+// authority — automated playback ≠ user experience: VixSrc streamed under
+// headless Chrome but serves the user a Cloudflare "you have been blocked" page,
+// so it is NOT a good default). Mainstream/proven providers lead; providers that
+// stream but are prone to Cloudflare/anti-bot friction sit just below; reachable
+// fallbacks and duplicate-backend mirrors last. Dead hosts stay in
+// BLOCKED_PROVIDERS (hidden).
 export const EMBED_SOURCES = [
-  // Tier 1 — verified to stream movies AND tv incl. brand-new titles, 0 CDN-403s.
-  { name: 'VixSrc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vixsrc.to/tv/${id}/${s}/${e}` : `https://vixsrc.to/${type}/${id}` },
-  { name: '111Movies', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://111movies.com/tv/${id}/${s}/${e}` : `https://111movies.com/${type}/${id}` },
-  // Tier 2 — verified to stream, but coverage is title-dependent.
+  // Tier 1 — mainstream, load cleanly in a normal browser, stream under test.
   { name: 'Videasy', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.videasy.to/tv/${id}/${s}/${e}` : `https://player.videasy.to/${type}/${id}` },
   { name: 'VidLink', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidlink.pro/tv/${id}/${s}/${e}` : `https://vidlink.pro/${type}/${id}` },
-  // Tier 3 — reachable, serve a real player page (good real-user fallbacks) but
-  // did not resolve a stream under automation (anti-bot); ordered by page quality.
   { name: 'VidFast', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidfast.pro/tv/${id}/${s}/${e}` : `https://vidfast.pro/${type}/${id}` },
+  // Tier 2 — stream under test but can hit Cloudflare/anti-bot friction in-browser
+  // (VixSrc has shown a "you have been blocked" page), so they trail the mainstream.
+  { name: '111Movies', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://111movies.com/tv/${id}/${s}/${e}` : `https://111movies.com/${type}/${id}` },
+  { name: 'VixSrc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vixsrc.to/tv/${id}/${s}/${e}` : `https://vixsrc.to/${type}/${id}` },
+  // Tier 3 — reachable real-user fallbacks (serve a player page).
   { name: 'VidSrc.to', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.to/embed/tv/${id}/${s}/${e}` : `https://vidsrc.to/embed/${type}/${id}` },
   { name: 'Nontongo', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.nontongo.win/embed/tv/${id}/${s}/${e}` : `https://www.nontongo.win/embed/${type}/${id}` },
   { name: 'SuperEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://multiembed.mov/?video_id=${id}&tmdb=1` },

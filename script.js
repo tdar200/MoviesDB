@@ -72,6 +72,33 @@ import { EMBED_SOURCES, IFRAME_BLOCKED_PROVIDERS, BLOCKED_PROVIDERS } from './em
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
+// The YTS torrent source needs the stream helper (stream-server.mjs). It can't run
+// on serverless, so it lives either at the SAME origin (local `npm start`) or on a
+// separately-hosted helper whose HTTPS base URL is configured.
+const IS_LOCAL_HELPER = /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\]|::1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/
+  .test(location.hostname);
+
+// Resolve the helper base URL. Precedence: ?helper=<url> query param (persisted so
+// it's a one-time setup) > localStorage > config.js > same origin ('').
+const STREAM_HELPER_BASE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('helper');
+    if (q !== null) {
+      if (q) localStorage.setItem('streamHelperBase', q.replace(/\/+$/, ''));
+      else localStorage.removeItem('streamHelperBase');
+    }
+    const ls = localStorage.getItem('streamHelperBase');
+    if (ls) return ls.replace(/\/+$/, '');
+  } catch { /* localStorage may be unavailable */ }
+  return (CONFIG.STREAM_HELPER_BASE || '').replace(/\/+$/, '');
+})();
+
+// The helper is reachable if we're same-origin local OR a remote base is configured.
+const HELPER_AVAILABLE = IS_LOCAL_HELPER || STREAM_HELPER_BASE !== '';
+
+// Build a helper endpoint URL (prepends the configured base; '' = same origin).
+const helperUrl = (path) => STREAM_HELPER_BASE + path;
+
 // Provider test results storage key
 const PROVIDER_RESULTS_KEY = 'providerTestResults';
 const PROVIDER_RESULTS_FILE = 'provider-results.json';
@@ -435,8 +462,12 @@ function populateSourceSelector() {
     // Skip completely blocked/dead providers.
     if (BLOCKED_PROVIDERS.includes(source.name)) return;
 
-    // Torrent sources: movies only.
+    // Torrent sources need the stream helper (stream-server.mjs), which can't run
+    // on serverless. Offer them only when a helper is reachable: same-origin local
+    // (`npm start`) or a configured remote helper base (CONFIG.STREAM_HELPER_BASE /
+    // ?helper= / localStorage). Otherwise they'd just error "can't reach the helper".
     if (source.torrent) {
+      if (!HELPER_AVAILABLE) return;
       if (source.movieOnly && isTvNow) return;
       const option = document.createElement('option');
       option.value = index;
@@ -1107,8 +1138,8 @@ function clearYtsPoll() {
 function beaconStop(hash) {
   if (!hash) return;
   try {
-    if (navigator.sendBeacon) navigator.sendBeacon(`/stream-stop?hash=${hash}`);
-    else fetch(`/stream-stop?hash=${hash}`, { keepalive: true }).catch(() => {});
+    if (navigator.sendBeacon) navigator.sendBeacon(helperUrl(`/stream-stop?hash=${hash}`));
+    else fetch(helperUrl(`/stream-stop?hash=${hash}`), { keepalive: true }).catch(() => {});
   } catch { /* ignore */ }
 }
 
@@ -1150,7 +1181,7 @@ function startYtsStatusPolling(hash) {
   ytsPollTimer = setInterval(async () => {
     if (currentTorrentHash !== hash) { clearYtsPoll(); return; }
     let s;
-    try { s = await fetch(`/stream-status?hash=${hash}`).then((r) => r.json()); }
+    try { s = await fetch(helperUrl(`/stream-status?hash=${hash}`)).then((r) => r.json()); }
     catch { return; }
     if (currentTorrentHash !== hash) return;
 
@@ -1204,7 +1235,7 @@ function playYtsQuality(hash) {
   const title = currentYtsData?.title || currentPlayingMovie?.title || currentPlayingMovie?.name || '';
   setYtsStatus(`Connecting to peers… (${t?.quality || ''})\nFirst frames can take a moment.`);
 
-  playerVideo.src = `/stream?hash=${hash}&title=${encodeURIComponent(title)}`;
+  playerVideo.src = helperUrl(`/stream?hash=${hash}&title=${encodeURIComponent(title)}`);
   playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
   playerVideo.onerror = () => setYtsStatus('Stream error — try a different quality or movie.', true);
   playerVideo.load();
@@ -1228,11 +1259,16 @@ async function loadYtsStream(movie) {
     if (!imdbId) { setYtsStatus('No IMDb id for this title — YTS unavailable.', true); return; }
     if (currentPlayingMovie?.id !== reqId) return; // user switched away
 
-    const data = await fetch(`/yts?imdb=${encodeURIComponent(imdbId)}`)
+    const data = await fetch(helperUrl(`/yts?imdb=${encodeURIComponent(imdbId)}`))
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
     if (!data) {
-      setYtsStatus('Could not reach the local stream helper. Run "npm start" (not a static server).', true);
+      setYtsStatus(
+        STREAM_HELPER_BASE
+          ? `Could not reach the stream helper at ${STREAM_HELPER_BASE}. Is it running and reachable over HTTPS?`
+          : 'Could not reach the local stream helper. Run "npm start" (not a static server).',
+        true
+      );
       return;
     }
     const torrents = (data.torrents || []).filter((t) => t.hash);
