@@ -420,43 +420,22 @@ function buildSignalItems() {
 // Populate source selector with test results percentages
 function populateSourceSelector() {
   sourceSelect.innerHTML = '';
-  const testResults = getProviderTestResults();
 
-  // Create array with sources and their percentages for sorting
-  const sourcesWithResults = EMBED_SOURCES.map((source, index) => ({
-    source,
-    index,
-    percentage: testResults.get(source.name)
-  }));
-
-  // Sort by percentage (highest first), then by name for those without results
-  if (testResults.size > 0) {
-    sourcesWithResults.sort((a, b) => {
-      // Both have percentages - sort by percentage desc
-      if (a.percentage !== undefined && b.percentage !== undefined) {
-        return b.percentage - a.percentage;
-      }
-      // One has percentage - it goes first
-      if (a.percentage !== undefined) return -1;
-      if (b.percentage !== undefined) return 1;
-      // Neither has percentage - maintain original order
-      return a.index - b.index;
-    });
-  }
-
-  // Providers to always include regardless of test results
-  const alwaysInclude = ['VidSrc.cc', 'Videasy', 'VidLink', 'Nontongo', 'VidSrc.to', 'Embed.su', 'Autoembed.cc', 'SuperEmbed', 'VidSrcMe.ru', 'VidSrcMe.su', 'VidSrc-Me.ru', 'VidSrc-Me.su', 'VidSrc-Embed.ru', 'VidSrc-Embed.su', 'Vsrc.su'];
+  // The dropdown mirrors EMBED_SOURCES order, which is a curated best -> worst
+  // ranking (see embed-sources.js). We no longer re-sort by provider-results.json:
+  // that data came from the old headless tester which now hits provider anti-bot
+  // and reports everything as failed, so it ranked good sources as bad.
 
   // Torrent sources (e.g. YTS) are movies-only; hide them when playing TV.
   const isTvNow = currentPlayingMovie?.media_type === 'tv';
 
-  sourcesWithResults.forEach(({ source, index, percentage }) => {
-    // Skip completely blocked providers
-    if (BLOCKED_PROVIDERS.includes(source.name)) {
-      return;
-    }
+  let firstUsableIndex = null;
 
-    // Torrent sources: movies only, always shown (no test scoring), labelled.
+  EMBED_SOURCES.forEach((source, index) => {
+    // Skip completely blocked/dead providers.
+    if (BLOCKED_PROVIDERS.includes(source.name)) return;
+
+    // Torrent sources: movies only.
     if (source.torrent) {
       if (source.movieOnly && isTvNow) return;
       const option = document.createElement('option');
@@ -466,42 +445,18 @@ function populateSourceSelector() {
       return;
     }
 
-    // Skip providers that failed the test (0% or very low playback)
-    // Unless they're in the always include list
-    if (testResults.size > 0 && (percentage === undefined || percentage < 50)) {
-      if (!alwaysInclude.includes(source.name)) {
-        return; // Don't show failed/untested providers when we have test data
-      }
-    }
-
+    const isNewTab = IFRAME_BLOCKED_PROVIDERS.includes(source.name);
     const option = document.createElement('option');
     option.value = index;
-
-    // Check if we have test results for this provider
-    const isBlocked = IFRAME_BLOCKED_PROVIDERS.includes(source.name);
-    if (percentage !== undefined && percentage > 0) {
-      option.textContent = `${source.name} (${percentage}%)${isBlocked ? ' ↗' : ''}`;
-    } else {
-      option.textContent = `${source.name}${isBlocked ? ' ↗' : ''}`;
-    }
-
-    // Mark iframe-blocked providers with data attribute
-    if (isBlocked) {
-      option.dataset.newTab = 'true';
-    }
-
+    option.textContent = `${source.name}${isNewTab ? ' ↗' : ''}`;
+    if (isNewTab) option.dataset.newTab = 'true';
     sourceSelect.appendChild(option);
+
+    // Default = first shown source that loads inline (best-ranked, iframe-loadable).
+    if (firstUsableIndex === null && !isNewTab) firstUsableIndex = index;
   });
 
-  // Set default to highest-scoring provider that is iframe-loadable
-  if (testResults.size > 0) {
-    const firstUsable = sourcesWithResults.find(s =>
-      s.percentage !== undefined &&
-      !BLOCKED_PROVIDERS.includes(s.source.name) &&
-      !IFRAME_BLOCKED_PROVIDERS.includes(s.source.name)
-    );
-    if (firstUsable) currentSourceIndex = firstUsable.index;
-  }
+  if (firstUsableIndex !== null) currentSourceIndex = firstUsableIndex;
   sourceSelect.value = currentSourceIndex;
 }
 
@@ -1206,9 +1161,12 @@ function startYtsStatusPolling(hash) {
     }
     if (s.state === 'ready' && s.playable === false) {
       clearYtsPoll();
-      // Auto-step to the next higher, not-yet-tried quality (1080p is usually
-      // .mp4 even when 720p is .mkv) so the default 720p still ends up playing.
+      // Auto-step to the next not-yet-tried quality (1080p is usually .mp4 even
+      // when 720p is .mkv) so the default still ends up playing. Only consider
+      // torrents that CAN play: skip x265 (mkv-only) and 0-seed (never connects).
       const next = [...currentYtsTorrents]
+        .filter((t) => (t.video_codec || 'x264').toLowerCase() !== 'x265')
+        .filter((t) => (Number(t.seeds) || 0) > 0)
         .sort((a, b) => qualityRank(a.quality) - qualityRank(b.quality))
         .map((t) => (t.hash || '').toLowerCase())
         .find((h) => !ytsTriedHashes.has(h));
@@ -1285,12 +1243,15 @@ async function loadYtsStream(movie) {
     currentYtsTorrents = torrents;
     ytsTriedHashes = new Set();
 
-    // Default pick: the browser-playable (x264, not x265/mkv-only) torrent with
-    // the BEST seed count — more seeders means more throughput, which is the
-    // real bottleneck. Prefer 1080p for quality, tie-break by seeds.
+    // Default pick: a browser-playable (x264, not x265/mkv-only) torrent, and
+    // crucially one that HAS SEEDS — a 0-seed torrent never finds peers and hangs
+    // forever on "Connecting…". So filter to seeded torrents first; only fall back
+    // to unseeded if literally nothing is seeded. Among seeded, prefer 1080p (best
+    // quality, usually .mp4), then 720p, then 4K; tie-break by seed count.
     const playablePool = torrents.filter((t) => (t.video_codec || 'x264').toLowerCase() !== 'x265');
-    const pool = playablePool.length ? playablePool : torrents;
-    // 1080p first (best quality that's usually .mp4), then 720p, then 4K.
+    const base = playablePool.length ? playablePool : torrents;
+    const seeded = base.filter((t) => (Number(t.seeds) || 0) > 0);
+    const pool = seeded.length ? seeded : base;
     const defRank = (q) => (q === '1080p' ? 0 : q === '720p' ? 1 : q === '2160p' ? 2 : 3);
     const def = [...pool].sort((a, b) => {
       const r = defRank(a.quality) - defRank(b.quality);

@@ -335,9 +335,36 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Discovery App + YTS stream helper running at http://localhost:${PORT}`);
+// Start listening, auto-advancing to the next port if one is already in use
+// (port 3000 is commonly taken by another dev server). Without this, EADDRINUSE
+// crashes the process with a raw stack trace and YTS silently can't reach /yts.
+// Set PORT to pin a specific port and disable the auto-advance.
+const REQUESTED_PORT = Number(PORT);
+let currentPort = REQUESTED_PORT;
+let portTriesLeft = 10;
+
+server.on('listening', () => {
+  const p = server.address().port;
+  console.log(`\n  Discovery App + YTS stream helper running.`);
+  console.log(`  Open the app here:  http://localhost:${p}\n`);
+  if (p !== REQUESTED_PORT) {
+    console.log(`  (port ${REQUESTED_PORT} was taken — using ${p} instead)\n`);
+  }
 });
+
+server.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE') throw err;
+  if (process.env.PORT || portTriesLeft <= 0) {
+    console.error(`\n  Port ${currentPort} is already in use. Free it, or run: PORT=<free port> npm start\n`);
+    process.exit(1);
+  }
+  console.warn(`  Port ${currentPort} is in use, trying ${currentPort + 1}…`);
+  portTriesLeft -= 1;
+  currentPort += 1;
+  server.listen(currentPort);
+});
+
+server.listen(currentPort);
 
 // Tidy up peer connections on exit.
 for (const sig of ['SIGINT', 'SIGTERM']) {
