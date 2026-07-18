@@ -4,9 +4,12 @@
   "description": "A movie browsing app using TMDB API",
   "type": "module",
   "scripts": {
-    "start": "npx serve .",
+    "start": "node stream-server.mjs",
+    "serve": "npx serve .",
     "test": "node --test",
-    "test-providers": "node provider-tester-cli.js"
+    "test-providers": "node provider-tester-cli.js",
+    "check-links": "node check-links.mjs",
+    "check-playback": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_PLAYBACK=1 node --test check-playback.test.js"
   },
   "keywords": [
     "movies",
@@ -14,7 +17,11 @@
     "frontend"
   ],
   "license": "MIT",
+  "dependencies": {
+    "webtorrent": "^2.8.5"
+  },
   "devDependencies": {
+    "playwright": "^1.61.1",
     "puppeteer": "^23.0.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"

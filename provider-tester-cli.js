@@ -1,47 +1,61 @@
 #!/usr/bin/env node
 
 import puppeteer from 'puppeteer';
+import { addExtra } from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import fs from 'fs';
 import path from 'path';
+import { EMBED_SOURCES as SHARED_SOURCES, BLOCKED_PROVIDERS } from './embed-sources.js';
+
+// Wrap puppeteer with the stealth plugin so these providers (which sniff for
+// headless/automation and refuse to stream to a bot) see a normal browser.
+const stealthPuppeteer = addExtra(puppeteer);
+stealthPuppeteer.use(StealthPlugin());
 
 // Helper function to wait (replacement for deprecated waitForTimeout)
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Video embed sources
-const EMBED_SOURCES = [
-  { name: 'VidSrc.to', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.to/embed/tv/${id}/${s}/${e}` : `https://vidsrc.to/embed/${type}/${id}` },
-  { name: 'VidSrc.me', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.me/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc.me/embed/${type}?tmdb=${id}` },
-  { name: 'VidSrc.xyz', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.xyz/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc.xyz/embed/${type}?tmdb=${id}` },
-  { name: 'VidSrc.icu', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.icu/embed/tv/${id}/${s}/${e}` : `https://vidsrc.icu/embed/${type}/${id}` },
-  { name: 'VidSrc.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.cc/v2/embed/tv/${id}/${s}/${e}` : `https://vidsrc.cc/v2/embed/${type}/${id}` },
-  { name: 'VidSrc.pro', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.pro/embed/tv/${id}/${s}/${e}` : `https://vidsrc.pro/embed/${type}/${id}` },
-  { name: 'VidSrc.vip', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.vip/embed/tv/${id}/${s}/${e}` : `https://vidsrc.vip/embed/${type}/${id}` },
-  { name: 'VidSrc.nl', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.vidsrc.nl/embed/tv/${id}/${s}/${e}` : `https://player.vidsrc.nl/embed/${type}/${id}` },
-  { name: 'VidSrc.in', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.in/embed/tv/${id}/${s}/${e}` : `https://vidsrc.in/embed/${type}/${id}` },
-  { name: 'Embed.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://embed.su/embed/tv/${id}/${s}/${e}` : `https://embed.su/embed/${type}/${id}` },
-  { name: 'VidLink', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidlink.pro/tv/${id}/${s}/${e}` : `https://vidlink.pro/${type}/${id}` },
-  { name: 'Nontongo', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.nontongo.win/embed/tv/${id}/${s}/${e}` : `https://www.nontongo.win/embed/${type}/${id}` },
-  { name: 'SuperEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://streamingnow.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://streamingnow.mov/?video_id=${id}&tmdb=1` },
-  { name: 'Autoembed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.autoembed.cc/embed/tv/${id}/${s}/${e}` : `https://player.autoembed.cc/embed/${type}/${id}` },
-  { name: '2Embed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}` : `https://www.2embed.cc/embed/${id}` },
-  { name: 'SmashyStream', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.smashy.stream/tv/${id}?s=${s}&e=${e}` : `https://player.smashy.stream/${type}/${id}` },
-  { name: 'Vidfast.pro', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidfast.pro/tv/${id}/${s}/${e}` : `https://vidfast.pro/${type}/${id}` },
-  { name: 'Videasy', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.videasy.net/tv/${id}/${s}/${e}` : `https://player.videasy.net/${type}/${id}` },
-  { name: 'MoviesAPI', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://moviesapi.club/tv/${id}-${s}-${e}` : `https://moviesapi.club/${type}/${id}` },
-  { name: 'Vidora.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidora.su/embed/tv/${id}/${s}/${e}` : `https://vidora.su/embed/${type}/${id}` },
-  { name: 'VidSrc.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.su/embed/tv/${id}/${s}/${e}` : `https://vidsrc.su/embed/${type}/${id}` },
-  { name: 'VidSrc.rip', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.rip/embed/tv/${id}/${s}/${e}` : `https://vidsrc.rip/embed/${type}/${id}` },
-  { name: 'VidSrc.cx', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.cx/embed/tv/${id}/${s}/${e}` : `https://vidsrc.cx/embed/${type}/${id}` },
-  { name: 'VidSrc.store', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.store/embed/tv/${id}/${s}/${e}` : `https://vidsrc.store/embed/${type}/${id}` },
-  { name: 'RiveStream', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://rivestream.live/embed?type=tv&id=${id}&season=${s}&episode=${e}` : `https://rivestream.live/embed?type=${type}&id=${id}` },
-  { name: 'P-Stream', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://iframe.pstream.org/tv/${id}/${s}/${e}` : `https://iframe.pstream.org/${type}/${id}` },
-  { name: 'Autoembed.co', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://autoembed.co/tv/tmdb/${id}-${s}-${e}` : `https://autoembed.co/${type}/tmdb/${id}` },
-  { name: 'SuperEmbed VIP', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://streamingnow.mov/directstream.php?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://streamingnow.mov/directstream.php?video_id=${id}&tmdb=1` },
-  { name: 'GoDrivePlayer', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://godriveplayer.com/player.php?type=series&tmdb=${id}&season=${s}&episode=${e}` : `https://godriveplayer.com/player.php?tmdb=${id}` },
-  { name: 'CurtStream', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://curtstream.com/series/tmdb/${id}/${s}/${e}/` : `https://curtstream.com/movies/tmdb/${id}` },
-  { name: 'ApiMDB', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://v2.apimdb.net/e/tmdb/tv/${id}/${s}/${e}/` : `https://v2.apimdb.net/e/tmdb/${type}/${id}` },
-  { name: 'DBGdrive', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://databasegdriveplayer.co/player.php?type=series&tmdb=${id}&season=${s}&episode=${e}` : `https://databasegdriveplayer.co/player.php?tmdb=${id}` }
+// Test the exact list the app plays (embed-sources.js), minus the torrent source
+// (not an iframe) and any providers already known-dead (BLOCKED_PROVIDERS).
+const EMBED_SOURCES = SHARED_SOURCES.filter(
+  (s) => !s.torrent && !BLOCKED_PROVIDERS.includes(s.name)
+);
+
+// Resolve a Chrome/Chromium binary: env override, then Puppeteer's own download,
+// then a system install. Lets the tester run without downloading a bundled browser.
+export function findChrome() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+  try {
+    const p = puppeteer.executablePath();
+    if (p && fs.existsSync(p)) return p;
+  } catch { /* no bundled browser */ }
+  for (const c of ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser']) {
+    if (fs.existsSync(c)) return c;
+  }
+  return undefined; // let Puppeteer decide / throw a clear error
+}
+
+const LAUNCH_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-web-security',
+  '--disable-features=IsolateOrigins,site-per-process',
+  '--autoplay-policy=no-user-gesture-required',
+  '--disable-quic',
+  '--enable-features=NetworkService,NetworkServiceInProcess',
 ];
+
+// Launch a browser configured for provider testing. Shared by the CLI and the
+// CHECK_PLAYBACK gated test so both behave identically.
+export async function launchBrowser({ headless = true } = {}) {
+  return stealthPuppeteer.launch({
+    headless: headless ? 'new' : false,
+    executablePath: findChrome(),
+    args: LAUNCH_ARGS,
+  });
+}
+
+export { EMBED_SOURCES };
 
 // Common play button selectors
 const PLAY_BUTTON_SELECTORS = [
@@ -181,8 +195,49 @@ Examples:
   return options;
 }
 
+// Find the "best" <video> across every frame Puppeteer is attached to (the top
+// document AND nested cross-origin iframes — the DevTools protocol reaches into
+// them regardless of same-origin policy). Prefers a video that is actively
+// advancing/playing over a merely-present one.
+async function scanFramesForVideo(page) {
+  const none = { found: false, currentTime: 0, paused: true, ended: false, readyState: 0, duration: 0 };
+  let best = none;
+  for (const frame of page.frames()) {
+    let state;
+    try {
+      state = await frame.evaluate(() => {
+        const videos = document.querySelectorAll('video');
+        let pick = null;
+        for (const v of videos) {
+          if (!pick) pick = v;
+          // Prefer a playing video with real progress.
+          if (!v.paused && v.currentTime > 0) { pick = v; break; }
+        }
+        if (!pick) return null;
+        return {
+          found: true,
+          currentTime: pick.currentTime,
+          paused: pick.paused,
+          ended: pick.ended,
+          readyState: pick.readyState,
+          duration: pick.duration || 0,
+        };
+      });
+    } catch {
+      // Frame detached/navigated mid-scan — skip it.
+      continue;
+    }
+    if (state?.found) {
+      if (!best.found) best = state;
+      // A playing, progressing video wins immediately.
+      if (!state.paused && state.currentTime > 0) return state;
+    }
+  }
+  return best;
+}
+
 // Test a single provider
-async function testProvider(browser, source, index, options) {
+export async function testProvider(browser, source, index, options) {
   const { mediaType, mediaId, season, episode } = options;
   const url = source.getUrl(mediaType, mediaId, season, episode);
 
@@ -309,12 +364,9 @@ async function testProvider(browser, source, index, options) {
     // Wait a bit for dynamic content
     await sleep(2000);
 
-    // Check for video element
-    result.hasVideo = await page.evaluate(() => {
-      const videos = document.querySelectorAll('video');
-      const iframes = document.querySelectorAll('iframe');
-      return videos.length > 0 || iframes.length > 0;
-    });
+    // Check for a video element in ANY frame (players usually live in a nested
+    // cross-origin iframe, invisible to the top document alone).
+    result.hasVideo = (await scanFramesForVideo(page)).found;
 
     // Try to find and click play button
     for (const selector of PLAY_BUTTON_SELECTORS) {
@@ -350,33 +402,23 @@ async function testProvider(browser, source, index, options) {
     // Wait a moment for video to initialize
     await sleep(3000);
 
-    // Get initial video state
-    const getVideoState = async () => {
-      return await page.evaluate(() => {
-        const videos = document.querySelectorAll('video');
-        for (const video of videos) {
-          return {
-            found: true,
-            currentTime: video.currentTime,
-            paused: video.paused,
-            ended: video.ended,
-            readyState: video.readyState,
-            duration: video.duration || 0,
-          };
-        }
-        return { found: false, currentTime: 0, paused: true, ended: false, readyState: 0, duration: 0 };
-      });
-    };
+    // Get video state across all frames (top page + nested iframes).
+    const getVideoState = () => scanFramesForVideo(page);
 
     let initialState = await getVideoState();
 
     // If no video playing yet, wait and try clicking again
     if (!initialState.found || initialState.paused) {
       await sleep(3000);
-      // Try clicking center again
+      // Try clicking center again (lands inside the player iframe)
       try {
         await page.mouse.click(640, 360);
       } catch (e) {}
+      // Also directly call play() on any <video> in any frame — autoplay is allowed
+      // by the launch flags, so this starts playback without a real gesture.
+      for (const frame of page.frames()) {
+        try { await frame.evaluate(() => document.querySelectorAll('video').forEach((v) => v.play?.().catch(() => {}))); } catch { /* frame gone */ }
+      }
       await sleep(2000);
       initialState = await getVideoState();
     }
@@ -489,18 +531,7 @@ async function runTests(options) {
   console.log(`Total Providers: ${EMBED_SOURCES.length}`);
   console.log('----------------------------------------\n');
 
-  const browser = await puppeteer.launch({
-    headless: options.headless ? 'new' : false,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--autoplay-policy=no-user-gesture-required',
-      '--disable-quic',
-      '--enable-features=NetworkService,NetworkServiceInProcess',
-    ],
-  });
+  const browser = await launchBrowser({ headless: options.headless });
 
   // We'll handle popups at the page level instead
 
@@ -628,4 +659,7 @@ async function main() {
   }
 }
 
-main();
+// Only run the CLI when invoked directly, not when imported by the playback test.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

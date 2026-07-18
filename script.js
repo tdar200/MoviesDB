@@ -56,6 +56,9 @@ const playerIframe = document.getElementById('player-iframe');
 const playerStarBtn = document.getElementById('player-star');
 const playerDownBtn = document.getElementById('player-down');
 const trailerIframe = document.getElementById('trailer-iframe');
+const playerVideo = document.getElementById('player-video');
+const ytsStatusEl = document.getElementById('yts-status');
+const qualitySelect = document.getElementById('quality-select');
 const playerTitle = document.getElementById('player-title');
 const closeModalBtn = document.getElementById('close-modal');
 const watchContainer = document.getElementById('watch-container');
@@ -63,33 +66,11 @@ const trailerContainer = document.getElementById('trailer-container');
 const tabWatch = document.getElementById('tab-watch');
 const tabTrailer = document.getElementById('tab-trailer');
 
-// Video embed sources - Updated Jan 18, 2026
-// Only includes providers that passed testing (see provider-results.json)
-const EMBED_SOURCES = [
-  { name: 'Videasy', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.videasy.net/tv/${id}/${s}/${e}` : `https://player.videasy.net/${type}/${id}` },
-  { name: 'VidSrc.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.cc/v2/embed/tv/${id}/${s}/${e}` : `https://vidsrc.cc/v2/embed/${type}/${id}` },
-  { name: 'VidLink', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidlink.pro/tv/${id}/${s}/${e}` : `https://vidlink.pro/${type}/${id}` },
-  { name: 'Nontongo', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://www.nontongo.win/embed/tv/${id}/${s}/${e}` : `https://www.nontongo.win/embed/${type}/${id}` },
-  // The providers below failed testing but kept as fallbacks
-  { name: 'VidSrc.to', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc.to/embed/tv/${id}/${s}/${e}` : `https://vidsrc.to/embed/${type}/${id}` },
-  { name: 'Embed.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://embed.su/embed/tv/${id}/${s}/${e}` : `https://embed.su/embed/${type}/${id}` },
-  { name: 'Autoembed.cc', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://player.autoembed.cc/embed/tv/${id}/${s}/${e}` : `https://player.autoembed.cc/embed/${type}/${id}` },
-  { name: 'SuperEmbed', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}` : `https://multiembed.mov/?video_id=${id}&tmdb=1` },
-  { name: 'VidSrcMe.ru', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrcme.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrcme.ru/embed/movie?tmdb=${id}` },
-  { name: 'VidSrcMe.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrcme.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrcme.su/embed/movie?tmdb=${id}` },
-  { name: 'VidSrc-Me.ru', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-me.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-me.ru/embed/movie?tmdb=${id}` },
-  { name: 'VidSrc-Me.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-me.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-me.su/embed/movie?tmdb=${id}` },
-  { name: 'VidSrc-Embed.ru', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-embed.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-embed.ru/embed/movie?tmdb=${id}` },
-  { name: 'VidSrc-Embed.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vidsrc-embed.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vidsrc-embed.su/embed/movie?tmdb=${id}` },
-  { name: 'Vsrc.su', getUrl: (type, id, s, e) => type === 'tv' && s && e ? `https://vsrc.su/embed/tv?tmdb=${id}&season=${s}&episode=${e}` : `https://vsrc.su/embed/movie?tmdb=${id}` },
-];
+// Video embed sources live in a shared module so the live link-checker
+// (check-links.mjs / `npm run check-links`) tests the exact same list the app plays.
+import { EMBED_SOURCES, IFRAME_BLOCKED_PROVIDERS, BLOCKED_PROVIDERS } from './embed-sources.js';
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
-
-// Providers that block iframe embedding - will open in new tab instead
-const IFRAME_BLOCKED_PROVIDERS = ['VidSrc.cc'];
-// Providers that are completely blocked/down - exclude from list
-const BLOCKED_PROVIDERS = [];
 
 // Provider test results storage key
 const PROVIDER_RESULTS_KEY = 'providerTestResults';
@@ -466,9 +447,22 @@ function populateSourceSelector() {
   // Providers to always include regardless of test results
   const alwaysInclude = ['VidSrc.cc', 'Videasy', 'VidLink', 'Nontongo', 'VidSrc.to', 'Embed.su', 'Autoembed.cc', 'SuperEmbed', 'VidSrcMe.ru', 'VidSrcMe.su', 'VidSrc-Me.ru', 'VidSrc-Me.su', 'VidSrc-Embed.ru', 'VidSrc-Embed.su', 'Vsrc.su'];
 
+  // Torrent sources (e.g. YTS) are movies-only; hide them when playing TV.
+  const isTvNow = currentPlayingMovie?.media_type === 'tv';
+
   sourcesWithResults.forEach(({ source, index, percentage }) => {
     // Skip completely blocked providers
     if (BLOCKED_PROVIDERS.includes(source.name)) {
+      return;
+    }
+
+    // Torrent sources: movies only, always shown (no test scoring), labelled.
+    if (source.torrent) {
+      if (source.movieOnly && isTvNow) return;
+      const option = document.createElement('option');
+      option.value = index;
+      option.textContent = source.name;
+      sourceSelect.appendChild(option);
       return;
     }
 
@@ -1077,6 +1071,7 @@ function switchTab(tab) {
     trailerIframe.src = `${YOUTUBE_EMBED_URL}/${currentTrailerKey}?autoplay=1`;
     // Pause main player when switching away
     playerIframe.src = '';
+    if (playerVideo) { try { playerVideo.pause(); } catch { /* ignore */ } }
     activePlayerTab = 'trailer';
   }
   // Only watch-tab time counts toward "watched"; pause the timer on the trailer tab.
@@ -1092,6 +1087,10 @@ function getEmbedUrl(type, id, season = null, episode = null) {
 
 // Load URL into iframe (handles blocked providers)
 function loadIframeSrc(url) {
+  // Any iframe load means we're not on the YTS torrent source — tear down the
+  // native player and stop the local torrent so peers aren't held open.
+  showPlayerVideo(false);
+  stopYtsStream();
   const source = EMBED_SOURCES[currentSourceIndex];
   if (IFRAME_BLOCKED_PROVIDERS.includes(source.name)) {
     window.open(url, '_blank');
@@ -1111,27 +1110,230 @@ function loadIframeSrc(url) {
   }
 }
 
+// ---- YTS torrent source (native <video> via local helper) ----
+
+let currentTorrentHash = null;   // infohash being streamed, for teardown
+let currentYtsTorrents = [];     // available qualities for the current movie
+let currentYtsData = null;       // { title, year, torrents }
+let ytsPollTimer = null;         // interval polling /stream-status
+let ytsTriedHashes = new Set();  // qualities attempted (for mkv auto-fallback)
+
+const DEFAULT_YTS_QUALITY = '720p'; // user preference
+
+// Toggle between the iframe player (embed sources) and the <video> (YTS).
+function showPlayerVideo(on) {
+  if (playerVideo) playerVideo.style.display = on ? 'block' : 'none';
+  if (playerIframe) playerIframe.style.display = on ? 'none' : 'block';
+  if (qualitySelect && !on) qualitySelect.style.display = 'none';
+  if (!on) setYtsStatus(null);
+}
+
+function setYtsStatus(msg, isError = false) {
+  if (!ytsStatusEl) return;
+  if (!msg) {
+    ytsStatusEl.style.display = 'none';
+    ytsStatusEl.textContent = '';
+    return;
+  }
+  ytsStatusEl.textContent = msg;
+  ytsStatusEl.classList.toggle('error', isError);
+  ytsStatusEl.style.display = 'flex';
+}
+
+const fmtSpeed = (bps) => (!bps ? '' : bps > 1e6 ? `${(bps / 1e6).toFixed(1)} MB/s` : `${Math.max(1, Math.round(bps / 1e3))} KB/s`);
+
+// Resolution rank for ordering the dropdown (low -> high).
+const qualityRank = (q) => (q === '720p' ? 0 : q === '1080p' ? 1 : q === '2160p' ? 2 : 3);
+
+function clearYtsPoll() {
+  if (ytsPollTimer) { clearInterval(ytsPollTimer); ytsPollTimer = null; }
+}
+
+function beaconStop(hash) {
+  if (!hash) return;
+  try {
+    if (navigator.sendBeacon) navigator.sendBeacon(`/stream-stop?hash=${hash}`);
+    else fetch(`/stream-stop?hash=${hash}`, { keepalive: true }).catch(() => {});
+  } catch { /* ignore */ }
+}
+
+// Full teardown: used when leaving the YTS source / closing the player.
+function stopYtsStream() {
+  clearYtsPoll();
+  if (playerVideo) {
+    try { playerVideo.pause(); } catch { /* ignore */ }
+    playerVideo.removeAttribute('src');
+    try { playerVideo.load(); } catch { /* ignore */ }
+  }
+  beaconStop(currentTorrentHash);
+  currentTorrentHash = null;
+  currentYtsTorrents = [];
+  currentYtsData = null;
+  if (qualitySelect) { qualitySelect.style.display = 'none'; qualitySelect.innerHTML = ''; }
+}
+
+function populateQualitySelect(torrents, selectedHash) {
+  if (!qualitySelect) return;
+  qualitySelect.innerHTML = '';
+  [...torrents]
+    .sort((a, b) => qualityRank(a.quality) - qualityRank(b.quality))
+    .forEach((t) => {
+      const opt = document.createElement('option');
+      opt.value = (t.hash || '').toLowerCase();
+      const codec = t.video_codec ? ` ${t.video_codec}` : '';
+      opt.textContent = `${t.quality}${codec}${t.size ? ' · ' + t.size : ''}`;
+      if (opt.value === selectedHash) opt.selected = true;
+      qualitySelect.appendChild(opt);
+    });
+  qualitySelect.style.display = torrents.length ? 'inline-block' : 'none';
+}
+
+// Poll the helper for swarm/file status and narrate it in the overlay so a long
+// buffer is explained (peers, progress) rather than a silent spinner.
+function startYtsStatusPolling(hash) {
+  clearYtsPoll();
+  ytsPollTimer = setInterval(async () => {
+    if (currentTorrentHash !== hash) { clearYtsPoll(); return; }
+    let s;
+    try { s = await fetch(`/stream-status?hash=${hash}`).then((r) => r.json()); }
+    catch { return; }
+    if (currentTorrentHash !== hash) return;
+
+    // Already playing smoothly — let onplaying clear the overlay.
+    if (playerVideo && !playerVideo.paused && playerVideo.readyState >= 3) {
+      setYtsStatus(null);
+      return;
+    }
+    if (s.state === 'ready' && s.playable === false) {
+      clearYtsPoll();
+      // Auto-step to the next higher, not-yet-tried quality (1080p is usually
+      // .mp4 even when 720p is .mkv) so the default 720p still ends up playing.
+      const next = [...currentYtsTorrents]
+        .sort((a, b) => qualityRank(a.quality) - qualityRank(b.quality))
+        .map((t) => (t.hash || '').toLowerCase())
+        .find((h) => !ytsTriedHashes.has(h));
+      if (next) {
+        if (qualitySelect) qualitySelect.value = next;
+        setYtsStatus('That quality is .mkv (not browser-playable) — trying the next one…');
+        playYtsQuality(next);
+      } else {
+        setYtsStatus("None of YTS's versions are a browser-playable format (.mp4) for this movie.", true);
+      }
+      return;
+    }
+    const peers = s.peers || 0;
+    const pct = s.progress ? Math.round(s.progress * 100) : 0;
+    if (s.state === 'connecting' || !s.name) {
+      setYtsStatus(`Connecting to peers… (${peers} peer${peers === 1 ? '' : 's'})`);
+    } else {
+      const spd = fmtSpeed(s.downloadSpeed);
+      setYtsStatus(`Buffering… ${peers} peer${peers === 1 ? '' : 's'} · ${pct}%${spd ? ' · ' + spd : ''}`);
+    }
+  }, 1500);
+}
+
+// Stream a specific quality (by infohash) into the <video>.
+function playYtsQuality(hash) {
+  if (!hash) return;
+  // Tear down a previously-selected quality's torrent.
+  if (currentTorrentHash && currentTorrentHash !== hash) beaconStop(currentTorrentHash);
+  clearYtsPoll();
+  currentTorrentHash = hash;
+  ytsTriedHashes.add(hash);
+  if (qualitySelect) qualitySelect.value = hash;
+
+  const t = currentYtsTorrents.find((x) => (x.hash || '').toLowerCase() === hash);
+  const title = currentYtsData?.title || currentPlayingMovie?.title || currentPlayingMovie?.name || '';
+  setYtsStatus(`Connecting to peers… (${t?.quality || ''})\nFirst frames can take a moment.`);
+
+  playerVideo.src = `/stream?hash=${hash}&title=${encodeURIComponent(title)}`;
+  playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
+  playerVideo.onerror = () => setYtsStatus('Stream error — try a different quality or movie.', true);
+  playerVideo.load();
+  playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
+  startYtsStatusPolling(hash);
+}
+
+// Load a movie from YTS via the local helper into the native <video>.
+async function loadYtsStream(movie) {
+  stopYtsStream();
+  playerIframe.src = '';
+  playerIframe.removeAttribute('srcdoc');
+  showPlayerVideo(true);
+  setYtsStatus('Finding a torrent…');
+
+  const reqId = movie.id;
+  try {
+    // TMDB id -> IMDb id (YTS is indexed by IMDb id).
+    const ext = await fetch(ENDPOINTS.externalIds('movie', movie.id)).then((r) => r.json());
+    const imdbId = ext && ext.imdb_id;
+    if (!imdbId) { setYtsStatus('No IMDb id for this title — YTS unavailable.', true); return; }
+    if (currentPlayingMovie?.id !== reqId) return; // user switched away
+
+    const data = await fetch(`/yts?imdb=${encodeURIComponent(imdbId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    if (!data) {
+      setYtsStatus('Could not reach the local stream helper. Run "npm start" (not a static server).', true);
+      return;
+    }
+    const torrents = (data.torrents || []).filter((t) => t.hash);
+    if (!torrents.length) { setYtsStatus('No YTS torrent found for this movie.', true); return; }
+    if (currentPlayingMovie?.id !== reqId) return;
+
+    currentYtsData = data;
+    currentYtsTorrents = torrents;
+    ytsTriedHashes = new Set();
+
+    // Default pick: the browser-playable (x264, not x265/mkv-only) torrent with
+    // the BEST seed count — more seeders means more throughput, which is the
+    // real bottleneck. Prefer 1080p for quality, tie-break by seeds.
+    const playablePool = torrents.filter((t) => (t.video_codec || 'x264').toLowerCase() !== 'x265');
+    const pool = playablePool.length ? playablePool : torrents;
+    // 1080p first (best quality that's usually .mp4), then 720p, then 4K.
+    const defRank = (q) => (q === '1080p' ? 0 : q === '720p' ? 1 : q === '2160p' ? 2 : 3);
+    const def = [...pool].sort((a, b) => {
+      const r = defRank(a.quality) - defRank(b.quality);
+      return r !== 0 ? r : (Number(b.seeds) || 0) - (Number(a.seeds) || 0);
+    })[0];
+    const defHash = (def.hash || '').toLowerCase();
+
+    populateQualitySelect(torrents, defHash);
+    playYtsQuality(defHash);
+  } catch (err) {
+    console.error('YTS stream error:', err);
+    setYtsStatus('Failed to start the torrent stream.', true);
+  }
+}
+
 // Change video source
 function changeSource(newIndex) {
   currentSourceIndex = newIndex;
   sourceSelect.value = newIndex; // Keep dropdown in sync
+  if (!currentPlayingMovie) return;
 
-  if (currentPlayingMovie) {
-    const type = currentPlayingMovie.media_type === 'tv' ? 'tv' : 'movie';
-    let url;
+  const source = EMBED_SOURCES[newIndex];
 
-    if (type === 'tv' && currentTvData) {
-      url = getEmbedUrl(type, currentPlayingMovie.id, currentSeason, currentEpisode);
-    } else {
-      url = getEmbedUrl(type, currentPlayingMovie.id);
-    }
-
-    console.log('Switching to source:', EMBED_SOURCES[newIndex].name, 'URL:', url);
-
-    // Clear and reload
+  // YTS torrent source -> native <video> via local helper (movies only).
+  if (source && source.torrent) {
     playerIframe.src = '';
-    setTimeout(() => loadIframeSrc(url), 50);
+    loadYtsStream(currentPlayingMovie);
+    return;
   }
+
+  const type = currentPlayingMovie.media_type === 'tv' ? 'tv' : 'movie';
+  let url;
+  if (type === 'tv' && currentTvData) {
+    url = getEmbedUrl(type, currentPlayingMovie.id, currentSeason, currentEpisode);
+  } else {
+    url = getEmbedUrl(type, currentPlayingMovie.id);
+  }
+
+  console.log('Switching to source:', source.name, 'URL:', url);
+
+  // Clear and reload
+  playerIframe.src = '';
+  setTimeout(() => loadIframeSrc(url), 50);
 }
 
 // Fetch TV show details (seasons)
@@ -1364,6 +1566,18 @@ async function openPlayer(movie) {
   // Reset state
   trailerIframe.src = '';
   currentTrailerKey = null;
+  stopYtsStream();
+  showPlayerVideo(false);
+
+  // If the previously selected source isn't valid for this title (e.g. a
+  // movies-only torrent source while opening a TV show), fall back to the first.
+  const sel = EMBED_SOURCES[currentSourceIndex];
+  if (sel && sel.torrent && sel.movieOnly && type === 'tv') {
+    currentSourceIndex = 0;
+  }
+
+  // Rebuild the source list for this title (shows/hides the YTS torrent source).
+  populateSourceSelector();
 
   // Update source selector
   sourceSelect.value = currentSourceIndex;
@@ -1443,9 +1657,14 @@ async function openPlayer(movie) {
   } else {
     // Movie - no episode controls
     episodeControls.style.display = 'none';
-    const embedUrl = getEmbedUrl(type, movie.id);
-    loadIframeSrc(embedUrl);
     playerTitle.textContent = title;
+    const sourceNow = EMBED_SOURCES[currentSourceIndex];
+    if (sourceNow && sourceNow.torrent) {
+      loadYtsStream(movie);
+    } else {
+      const embedUrl = getEmbedUrl(type, movie.id);
+      loadIframeSrc(embedUrl);
+    }
   }
 
   // Reset tabs to Watch
@@ -1476,6 +1695,8 @@ function closePlayer() {
   playerModalOpen = false;
   flushDwell();
   playerModal.style.display = 'none';
+  stopYtsStream();
+  showPlayerVideo(false);
   playerIframe.src = '';
   trailerIframe.src = '';
   currentTrailerKey = null;
@@ -2998,6 +3219,13 @@ tabTrailer.addEventListener('click', () => {
 sourceSelect.addEventListener('change', (e) => {
   changeSource(parseInt(e.target.value, 10));
 });
+
+// YTS quality switch — restart the stream with the chosen quality's torrent.
+if (qualitySelect) {
+  qualitySelect.addEventListener('change', (e) => {
+    playYtsQuality((e.target.value || '').toLowerCase());
+  });
+}
 
 // Episode control event listeners
 seasonSelect.addEventListener('change', (e) => {
