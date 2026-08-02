@@ -60,6 +60,10 @@ header h1 {
 /* App Tabs (Movies/YouTube) */
 .app-tabs {
   display: flex;
+  /* Wrap on narrow screens — a nowrap pill pushes the tail tabs (Basket, YouTube)
+     off-screen on phones with no way to scroll to them. */
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 0.25rem;
   background-color: var(--primary-color);
   padding: 0.25rem;
@@ -1156,8 +1160,15 @@ main {
     margin: 0.5rem 0;
   }
 
+  /* Tabs get their own full-width row above the title so all six stay
+     on screen; without this the nowrap header row clips Basket/YouTube. */
+  .header-top {
+    flex-wrap: wrap;
+  }
+
   .app-tabs {
     order: -1;
+    flex-basis: 100%;
   }
 }
 
