@@ -20,7 +20,8 @@ const ENGAGEMENT_MAX = 2.5;
 const QUICK_BAIL_MS = 120000;       // < 2 min dwell = sampled-and-dropped
 const FULL_ENGAGE_MS = 5400000;     // ~90 min dwell = fully engaged
 const EPISODE_SATURATION = 20;      // episodes reached for max episode signal
-const STAR_BONUS = 2.5;             // multiplier for starred items
+const STAR_BONUS = 2.5;             // multiplier for loved (starred) items
+const LIKED_BONUS = 1.5;            // multiplier for the lighter 'liked' reaction tier
 const COVERAGE_WEIGHT = 0.5;        // strength of collection-breadth bonus
 const DOWNVOTE_SCORE_STRENGTH = 0.4;        // how hard disliked-vector overlap downweights a candidate
 export const DOWNVOTE_SCORE_FLOOR = 0.5;    // a strongly-disliked candidate keeps >= half its score (never zeroed)
@@ -279,7 +280,7 @@ export function buildTasteProfile(enrichedWatched, now) {
     const eng = item._engagement
       ? engagementBoost(item._engagement.dwellMs, item._engagement.episodes)
       : 1;
-    const star = item._starred ? STAR_BONUS : 1;
+    const star = item._starred ? (item._reaction === 'liked' ? LIKED_BONUS : STAR_BONUS) : 1;
     const w = recency * ratingNudge(item.vote_average) * eng * star;
 
     (item.genre_ids || []).forEach((id) => {
@@ -314,6 +315,21 @@ export function buildTasteProfile(enrichedWatched, now) {
     mediaTypeBias,
     topTitles: topTitles.sort((a, b) => b.weight - a.weight),
   };
+}
+
+// "Seen it" titles: watched outside the app, marked explicitly. They join the positive
+// profile at NEUTRAL weight — no star bonus, normal recency decay from when they were
+// marked — and are excluded from recommendations via watchedIds. No enrichment fetch:
+// like beyond-cap basket items they contribute genre/rating/media signal only.
+export function annotateSeen(seen) {
+  return (seen || []).map((m) => ({
+    ...m,
+    _starred: false,
+    _engagement: null,
+    _keywords: [],
+    _people: [],
+    watchedAt: m.seenAt,
+  }));
 }
 
 // ROCCHIO: net a positive profile (basket) against a negative profile (downvoted) into a single
@@ -925,9 +941,15 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     exploreCount = 8,
     exploreMinVote = 6.5,   // vote_average floor for a "gem"
     exploreMaxCount = 2000, // vote_count ceiling for a "gem"
+    dismissedRows = [],     // row keys the user said "not interested" to — skipped, items freed
+    wildcardCount = 8,
+    wildcardMinVote = 6.8,   // wildcard = established quality...
+    wildcardMinVotes = 500,  // ...not hidden gems (that's the explore row)
+    wildcardMaxContent = 0.25, // content-affinity ceiling: must NOT resemble the profile
   } = opts;
 
   const rows = [];
+  const dismissed = new Set(dismissedRows);
 
   // One global placed-Set: a title appears in at most one row.
   const placed = new Set();
@@ -944,7 +966,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   // cannot absorb them; the row itself is pushed at its display position (below the
   // personalized rows, above explore). One deterministic row, capped like other rows. Reuses
   // the same recId()-keyed placed-Set the function maintains — no new dedupe mechanism.
-  const trendingPicked = ranked
+  const trendingPicked = dismissed.has('trending') ? [] : ranked
     .filter((r) => (r.movie._seeds || []).some((s) => s.source === 'trending'))
     .slice(0, itemsPerRow);
   trendingPicked.forEach((r) => placed.add(recId(r)));
@@ -965,7 +987,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   // row (the title reservation below skips exploreIds).
   const topGenre = genreOrder[0];
   let exploreGems = [];
-  if (topGenre != null) {
+  if (topGenre != null && !dismissed.has('explore')) {
     exploreGems = ranked
       .filter((r) => !placed.has(recId(r))
         && (r.movie.genre_ids || []).map(num).includes(topGenre)
@@ -996,20 +1018,21 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   const titleMinItems = Math.min(minItems, PER_SEED_CAP);
   const titleRowsReserved = [];
   for (const t of (profile.topTitles || []).slice(0, titleRows)) {
+    if (dismissed.has(`title:${t.id}`)) continue;
     const recs = ranked
       .filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r))
         && (r.movie._seeds || []).some((s) => s.type === 'title' && num(s.id) === num(t.id)))
       .slice(0, itemsPerRow);
     if (recs.length >= titleMinItems) {
       recs.forEach((r) => placed.add(recId(r)));
-      titleRowsReserved.push({ kind: 'title', title: `Because you watched ${t.title}`, recs });
+      titleRowsReserved.push({ kind: 'title', key: `title:${t.id}`, title: `Because you watched ${t.title}`, recs });
     }
   }
 
   // 1. Top picks — global best-N, genre-calibrated to the basket, and CLAIMS its items.
   // Trending- and title-reserved items are excluded (already in placed) so they cannot be
   // double-claimed; reserved gems (exploreIds) are likewise held out for the explore row.
-  if (ranked.length && topCount > 0) {
+  if (ranked.length && topCount > 0 && !dismissed.has('top')) {
     const pool = ranked.filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r)));
     let recs;
     if (genreDist && Object.keys(genreDist).length) {
@@ -1018,7 +1041,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
       recs = pool.slice(0, topCount);
     }
     recs.forEach((r) => placed.add(recId(r)));
-    rows.push({ kind: 'top', title: 'Top picks for you', recs });
+    rows.push({ kind: 'top', key: 'top', title: 'Top picks for you', recs });
   }
 
   const take = (predicate) => ranked
@@ -1035,6 +1058,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   // excludes the reserved gems (they belong in the explore row); the TOP genre, if excluding them
   // would drop it below minItems, RECLAIMS the gems into itself and cancels the explore row.
   for (const gid of genreOrder.slice(0, genreRows)) {
+    if (dismissed.has(`genre:${gid}`)) continue;
     const budget = genreDist
       ? Math.max(minItems, Math.round((genreDist[String(gid)] || 0) * itemsPerRow))
       : itemsPerRow;
@@ -1051,7 +1075,7 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     }
     if (recs.length >= minItems) {
       claim(recs);
-      rows.push({ kind: 'genre', title: `More ${GENRE_NAMES.get(gid) || 'like this'}`, recs });
+      rows.push({ kind: 'genre', key: `genre:${gid}`, title: `More ${GENRE_NAMES.get(gid) || 'like this'}`, recs });
     }
   }
 
@@ -1061,17 +1085,18 @@ export function groupIntoRows(ranked, profile, opts = {}) {
     .sort((a, b) => b[1].weight - a[1].weight).slice(0, personRows);
   for (const [pidStr, { name }] of topPeople) {
     const pid = num(pidStr);
+    if (dismissed.has(`person:${pid}`)) continue;
     const recs = take((r) => seedHas(r, 'person', pid));
     if (recs.length >= minItems) {
       claim(recs);
-      rows.push({ kind: 'title', title: `More from ${name}`, recs });
+      rows.push({ kind: 'title', key: `person:${pid}`, title: `More from ${name}`, recs });
     }
   }
 
   // The reserved trending row, pushed at its display position (below the personalized rows,
   // above explore). Its items were claimed up-front so no personalized row could absorb them.
   if (trendingPicked.length) {
-    rows.push({ kind: 'trending', title: 'Trending this week', recs: trendingPicked });
+    rows.push({ kind: 'trending', key: 'trending', title: 'Trending this week', recs: trendingPicked });
   }
 
   // 5. Exactly one DETERMINISTIC explore row, pushed last. The gems were RESERVED (excluded from
@@ -1081,9 +1106,32 @@ export function groupIntoRows(ranked, profile, opts = {}) {
   if (exploreGems.length >= minItems) {
     rows.push({
       kind: 'explore',
+      key: 'explore',
       title: `Hidden gems in ${GENRE_NAMES.get(topGenre) || 'your taste'}`,
       recs: exploreGems,
     });
+  }
+
+  // 6. Wildcard — a deliberate escape from the filter bubble: well-established quality
+  // titles OUTSIDE the profile's top genres with near-zero content affinity to it. The
+  // opposite of the explore row (which digs deeper INSIDE the top genre). Only forms in
+  // a personalized context (some genre signal) and claims last, from the leftovers.
+  if (!dismissed.has('wildcard') && genreOrder.length) {
+    const avoid = new Set(genreOrder.slice(0, 3).map(num));
+    const wild = ranked
+      .filter((r) => !placed.has(recId(r)) && !exploreIds.has(recId(r))
+        && num(r.movie.vote_average) >= wildcardMinVote
+        && num(r.movie.vote_count) >= wildcardMinVotes
+        && ((r.parts?.content ?? 0) <= wildcardMaxContent)
+        && !(r.movie.genre_ids || []).map(num).some((g) => avoid.has(g)))
+      .sort((a, b) =>
+        (num(b.movie.vote_average) - num(a.movie.vote_average))
+        || (num(a.movie.id) - num(b.movie.id)))
+      .slice(0, wildcardCount);
+    if (wild.length >= minItems) {
+      claim(wild);
+      rows.push({ kind: 'wildcard', key: 'wildcard', title: 'Outside your usual', recs: wild });
+    }
   }
 
   return rows.slice(0, maxRows);
@@ -1246,6 +1294,59 @@ async function trendingCandidates() {
   return mergeCandidates(tagged);
 }
 
+// Direct filmography expansion for the profile's strongest people: /person/<id>/movie_credits
+// + tv_credits. Complements discover-person (popularity-sorted discover pages) with the
+// person's actual body of work, so "a film by a director you love" can surface even when it
+// isn't trending. Cast roles + directing crew only; a vote floor keeps obscurities out.
+const PERSON_CREDITS_MAX_PEOPLE = 3;
+const PERSON_CREDITS_PER_PERSON = 25;
+const PERSON_CREDITS_MIN_VOTES = 100;
+
+export async function personCreditCandidates(profile, {
+  fetchImpl = fetchJson,
+  maxPeople = PERSON_CREDITS_MAX_PEOPLE,
+  perPerson = PERSON_CREDITS_PER_PERSON,
+  minVotes = PERSON_CREDITS_MIN_VOTES,
+} = {}) {
+  const top = Object.entries(profile?.people || {})
+    .sort((a, b) => b[1].weight - a[1].weight)
+    .slice(0, maxPeople);
+  const tagged = [];
+  await Promise.all(top.map(async ([pidStr, { name, weight }]) => {
+    const pid = Number(pidStr);
+    const [movies, tv] = await Promise.all([
+      fetchImpl(ENDPOINTS.personMovieCredits(pid)).catch(() => null),
+      fetchImpl(ENDPOINTS.personTvCredits(pid)).catch(() => null),
+    ]);
+    const credits = [];
+    for (const [json, mediaType] of [[movies, 'movie'], [tv, 'tv']]) {
+      if (!json) continue;
+      for (const c of (json.cast || [])) credits.push({ ...c, media_type: mediaType });
+      for (const c of (json.crew || [])) {
+        if (c.job === 'Director') credits.push({ ...c, media_type: mediaType });
+      }
+    }
+    // Vote floor -> most-popular-first -> dedupe (an actor-director credit appears once)
+    // -> per-person cap. Rank in the kept order feeds collab-style seed ranking.
+    const seenKeys = new Set();
+    const kept = credits
+      .filter((c) => Number(c.vote_count) >= minVotes)
+      .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+      .filter((c) => {
+        const k = candidateKey(c);
+        if (seenKeys.has(k)) return false;
+        seenKeys.add(k);
+        return true;
+      })
+      .slice(0, perPerson);
+    kept.forEach((c, rank) => tagged.push({
+      ...c,
+      _seeds: [{ source: 'person-credits', type: 'person', id: pid, name, rank, weight }],
+    }));
+  }));
+  return mergeCandidates(tagged);
+}
+
 // Cold-start-only filler: two /top_rated calls (movie + tv). Fetched ONLY for thin baskets
 // (the generateCandidates caller gates on basketSize), so a full basket never pays for it.
 async function topRatedFiller() {
@@ -1307,11 +1408,12 @@ export async function enrichAndExpandBasket(basket, { fetchImpl = fetchJson } = 
 // longer fetches appendDetail per seed.
 async function generateCandidates(collabCandidates, basketSize, profile, negProfile = null) {
   const collab = collabCandidates || [];
-  const [discover, trending] = await Promise.all([
+  const [discover, trending, personCredits] = await Promise.all([
     discoverCandidates(profile, negProfile),
     trendingCandidates(),
+    personCreditCandidates(profile),
   ]);
-  const personalPool = mergeCandidates([...collab, ...discover]);
+  const personalPool = mergeCandidates([...collab, ...discover, ...personCredits]);
   // Top-rated filler only for cold/thin baskets; a full basket never fetches it.
   const blended = basketSize < COLD_START_FULL
     ? coldStartBlend(personalPool, await topRatedFiller(), basketSize)
@@ -1357,31 +1459,34 @@ function hashIds(ids) {
 
 // Stable signature of the full signal set (basket + downvoted + watchedIds) for session
 // caching. Toggling a star/downvote OR watching a new title changes this, busting the cache.
-export function signalSignature(basket, downvoted, watchedIds) {
-  const ids = (arr) => (arr || []).map((m) => m.id).sort().join(',');
-  return `b:${ids(basket)}|d:${ids(downvoted)}|w:${hashIds(watchedIds)}`;
+export function signalSignature(basket, downvoted, watchedIds, seen) {
+  // Basket ids carry their reaction tier so loved <-> liked flips bust the cache.
+  const ids = (arr) => (arr || []).map((m) => `${m.id}${m.reaction === 'liked' ? '~l' : ''}`).sort().join(',');
+  const seenPart = (seen && seen.length) ? `|s:${ids(seen)}` : '';
+  return `b:${ids(basket)}|d:${ids(downvoted)}|w:${hashIds(watchedIds)}${seenPart}`;
 }
 
 // Shared pipeline: enrich basket + downvoted → positive/negative profiles → net profile
 // → candidates → rank, excluding watched ∪ downvoted ∪ basket. `input` is
 // { basket: [movie], downvoted: [movie], watchedIds: [id] }. Cached per (signature, limit).
 async function _pipeline(input, opts = {}) {
-  const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA, lambda = MMR_LAMBDA_PAGE, onRow, genreDist } = opts;
+  const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA, lambda = MMR_LAMBDA_PAGE, onRow, genreDist, groupOpts = {} } = opts;
   const basket = input.basket || [];
   const downvoted = input.downvoted || [];
   const watchedIds = input.watchedIds || [];
+  const seen = input.seen || [];
   // Built once, up front (only needs basket/downvoted/watchedIds): used both by the provisional
   // streaming emission below and the final pool filter, so we don't rebuild it later.
   // Composite-key the exclude set so a basketed/watched movie can't suppress a tv show of the
   // same numeric id (and vice versa). watchedIds are numeric (legacy) -> exclude BOTH types.
   const excludeIds = new Set();
-  for (const m of [...basket, ...downvoted]) excludeIds.add(candidateKey(m));
+  for (const m of [...basket, ...downvoted, ...seen]) excludeIds.add(candidateKey(m));
   for (const w of watchedIds) {
     if (w && typeof w === 'object') excludeIds.add(candidateKey(w));
     else { excludeIds.add(`movie:${w}`); excludeIds.add(`tv:${w}`); }
   }
 
-  const sig = signalSignature(basket, downvoted, watchedIds);
+  const sig = signalSignature(basket, downvoted, watchedIds, seen);
   // lambda is part of the key: the teaser (0.8) and page (0.6) must not share a cache entry.
   const cacheKey = `${RECS_CACHE_KEY}:${limit}:${lambda}`;
   try {
@@ -1395,13 +1500,17 @@ async function _pipeline(input, opts = {}) {
   // (basket-primary, uniform). Downvoted items form a SMALL negative centroid — NOT starred,
   // no engagement — so one downvote can't out-shout the basket; it softly steers via Rocchio
   // (combineProfiles gamma), the bounded scorePool penalty, and Discover without_*.
-  const annotatePos = (arr) => arr.map((m) => ({ ...m, _starred: true, _engagement: null }));
+  // _reaction carries the tier ('loved' default for legacy entries): loved 2.5x, liked 1.5x.
+  const annotatePos = (arr) => arr.map((m) => ({
+    ...m, _starred: true, _engagement: null, _reaction: m.reaction === 'liked' ? 'liked' : 'loved',
+  }));
   const annotateNeg = (arr) => arr.map((m) => ({ ...m, _starred: false, _engagement: null }));
   const { enrichedBasket, collabCandidates } = await enrichAndExpandBasket(basket);
   const basketEnriched = annotatePos(enrichedBasket);
   const downEnriched = annotateNeg(await enrichWatchedTitles(downvoted));
 
-  const posProfile = buildTasteProfile(basketEnriched, now);
+  // Seen-elsewhere titles join the positive pool at neutral weight (annotateSeen).
+  const posProfile = buildTasteProfile([...basketEnriched, ...annotateSeen(seen)], now);
   const negProfile = downEnriched.length ? buildTasteProfile(downEnriched, now) : null;
   const profile = combineProfiles(posProfile, negProfile, { gamma });
 
@@ -1419,7 +1528,8 @@ async function _pipeline(input, opts = {}) {
     const provisionalRecs = mmrRerank(scorePool(collabPool, { profile, now, dislikeVector }), { lambda, limit });
     // topCount:0 so the best collab recs flow into the emitted "Because you watched X" title rows,
     // not into a provisional Top Picks row (which isn't streamed and needs the full pool anyway).
-    const provisionalRows = groupIntoRows(provisionalRecs, profile, { genreDist, topCount: 0 });
+    // Dismissed rows are honored in the provisional pass too, so one never flashes in.
+    const provisionalRows = groupIntoRows(provisionalRecs, profile, { genreDist, topCount: 0, dismissedRows: groupOpts.dismissedRows || [] });
     for (const row of provisionalRows) {
       if (row.kind === 'title') onRow({ ...row, provisional: true });
     }
@@ -1446,7 +1556,7 @@ async function _pipeline(input, opts = {}) {
 // Home teaser orchestrator. Empty basket -> trending-only cold-start path (never []).
 export async function getRecommendations(input, opts = {}) {
   const safe = input || {};
-  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [] };
+  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [], seen: safe.seen || [] };
   // Home teaser: a single scarce row -> favor relevance (higher MMR lambda) over diversity.
   return (await _pipeline(sig, { lambda: MMR_LAMBDA_TEASER, ...opts })).recs;
 }
@@ -1454,13 +1564,13 @@ export async function getRecommendations(input, opts = {}) {
 // Recommendation page orchestrator. Empty basket -> trending-only cold-start rows (never empty).
 export async function getRecommendationRows(input, opts = {}) {
   const safe = input || {};
-  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [] };
+  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [], seen: safe.seen || [] };
   const { limit = 60, now = Date.now(), groupOpts = {}, gamma, onRow } = opts;
   // Calibrate Top Picks + budget genre rows to the basket's own genre mix (Steck calibration).
   // Derived from the raw basket (its items carry genre_ids). Threaded into _pipeline so the
   // provisional streaming rows use the same calibration as the final rows.
   const genreDist = genreHistogram(sig.basket);
-  const { profile, recs } = await _pipeline(sig, { limit, now, gamma, onRow, genreDist });
+  const { profile, recs } = await _pipeline(sig, { limit, now, gamma, onRow, genreDist, groupOpts });
   const rows = groupIntoRows(recs, profile, { genreDist, ...groupOpts });
   // Final, authoritative rows. When streaming, announce them (provisional:false) so the renderer
   // reconciles the early provisional title rows in place and fills the held hero/genre/trending.

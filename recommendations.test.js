@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { recencyWeight, ratingNudge, buildTasteProfile, signalSignature } from './recommendations.js';
+import { recencyWeight, ratingNudge, buildTasteProfile, signalSignature, annotateSeen } from './recommendations.js';
 import { candidateKey, mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend, pruneMetaCache } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
   buildTagVector, profileVector, computeIdf, applyIdf, cosineSim,
   collabScore, scorePool, DOWNVOTE_SCORE_FLOOR,
 } from './recommendations.js';
-import { getRecommendationRows } from './recommendations.js';
+import { getRecommendationRows, personCreditCandidates } from './recommendations.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_700_000_000_000; // fixed clock for deterministic tests
@@ -1909,4 +1909,162 @@ test('coldStartBlend: a movie 5 and a tv 5 both survive the blend (composite ded
   // Full basket => personalized-only path; both must remain distinct (id-only dedup would drop one).
   const out = coldStartBlend([movie5, tv5], [], 5);
   assert.equal(out.length, 2, 'movie 5 and tv 5 are distinct in the blend');
+});
+
+// --- 3-tier reactions + seen-it ---------------------------------------------
+
+test("buildTasteProfile: 'liked' reaction boosts less than 'loved', which stays the default", () => {
+  const base = { id: 9, genre_ids: [28], media_type: 'movie', watchedAt: NOW };
+  const plain = buildTasteProfile([{ ...base }], NOW).genres['28'];
+  const loved = buildTasteProfile([{ ...base, _starred: true, _reaction: 'loved' }], NOW).genres['28'];
+  const legacy = buildTasteProfile([{ ...base, _starred: true }], NOW).genres['28'];
+  const liked = buildTasteProfile([{ ...base, _starred: true, _reaction: 'liked' }], NOW).genres['28'];
+
+  assert.equal(loved, legacy, 'missing _reaction must behave as loved (back-compat)');
+  assert.ok(liked > plain, 'liked must boost above an unstarred item');
+  assert.ok(liked < loved, 'liked must boost less than loved');
+  assert.ok(Math.abs(liked / plain - 1.5) < 1e-9, `liked bonus should be 1.5x, got ${liked / plain}`);
+});
+
+test('annotateSeen: seen titles become neutral profile items dated by seenAt', () => {
+  const seen = [{ id: 5, genre_ids: [18], media_type: 'movie', vote_average: 8, seenAt: NOW - 10 * DAY }];
+  const out = annotateSeen(seen);
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0]._starred, false);
+  assert.equal(out[0]._engagement, null);
+  assert.deepEqual(out[0]._keywords, []);
+  assert.deepEqual(out[0]._people, []);
+  assert.equal(out[0].watchedAt, NOW - 10 * DAY, 'watchedAt must come from seenAt so recency decay applies');
+
+  // A seen item carries NO star bonus: only recency decay + rating nudge.
+  const w = buildTasteProfile(out, NOW).genres['18'];
+  const expected = recencyWeight(NOW - 10 * DAY, NOW) * ratingNudge(8);
+  assert.ok(Math.abs(w - expected) < 1e-9, `seen item weight must be neutral, got ${w} vs ${expected}`);
+});
+
+test('signalSignature: flipping a reaction tier or marking seen changes the signature', () => {
+  const basket = [mkSigM(1)];
+  const loved = signalSignature(basket, [], [7]);
+  const liked = signalSignature([{ ...mkSigM(1), reaction: 'liked' }], [], [7]);
+  assert.notEqual(loved, liked, 'loved -> liked must bust the cache');
+
+  const noSeen = signalSignature(basket, [], [7], []);
+  const withSeen = signalSignature(basket, [], [7], [mkSigM(50)]);
+  assert.equal(noSeen, loved, 'empty seen list must not change legacy signatures');
+  assert.notEqual(noSeen, withSeen, 'marking a title seen must bust the cache');
+});
+
+// --- Person-filmography candidate source -------------------------------------
+
+test('personCreditCandidates: top profile people expand into vote-filtered, capped, person-tagged candidates', async () => {
+  const profile = {
+    people: {
+      11: { name: 'Denis', weight: 5 },
+      22: { name: 'Emily', weight: 3 },
+      33: { name: 'Tail', weight: 1 }, // beyond maxPeople: must NOT be fetched
+    },
+  };
+  const fetched = [];
+  const fetchImpl = async (url) => {
+    fetched.push(url);
+    if (url.includes('/person/11/movie_credits')) {
+      return {
+        cast: [
+          { id: 101, title: 'Big Film', vote_count: 5000, popularity: 80 },
+          { id: 102, title: 'Obscure Short', vote_count: 12, popularity: 1 }, // filtered: minVotes
+        ],
+        crew: [
+          { id: 103, title: 'Directed Film', job: 'Director', vote_count: 900, popularity: 50 },
+          { id: 104, title: 'Grip Work', job: 'Grip', vote_count: 900, popularity: 50 },      // filtered: not directing
+        ],
+      };
+    }
+    if (url.includes('/person/11/tv_credits')) {
+      return { cast: [{ id: 201, name: 'Big Show', vote_count: 800, popularity: 60 }], crew: [] };
+    }
+    if (url.includes('/person/22/movie_credits')) {
+      return { cast: [{ id: 301, title: 'E Film', vote_count: 400, popularity: 20 }], crew: [] };
+    }
+    if (url.includes('/person/22/tv_credits')) return { cast: [], crew: [] };
+    throw new Error(`unexpected fetch ${url}`);
+  };
+
+  const out = await personCreditCandidates(profile, { fetchImpl, maxPeople: 2, minVotes: 100 });
+
+  assert.ok(!fetched.some((u) => u.includes('/person/33/')), 'person beyond maxPeople must not be fetched');
+  const ids = out.map((c) => c.id).sort((a, b) => a - b);
+  assert.deepEqual(ids, [101, 103, 201, 301], 'vote floor + directing-only crew filter applied');
+  const big = out.find((c) => c.id === 101);
+  assert.equal(big.media_type, 'movie');
+  assert.ok(big._seeds.some((s) => s.source === 'person-credits' && s.type === 'person' && Number(s.id) === 11),
+    'candidates carry person provenance so "More from <name>" rows can claim them');
+  const show = out.find((c) => c.id === 201);
+  assert.equal(show.media_type, 'tv');
+});
+
+test('personCreditCandidates: perPerson cap keeps only the most popular credits', async () => {
+  const profile = { people: { 7: { name: 'P', weight: 2 } } };
+  const cast = Array.from({ length: 10 }, (_, i) => ({ id: 400 + i, title: `F${i}`, vote_count: 1000, popularity: i }));
+  const fetchImpl = async (url) => (url.includes('movie_credits') ? { cast, crew: [] } : { cast: [], crew: [] });
+
+  const out = await personCreditCandidates(profile, { fetchImpl, maxPeople: 1, perPerson: 3 });
+
+  assert.equal(out.length, 3);
+  assert.deepEqual(out.map((c) => c.id).sort(), [407, 408, 409].map(String).map(Number).sort(), 'keeps highest-popularity credits');
+});
+
+test('personCreditCandidates: empty people or failed fetches yield an empty pool, never a throw', async () => {
+  const none = await personCreditCandidates({ people: {} }, { fetchImpl: async () => { throw new Error('x'); } });
+  assert.deepEqual(none, []);
+  const failing = await personCreditCandidates({ people: { 5: { name: 'F', weight: 1 } } },
+    { fetchImpl: async () => { throw new Error('down'); } });
+  assert.deepEqual(failing, []);
+});
+
+// --- Wildcard row + row-level dismissal --------------------------------------
+
+// Ranked rec with scoring parts + vote fields (wildcard reads quality + content affinity).
+function grQ(id, { genres = [], content = 0, va = 7.5, vc = 5000 } = {}) {
+  return { movie: { id, genre_ids: genres, _seeds: [], vote_average: va, vote_count: vc }, score: 1, parts: { content }, reasons: ['r'] };
+}
+
+test('groupIntoRows: rows carry stable keys; dismissing a row frees its items for later rows', () => {
+  const ranked = Array.from({ length: 8 }, (_, i) => gr(2000 + i, { genres: [878] }));
+
+  const base = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 20, minItems: 4 });
+  assert.equal(base[0].kind, 'top');
+  assert.equal(base[0].key, 'top', 'top row must expose a stable key');
+  assert.equal(base.find((r) => r.kind === 'genre'), undefined, 'precondition: top claims all 8, no genre row');
+
+  const rows = groupIntoRows(ranked, GROUP_PROFILE, { topCount: 20, minItems: 4, dismissedRows: ['top'] });
+  assert.equal(rows.find((r) => r.key === 'top'), undefined, 'dismissed row must not render');
+  const genreRow = rows.find((r) => r.kind === 'genre');
+  assert.ok(genreRow, 'items freed by the dismissed row must flow to later rows');
+  assert.equal(genreRow.key, 'genre:878');
+});
+
+test('groupIntoRows: wildcard row = quality titles outside the top profile genres, low content affinity', () => {
+  const inTaste = Array.from({ length: 6 }, (_, i) => grQ(3000 + i, { genres: [878], content: 0.8 }));
+  const outTaste = Array.from({ length: 5 }, (_, i) => grQ(3100 + i, { genres: [99], content: 0.05 }));
+  const lowQuality = grQ(3200, { genres: [99], content: 0.05, va: 6.0 });
+
+  const rows = groupIntoRows([...inTaste, ...outTaste, lowQuality], GROUP_PROFILE, { topCount: 0, minItems: 4 });
+  const wild = rows.find((r) => r.kind === 'wildcard');
+  assert.ok(wild, 'wildcard row must form when enough out-of-taste quality titles exist');
+  assert.equal(wild.key, 'wildcard');
+  const ids = wild.recs.map((r) => r.movie.id);
+  assert.ok(ids.length >= 4 && ids.every((id) => id >= 3100 && id < 3200), 'only out-of-profile-genre titles qualify');
+  assert.ok(!ids.includes(3200), 'vote_average floor holds');
+
+  const none = groupIntoRows([...inTaste, ...outTaste, lowQuality], GROUP_PROFILE,
+    { topCount: 0, minItems: 4, dismissedRows: ['wildcard'] });
+  assert.equal(none.find((r) => r.kind === 'wildcard'), undefined, 'wildcard row is dismissible');
+});
+
+test('groupIntoRows: high-affinity titles never enter the wildcard row', () => {
+  // Out-of-genre but content-similar (0.6): matches the profile too well to be a wildcard.
+  const similar = Array.from({ length: 5 }, (_, i) => grQ(3300 + i, { genres: [99], content: 0.6 }));
+  const rows = groupIntoRows(similar, GROUP_PROFILE, { topCount: 0, minItems: 4 });
+  assert.equal(rows.find((r) => r.kind === 'wildcard'), undefined);
 });

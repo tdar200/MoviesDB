@@ -1210,6 +1210,7 @@ main {
 
 /* ---- Editorial header ---- */
 .rec-header {
+  position: relative;      /* anchors the row-dismiss control */
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: baseline;
@@ -1533,11 +1534,50 @@ main {
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* Downvote toggle — sits beside the star on cards. */
+/* Like ('liked' tier) + Seen toggles — same overlay chip as the star, stepped rightward.
+   Row order on cards: star 0.5 / like 2.7 / seen 4.9 / down 7.1 (2.2rem pitch). */
+.like-btn,
+.seen-btn {
+  position: absolute;
+  top: 0.45rem;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(8, 9, 26, 0.55);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+.like-btn { left: 2.7rem; }
+.seen-btn { left: 4.9rem; }
+/* The like button reuses the thumbs-down glyph rotated into a thumbs-up. */
+.like-btn svg { transform: rotate(180deg); }
+.movie:hover .like-btn, .rec-card:hover .like-btn, .like-btn:focus-visible, .like-btn.liked,
+.movie:hover .seen-btn, .rec-card:hover .seen-btn, .seen-btn:focus-visible, .seen-btn.seen {
+  opacity: 1;
+  transform: scale(1);
+}
+.like-btn.liked { color: #7dd97d; background: rgba(8, 9, 26, 0.75); }
+.like-btn:hover { color: #a6e8a6; }
+.seen-btn.seen { color: #8ab8ff; background: rgba(8, 9, 26, 0.75); }
+.seen-btn:hover { color: #b3d1ff; }
+/* Rec card anchors its chips top-right (rank owns top-left): mirror the pitch. */
+.rec-card .like-btn { left: auto; right: 2.7rem; }
+.rec-card .seen-btn { left: auto; right: 4.9rem; }
+
+/* Downvote toggle — last in the signal row on cards. */
 .down-btn {
   position: absolute;
   top: 0.45rem;
-  left: 2.7rem;            /* to the right of the star (which is at left: 0.5rem) */
+  left: 7.1rem;            /* after star 0.5 / like 2.7 / seen 4.9 */
   z-index: 3;
   display: grid;
   place-items: center;
@@ -1563,8 +1603,8 @@ main {
 }
 .down-btn.downvoted { color: #ff6b6b; background: rgba(8, 9, 26, 0.75); }
 .down-btn:hover { color: #ff9b9b; }
-/* On the rec card the star is at top-right; offset the downvote to its left. */
-.rec-card .down-btn { left: auto; right: 2.7rem; }
+/* On the rec card the chips anchor top-right; the downvote sits last in the row. */
+.rec-card .down-btn { left: auto; right: 7.1rem; }
 /* Player-header downvote sits inline beside the title star, always visible. */
 .player-down {
   position: static;
@@ -1626,3 +1666,28 @@ main {
 @media (prefers-reduced-motion: reduce) {
   .rec-page, .rec-page--incoming, .rec-page--fading { transition: none; }
 }
+
+/* Row-level "not interested" — a quiet ✕ on each rec row header, visible on hover. */
+.rec-dismiss {
+  position: absolute;
+  right: 0;
+  top: 0.1rem;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.06);
+  opacity: 0;
+  transition: opacity 0.2s ease, color 0.2s ease;
+}
+.rec-rail-section:hover .rec-dismiss,
+.rec-dismiss:focus-visible { opacity: 1; }
+.rec-dismiss:hover { color: #ff9b9b; background: rgba(255, 255, 255, 0.1); }
+
+/* Wildcard row — a subtle cool accent to mark the deliberate leap outside the profile. */
+.rec-row-wildcard .rec-kicker { color: #8ab8ff; }

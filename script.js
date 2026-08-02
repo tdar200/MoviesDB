@@ -347,14 +347,23 @@ function saveStarredStore(store) {
 function isStarred(id) {
   return Object.prototype.hasOwnProperty.call(getStarredStore(), id);
 }
-// Toggle star for a movie; returns the new starred state.
-function toggleStar(movie) {
+// The active reaction tier for a title: 'loved' | 'liked' | null. Entries without a
+// reaction field predate the tiers and mean 'loved' (back-compat).
+function reactionOf(id) {
+  const e = getStarredStore()[id];
+  return e ? (e.reaction === 'liked' ? 'liked' : 'loved') : null;
+}
+// Set/toggle a reaction tier for a movie. Clicking the active tier removes it; picking
+// the other tier switches in place (keeps the original starredAt so basket order holds).
+// Returns the now-active tier or null.
+function setReaction(movie, level) {
   const store = getStarredStore();
-  if (Object.prototype.hasOwnProperty.call(store, movie.id)) {
+  const existing = store[movie.id];
+  if (existing && (existing.reaction === 'liked' ? 'liked' : 'loved') === level) {
     delete store[movie.id];
     saveStarredStore(store);
     clearRecommendationCache();
-    return false;
+    return null;
   }
   // Remove from downvoted if present — mutually exclusive with the basket.
   const downvoted = getDownvotedStore();
@@ -363,21 +372,17 @@ function toggleStar(movie) {
     saveDownvotedStore(downvoted);
   }
   store[movie.id] = {
-    id: movie.id,
-    media_type: movie.media_type || (movie.title ? 'movie' : 'tv'),
-    genre_ids: movie.genre_ids || [],
-    vote_average: movie.vote_average,
-    title: movie.title,
-    name: movie.name,
-    poster_path: movie.poster_path,
-    release_date: movie.release_date,
-    first_air_date: movie.first_air_date,
-    overview: movie.overview,
-    starredAt: Date.now(),
+    ...signalSnapshot(movie),
+    reaction: level,
+    starredAt: existing?.starredAt || Date.now(),
   };
   saveStarredStore(store);
   clearRecommendationCache();
-  return true;
+  return level;
+}
+// Legacy star toggle = the 'loved' tier; returns the new starred state (player header uses it).
+function toggleStar(movie) {
+  return setReaction(movie, 'loved') !== null;
 }
 function getStarredList() {
   const store = getStarredStore();
@@ -435,13 +440,62 @@ function getDownvotedList() {
   return Object.values(store).sort((a, b) => (b.downvotedAt || 0) - (a.downvotedAt || 0));
 }
 
-// Assemble the explicit signal input the engine consumes: the starred basket (positive),
-// the downvoted set (negative steer), and watched ids (exclude-only).
+// "Seen it" — watched outside the app. Feeds the profile at neutral weight and keeps
+// the title out of recommendations. Independent of reactions/downvotes.
+const SEEN_TITLES_KEY = 'seenTitles';
+function getSeenStore() {
+  try { return JSON.parse(localStorage.getItem(SEEN_TITLES_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveSeenStore(store) {
+  try { localStorage.setItem(SEEN_TITLES_KEY, JSON.stringify(store)); }
+  catch (e) { console.error('seen save failed:', e); }
+}
+function isSeen(id) {
+  return Object.prototype.hasOwnProperty.call(getSeenStore(), id);
+}
+function toggleSeen(movie) {
+  const store = getSeenStore();
+  if (Object.prototype.hasOwnProperty.call(store, movie.id)) {
+    delete store[movie.id];
+    saveSeenStore(store);
+    clearRecommendationCache();
+    return false;
+  }
+  store[movie.id] = { ...signalSnapshot(movie), seenAt: Date.now() };
+  saveSeenStore(store);
+  clearRecommendationCache();
+  return true;
+}
+function getSeenList() {
+  return Object.values(getSeenStore()).sort((a, b) => (b.seenAt || 0) - (a.seenAt || 0));
+}
+
+// Row-level "not interested": dismissed rec-row keys, persisted. The engine skips
+// dismissed rows entirely and lets their items flow into other rows.
+const DISMISSED_ROWS_KEY = 'dismissedRecRows';
+function getDismissedRows() {
+  try { return Object.keys(JSON.parse(localStorage.getItem(DISMISSED_ROWS_KEY) || '{}')); }
+  catch { return []; }
+}
+function dismissRow(key) {
+  try {
+    const store = JSON.parse(localStorage.getItem(DISMISSED_ROWS_KEY) || '{}');
+    store[key] = Date.now();
+    localStorage.setItem(DISMISSED_ROWS_KEY, JSON.stringify(store));
+  } catch (e) { console.error('dismiss save failed:', e); }
+}
+
+// Assemble the explicit signal input the engine consumes: the starred basket (positive,
+// tiered loved/liked), the downvoted set (negative steer), seen titles (neutral profile
+// + exclusion), and watched ids (exclude-only; seen ids ride along for exclusion).
 function buildSignalItems() {
+  const seen = getSeenList();
   return {
     basket: getStarredList(),
     downvoted: getDownvotedList(),
-    watchedIds: getWatchedHistory().map((m) => m.id),
+    watchedIds: [...getWatchedHistory().map((m) => m.id), ...seen.map((m) => m.id)],
+    seen,
   };
 }
 
@@ -908,7 +962,9 @@ async function fetchOmdbData(title, year, type) {
     const stored = localStorage.getItem(`omdb:${cacheKey}`);
     if (stored) {
       const { t, v } = JSON.parse(stored);
-      if (Date.now() - t < 24 * 60 * 60 * 1000) {
+      // 7-day TTL (was 24h): IMDb/RT ratings drift weekly at most, and the free tier's
+      // 1000 req/day quota is the scarcer resource.
+      if (Date.now() - t < 7 * 24 * 60 * 60 * 1000) {
         omdbCache.set(cacheKey, v);
         return v;
       }
@@ -1930,7 +1986,7 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchMoreTrending(pagesToFetch = 5) {
+async function fetchMoreTrending(pagesToFetch = 5, abortToken) {
   if (!hasMorePages) return [];
 
   const providerId = currentFilters.provider;
@@ -1956,6 +2012,8 @@ async function fetchMoreTrending(pagesToFetch = 5) {
   let totalPagesAvailable = Infinity;
 
   for (let batchStart = 0; batchStart < pagesToFetch && hasMorePages; batchStart += BATCH_SIZE) {
+    // A newer load reset the fetch state — appending this query's pages would pollute it.
+    if (abortToken !== undefined && abortToken !== gridLoadToken) break;
     const batchEnd = Math.min(batchStart + BATCH_SIZE, pagesToFetch);
     const promises = [];
 
@@ -2079,7 +2137,12 @@ async function fetchQualityGems(pagesPerType = GEM_PAGES_PER_TYPE) {
 }
 
 // Reset fetch state
+// Bumped on every fresh grid load; in-flight background pool-deepening from a previous
+// load checks it and aborts instead of appending a stale query's pages.
+let gridLoadToken = 0;
+
 function resetFetchState() {
+  gridLoadToken++;
   allMovies = [];
   filteredMovies = [];
   displayedCount = 0;
@@ -2089,20 +2152,18 @@ function resetFetchState() {
 }
 
 // Process and display movies with current filters
+// Monotonic token: only the LATEST grid render may apply its deferred enrichment
+// re-sort. Any newer processAndDisplayMovies call (filter change, new search) or a
+// tab switch supersedes the pending one.
+let gridEnrichToken = 0;
+
 async function processAndDisplayMovies(movies, isSearch = false) {
   const filtered = applyFilters(movies, isSearch);
-
-  // Enrich the provisional top 100 (per the active sort), not the first 100 in fetch
-  // order: fetch order is trending/popularity, so rank contenders outside it would
-  // never receive their IMDb/RT cross-check. Rank with TMDB-only scores first, enrich
-  // the titles about to be displayed, then re-sort with the enriched ratings.
-  // sortMovies returns copies, so map the top ids back to the pool objects and enrich
-  // those in place - enrichment then persists across re-renders like before.
   const stats = calculateStats(filtered);
-  const provisional = sortMovies(filtered, stats).slice(0, 100);
-  const topKeys = new Set(provisional.map(m => `${m.media_type}:${m.id}`));
-  await enrichMoviesWithRatings(filtered.filter(m => topKeys.has(`${m.media_type}:${m.id}`)));
 
+  // FIRST PAINT with TMDB-only scores: awaiting ~100 enrichment fetches (OMDb +
+  // providers + credits) kept the grid on a spinner for tens of seconds on a cold
+  // cache. Paint the provisional order now; refine it in the background.
   filteredMovies = sortMovies(filtered, stats);
   displayedCount = 0;
   main.innerHTML = '';
@@ -2116,6 +2177,28 @@ async function processAndDisplayMovies(movies, isSearch = false) {
   }
 
   loadMoreMovies();
+
+  // Enrich the provisional top 100 (per the active sort), not the first 100 in fetch
+  // order: fetch order is trending/popularity, so rank contenders outside it would
+  // never receive their IMDb/RT cross-check. sortMovies returns copies, so map the
+  // top ids back to the pool objects and enrich those in place — enrichment then
+  // persists across re-renders. When done, re-sort + re-render IN PLACE (scroll kept)
+  // unless a newer render or another view took over the grid meanwhile.
+  const topKeys = new Set(filteredMovies.slice(0, 100).map(m => `${m.media_type}:${m.id}`));
+  const token = ++gridEnrichToken;
+  enrichMoviesWithRatings(filtered.filter(m => topKeys.has(`${m.media_type}:${m.id}`)))
+    .then(() => {
+      if (token !== gridEnrichToken) return;                       // superseded render
+      if (currentApp !== 'movies' || isWatchedMode || isFavoritesMode) return;
+      if (tabRecommended.classList.contains('active')) return;     // rec page owns #main
+      const scrollY = window.scrollY;
+      filteredMovies = sortMovies(filtered, stats);
+      displayedCount = 0;
+      main.innerHTML = '';
+      loadMoreMovies();
+      window.scrollTo(0, scrollY);
+    })
+    .catch((e) => console.warn('background enrichment failed:', e));
 }
 
 // Search movies
@@ -2196,6 +2279,8 @@ function createRecommendationCard(rec, index) {
   scrim.appendChild(sub);
   poster.appendChild(scrim);
   poster.appendChild(createStarButton(movie));
+  poster.appendChild(createLikeButton(movie));
+  poster.appendChild(createSeenButton(movie));
   poster.appendChild(createDownvoteButton(movie));
   card.appendChild(poster);
 
@@ -2453,6 +2538,7 @@ async function renderRecommendationsPage() {
   const REC_ROW_KICKERS = {
     top: 'Calibrated to your basket', title: 'Because you liked it',
     genre: 'More of this genre', trending: 'Popular this week', explore: 'A little different',
+    wildcard: 'A leap outside your taste',
   };
   const keyOf = (row) => `${row.kind}::${row.title}`;
   const buildRail = (row, i, lazy) => {
@@ -2464,6 +2550,22 @@ async function renderRecommendationsPage() {
     built.section.setAttribute('data-rec-kind', row.kind);
     built.section.setAttribute('data-rec-key', keyOf(row));
     if (row.kind === 'explore') built.section.classList.add('rec-explore');
+    // Row-level "not interested": persists the row key, then recomputes the page — the
+    // engine skips the row and redistributes its items (session cache makes this cheap).
+    if (row.key && !coldStart) {
+      const dismissBtn = document.createElement('button');
+      dismissBtn.type = 'button';
+      dismissBtn.className = 'rec-dismiss';
+      dismissBtn.title = 'Not interested in this row';
+      dismissBtn.setAttribute('aria-label', `Dismiss the "${heading}" row`);
+      dismissBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+      dismissBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dismissRow(row.key);
+        renderRecommendationsPage();
+      });
+      built.section.querySelector('.rec-header')?.appendChild(dismissBtn);
+    }
     return built;
   };
 
@@ -2488,7 +2590,11 @@ async function renderRecommendationsPage() {
   let rows = [];
   let failed = false;
   try {
-    ({ rows } = await getRecommendationRows(items, { limit: 60, onRow: onStream }));
+    ({ rows } = await getRecommendationRows(items, {
+      limit: 60,
+      onRow: onStream,
+      groupOpts: { dismissedRows: getDismissedRows() },
+    }));
   } catch (e) {
     console.warn('Recommendation page failed:', e);
     failed = true;
@@ -2533,34 +2639,86 @@ async function renderRecommendationsPage() {
 const STAR_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.3 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg>';
 const STAR_OUTLINE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3.2l2.6 5.7 6.2.6-4.7 4.1 1.4 6.1L12 16.6 6.5 19.8l1.4-6.1L3.2 9.5l6.2-.6z"/></svg>';
 
-// A star toggle bound to a movie. Stops click propagation so it never triggers play.
+// All four signal buttons (star/like/seen/down) share sibling re-sync: after any toggle,
+// every other signal button on the same poster re-reads its store state.
+const SIGNAL_BTN_SELECTOR = '.star-btn, .like-btn, .seen-btn, .down-btn';
+function resyncSiblingSignals(btn) {
+  btn.parentElement?.querySelectorAll(SIGNAL_BTN_SELECTOR).forEach((b) => {
+    if (b !== btn) b.dispatchEvent(new CustomEvent('resync'));
+  });
+}
+// Shared behavior for a poster signal toggle: swallow play-triggering events, resync
+// siblings after toggling, refresh the basket view + rec surfaces.
+function wireSignalButton(btn, onToggle) {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onToggle();
+    resyncSiblingSignals(btn);
+    if (isFavoritesMode) loadFavorites();
+    onSignalChanged();
+  });
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+  });
+}
+
+// The star = the 'loved' tier. Stops click propagation so it never triggers play.
 function createStarButton(movie) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'star-btn';
   const sync = () => {
-    const on = isStarred(movie.id);
+    const on = reactionOf(movie.id) === 'loved';
     btn.classList.toggle('starred', on);
     btn.setAttribute('aria-pressed', String(on));
-    btn.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
-    btn.title = on ? 'Remove from favorites' : 'Add to favorites';
+    btn.setAttribute('aria-label', on ? 'Remove from loved' : 'Loved it');
+    btn.title = on ? 'Remove from loved' : 'Loved it';
     btn.innerHTML = on ? STAR_FILLED_SVG : STAR_OUTLINE_SVG;
   };
   sync();
-  btn.addEventListener('resync', sync); // re-render when a sibling downvote toggles state
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleStar(movie);
-    sync();
-    const down = btn.parentElement?.querySelector('.down-btn');
-    if (down) down.dispatchEvent(new CustomEvent('resync'));
-    if (isFavoritesMode) loadFavorites();
-    onSignalChanged();
-  });
-  // Keep keyboard activation on the star from bubbling to the card's play handler.
-  btn.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
-  });
+  btn.addEventListener('resync', sync);
+  wireSignalButton(btn, () => { setReaction(movie, 'loved'); sync(); });
+  return btn;
+}
+
+// The lighter 'liked' tier — same thumb glyph as the downvote, flipped via CSS.
+function createLikeButton(movie) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'like-btn';
+  const sync = () => {
+    const on = reactionOf(movie.id) === 'liked';
+    btn.classList.toggle('liked', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Remove liked' : 'Liked it');
+    btn.title = on ? 'Remove liked' : 'Liked it';
+    btn.innerHTML = on ? DOWN_FILLED_SVG : DOWN_OUTLINE_SVG;
+  };
+  sync();
+  btn.addEventListener('resync', sync);
+  wireSignalButton(btn, () => { setReaction(movie, 'liked'); sync(); });
+  return btn;
+}
+
+const SEEN_OUTLINE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>';
+const SEEN_FILLED_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.8 14.6L5.6 12l1.4-1.4 3.2 3.2 6.8-6.8 1.4 1.4-8.2 8.2z"/></svg>';
+
+// "Seen it" — marks a title watched outside the app (neutral profile signal + exclusion).
+function createSeenButton(movie) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'seen-btn';
+  const sync = () => {
+    const on = isSeen(movie.id);
+    btn.classList.toggle('seen', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Unmark seen' : 'Seen it');
+    btn.title = on ? 'Unmark seen' : 'Seen it (watched elsewhere)';
+    btn.innerHTML = on ? SEEN_FILLED_SVG : SEEN_OUTLINE_SVG;
+  };
+  sync();
+  btn.addEventListener('resync', sync);
+  wireSignalButton(btn, () => { toggleSeen(movie); sync(); });
   return btn;
 }
 
@@ -2583,17 +2741,7 @@ function createDownvoteButton(movie) {
   };
   sync();
   btn.addEventListener('resync', sync);
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleDownvote(movie);
-    sync();
-    const star = btn.parentElement?.querySelector('.star-btn');
-    if (star) star.dispatchEvent(new CustomEvent('resync'));
-    onSignalChanged();
-  });
-  btn.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
-  });
+  wireSignalButton(btn, () => { toggleDownvote(movie); sync(); });
   return btn;
 }
 
@@ -2765,6 +2913,8 @@ function createMovieCard(movie, index) {
 
   // Assemble card
   imageDiv.appendChild(createStarButton(movie));
+  imageDiv.appendChild(createLikeButton(movie));
+  imageDiv.appendChild(createSeenButton(movie));
   imageDiv.appendChild(createDownvoteButton(movie));
   card.appendChild(imageDiv);
   card.appendChild(infoDiv);
@@ -2914,9 +3064,26 @@ async function loadTrending() {
       pagesToFetch = 100; // Even more for 1k+ votes
     }
     
-    await fetchMoreTrending(pagesToFetch);
-    await fetchQualityGems();
+    // FIRST WAVE: enough pages for a meaningful paint (~200 titles), shown immediately.
+    // The deep pool the weighted sort wants (up to 250 pages + quality gems) follows in
+    // the background and re-sorts in place — waiting for it kept the grid on a spinner
+    // for ~20s on a cold cache.
+    const FIRST_WAVE_PAGES = 10;
+    const loadToken = gridLoadToken; // resetFetchState() above stamped this load
+    const firstWave = Math.min(FIRST_WAVE_PAGES, pagesToFetch);
+    await fetchMoreTrending(firstWave);
     await processAndDisplayMovies(allMovies);
+
+    (async () => {
+      if (pagesToFetch > firstWave) await fetchMoreTrending(pagesToFetch - firstWave, loadToken);
+      if (loadToken !== gridLoadToken) return;
+      await fetchQualityGems();
+      if (loadToken !== gridLoadToken) return;
+      // Only re-render if the browse grid still owns #main.
+      if (currentApp !== 'movies' || isWatchedMode || isFavoritesMode || isSearchMode || isTop250Mode) return;
+      if (tabRecommended.classList.contains('active')) return;
+      await processAndDisplayMovies(allMovies);
+    })().catch((e) => console.warn('background pool deepening failed:', e));
   } catch (error) {
     console.error('Error loading trending movies:', error);
     showError('Failed to load movies. Please try again later.');
