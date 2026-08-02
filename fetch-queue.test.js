@@ -220,3 +220,63 @@ test('memo mirror: writes flush through to storage and de-dupe/persist across a 
   assert.deepEqual(out, { url: 'https://api/persist' });
   assert.equal(calls, 1, 'new queue serves the persisted entry from its mirror, no refetch');
 });
+
+test('minGapMs: spaces request starts by reserving slots on the injected clock', async () => {
+  const storage = fakeStorage();
+  const started = [];
+  const delays = [];
+  const fetchImpl = async (url) => { started.push(url); return jsonResponse({ url }); };
+  const q = createFetchQueue({
+    fetchImpl,
+    storage,
+    maxInflight: 10,
+    minGapMs: 100,
+    delayImpl: async (ms) => { delays.push(ms); },
+    now: () => NOW, // static clock -> waits are pure slot arithmetic
+  });
+
+  await Promise.all([
+    q.fetchJson('https://api/gap/1'),
+    q.fetchJson('https://api/gap/2'),
+    q.fetchJson('https://api/gap/3'),
+  ]);
+
+  assert.equal(started.length, 3);
+  // First start needs no wait; each later start reserves the next 100ms slot.
+  assert.deepEqual(delays, [100, 200], 'second and third starts wait one and two gaps');
+});
+
+test('minGapMs: retry attempts also reserve a start slot (429 storm stays paced)', async () => {
+  const storage = fakeStorage();
+  const delays = [];
+  let attempts = 0;
+  const fetchImpl = async () => {
+    attempts++;
+    return attempts === 1
+      ? jsonResponse(null, { ok: false, status: 429, headers: {} })
+      : jsonResponse({ ok: true });
+  };
+  const q = createFetchQueue({
+    fetchImpl,
+    storage,
+    minGapMs: 50,
+    delayImpl: async (ms) => { delays.push(ms); },
+    now: () => NOW,
+  });
+
+  const out = await q.fetchJson('https://api/paced-retry');
+  assert.deepEqual(out, { ok: true });
+  assert.equal(attempts, 2);
+  // delays: backoff (1000ms base) from the 429, plus the reserved 50ms slot for attempt 2.
+  assert.ok(delays.includes(1000), 'exponential backoff wait present');
+  assert.ok(delays.includes(50), 'retry start reserved the next spacing slot');
+});
+
+test('minGapMs omitted: behavior unchanged, no spacing delays injected', async () => {
+  const storage = fakeStorage();
+  const delays = [];
+  const fetchImpl = async (url) => jsonResponse({ url });
+  const q = createFetchQueue({ fetchImpl, storage, delayImpl: async (ms) => { delays.push(ms); }, now: () => NOW });
+  await Promise.all([q.fetchJson('https://api/ng/1'), q.fetchJson('https://api/ng/2')]);
+  assert.deepEqual(delays, [], 'no gap -> no delay calls');
+});

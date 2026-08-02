@@ -3,6 +3,7 @@ import { initYouTube, activateYouTube } from './youtube.js';
 import { getRecommendations, getRecommendationRows, clearRecommendationCache } from './recommendations.js';
 import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
+import { fetchTmdbJson } from './tmdb-queue.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -610,9 +611,7 @@ async function fetchWatchProviders(type, id) {
   }
 
   try {
-    const response = await fetch(ENDPOINTS.watchProviders(type, id));
-    if (!response.ok) return null;
-    const data = await response.json();
+    const data = await fetchTmdbJson(ENDPOINTS.watchProviders(type, id));
 
     // Get US providers (or fallback to first available country)
     const results = data.results;
@@ -647,9 +646,7 @@ async function fetchCredits(type, id) {
   }
 
   try {
-    const response = await fetch(ENDPOINTS.credits(type, id));
-    if (!response.ok) return null;
-    const data = await response.json();
+    const data = await fetchTmdbJson(ENDPOINTS.credits(type, id));
 
     // For movies, find the director from crew
     // For TV shows, find the creator or showrunner
@@ -681,9 +678,7 @@ async function searchActors(query) {
   if (!query || query.length < 2) return [];
 
   try {
-    const response = await fetch(ENDPOINTS.searchPerson(query));
-    if (!response.ok) return [];
-    const data = await response.json();
+    const data = await fetchTmdbJson(ENDPOINTS.searchPerson(query));
 
     // Filter to only actors (known_for_department === 'Acting')
     return (data.results || [])
@@ -709,9 +704,8 @@ async function fetchByActor(actorId, mediaType = 'all') {
   try {
     // Fetch movie credits
     if (mediaType === 'all' || mediaType === 'movie') {
-      const movieResponse = await fetch(ENDPOINTS.personMovieCredits(actorId));
-      if (movieResponse.ok) {
-        const movieData = await movieResponse.json();
+      const movieData = await fetchTmdbJson(ENDPOINTS.personMovieCredits(actorId)).catch(() => null);
+      if (movieData) {
         (movieData.cast || []).forEach(movie => {
           if (!seenActorIds.has(movie.id)) {
             seenActorIds.add(movie.id);
@@ -723,9 +717,8 @@ async function fetchByActor(actorId, mediaType = 'all') {
 
     // Fetch TV credits
     if (mediaType === 'all' || mediaType === 'tv') {
-      const tvResponse = await fetch(ENDPOINTS.personTvCredits(actorId));
-      if (tvResponse.ok) {
-        const tvData = await tvResponse.json();
+      const tvData = await fetchTmdbJson(ENDPOINTS.personTvCredits(actorId)).catch(() => null);
+      if (tvData) {
         (tvData.cast || []).forEach(show => {
           if (!seenActorIds.has(show.id)) {
             seenActorIds.add(show.id);
@@ -1014,9 +1007,7 @@ function debounce(func, wait) {
 // Fetch trailers from TMDB
 async function fetchTrailers(type, id) {
   try {
-    const response = await fetch(ENDPOINTS.videos(type, id));
-    if (!response.ok) return null;
-    const data = await response.json();
+    const data = await fetchTmdbJson(ENDPOINTS.videos(type, id));
 
     // Find YouTube trailers, prefer official ones
     const trailers = data.results?.filter(
@@ -1254,7 +1245,7 @@ async function loadYtsStream(movie) {
   const reqId = movie.id;
   try {
     // TMDB id -> IMDb id (YTS is indexed by IMDb id).
-    const ext = await fetch(ENDPOINTS.externalIds('movie', movie.id)).then((r) => r.json());
+    const ext = await fetchTmdbJson(ENDPOINTS.externalIds('movie', movie.id)).catch(() => null);
     const imdbId = ext && ext.imdb_id;
     if (!imdbId) { setYtsStatus('No IMDb id for this title — YTS unavailable.', true); return; }
     if (currentPlayingMovie?.id !== reqId) return; // user switched away
@@ -1336,9 +1327,7 @@ function changeSource(newIndex) {
 // Fetch TV show details (seasons)
 async function fetchTvDetails(tvId) {
   try {
-    const response = await fetch(ENDPOINTS.tvDetails(tvId));
-    if (!response.ok) return null;
-    return await response.json();
+    return await fetchTmdbJson(ENDPOINTS.tvDetails(tvId));
   } catch (error) {
     console.error('Error fetching TV details:', error);
     return null;
@@ -1348,9 +1337,7 @@ async function fetchTvDetails(tvId) {
 // Fetch season details (episodes)
 async function fetchSeasonDetails(tvId, seasonNum) {
   try {
-    const response = await fetch(ENDPOINTS.seasonDetails(tvId, seasonNum));
-    if (!response.ok) return null;
-    return await response.json();
+    return await fetchTmdbJson(ENDPOINTS.seasonDetails(tvId, seasonNum));
   } catch (error) {
     console.error('Error fetching season details:', error);
     return null;
@@ -1733,13 +1720,10 @@ function isCacheValid() {
          (Date.now() - cache.timestamp < CONFIG.CACHE_DURATION);
 }
 
-// Fetch with error handling
+// Fetch with error handling — TMDB list/discover pages go through the shared
+// rate-limited queue like everything else (throws on persistent failure).
 async function fetchWithErrorHandling(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-  return response.json();
+  return fetchTmdbJson(url);
 }
 
 // Populate genre dropdown based on media type

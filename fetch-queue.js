@@ -13,6 +13,7 @@ function defaultDelay(ms) {
 export function createFetchQueue({
   fetchImpl = fetch,
   maxInflight = 6,
+  minGapMs = 0,
   storage,
   delayImpl = defaultDelay,
   now = Date.now,
@@ -79,9 +80,24 @@ export function createFetchQueue({
     });
   }
 
+  // Pace request *starts* so a burst of queued URLs can't trip the API's per-IP
+  // rate limit: each start reserves the next free minGapMs slot and waits for it.
+  // Applies to retries too — a 429 storm must not re-fire unpaced. Returns null
+  // when no wait is due so the default path stays synchronous (no extra ticks).
+  let nextFreeAt = 0;
+  function reserveStart() {
+    if (!minGapMs) return null;
+    const t = now();
+    const slot = Math.max(t, nextFreeAt);
+    nextFreeAt = slot + minGapMs;
+    return slot > t ? delayImpl(slot - t) : null;
+  }
+
   async function doFetch(url) {
     let attempt = 0;
     for (;;) {
+      const gapWait = reserveStart();
+      if (gapWait) await gapWait;
       const res = await fetchImpl(url);
       if (res.ok) return res.json();
 

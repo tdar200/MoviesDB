@@ -1104,7 +1104,7 @@ export function rankCandidates(candidates, profile, watchedIds, limit = 20, now 
 // Network + cache layer (browser only)
 // ---------------------------------------------------------------------------
 import { CONFIG, ENDPOINTS } from './config.js';
-import { createFetchQueue } from './fetch-queue.js';
+import { fetchTmdbJson } from './tmdb-queue.js';
 
 const META_CACHE_KEY = 'recMetaCache';     // permanent per-title keywords/credits
 const META_CACHE_VERSION = 2;                      // bump to discard stale-schema entries
@@ -1160,15 +1160,11 @@ function writeMetaEntry(cacheKey, meta, now = Date.now()) {
   }
 }
 
-// One module-level queue: concurrency cap + 429 backoff + URL-keyed session memo.
-const _recFetchQueue = createFetchQueue({
-  fetchImpl: (url) => fetch(url),
-  maxInflight: 12,
-  storage: (typeof sessionStorage !== 'undefined') ? sessionStorage : undefined,
-});
-
+// All TMDB traffic shares the app-wide queue (see tmdb-queue.js) so this module's
+// enrichment fetches and the grid's per-card fetches can't out-race the rate
+// limit together.
 function fetchJson(url) {
-  return _recFetchQueue.fetchJson(url);
+  return fetchTmdbJson(url);
 }
 
 // Fetch keywords + top cast/director for one title, caching permanently.
