@@ -491,15 +491,16 @@ function dismissRow(key) {
 // downvoted) in one visit. localStorage is per-browser and per-origin, so this is the
 // only way a taste profile built elsewhere can arrive here. Existing user signals win
 // over the payload; the hash is cleared afterwards so refresh/share doesn't re-import.
-// Returns the number of titles added (0 if no hash or nothing new).
+// Returns null when no valid import happened (no hash / malformed), else the number of
+// titles added (0 for a re-import where everything was already present).
 function handleProfileImportFromHash() {
   const match = window.location.hash.match(/^#import=(.+)$/);
-  if (!match) return 0;
+  if (!match) return null;
   const payload = decodeImportPayload(match[1]);
   history.replaceState(null, '', window.location.pathname + window.location.search);
   if (!payload) {
     console.error('profile import: malformed payload, ignoring');
-    return 0;
+    return null;
   }
   const merged = mergeImportIntoStores(payload, {
     starred: getStarredStore(),
@@ -2463,8 +2464,10 @@ async function renderRecommendationsRow() {
   // Remove any existing row first (avoids duplicates on re-render).
   document.getElementById('recommendations-row')?.remove();
 
-  // Only show on the Movies home/browse view — not search, Top 250, or Watched.
-  if (isSearchMode || isTop250Mode || isWatchedMode || isFavoritesMode) return;
+  // Only show on the Movies home/browse view. Callers fire late (end of loadTrending,
+  // debounced signal changes) — re-check ownership here rather than trusting them: the
+  // rec page in particular must not get a duplicate pipeline run + injected teaser row.
+  if (!browseGridOwnsMain()) return;
 
   const items = buildSignalItems();
   if (items.basket.length === 0) return; // basket-primary cold-start: nothing to recommend
@@ -3073,6 +3076,14 @@ function checkScrollPosition() {
 }
 
 // Main function to load trending movies
+// Does the trending/browse grid currently own #main? Grid loads resolve late (paced
+// queue, hundreds of pages) — by then the user may be on the basket, watched, search,
+// Top 250, YouTube, or Recommended surface, and a late grid paint must not wipe it.
+function browseGridOwnsMain() {
+  return currentApp === 'movies' && !isWatchedMode && !isFavoritesMode
+    && !isSearchMode && !isTop250Mode && !tabRecommended.classList.contains('active');
+}
+
 async function loadTrending() {
   try {
     setLoading(true);
@@ -3102,7 +3113,14 @@ async function loadTrending() {
     const loadToken = gridLoadToken; // resetFetchState() above stamped this load
     const firstWave = Math.min(FIRST_WAVE_PAGES, pagesToFetch);
     await fetchMoreTrending(firstWave);
-    await processAndDisplayMovies(allMovies);
+    // The first wave resolves seconds after the call — the user may have left the
+    // browse grid meanwhile (fast tab click, #import= landing on the basket). Painting
+    // anyway would wipe whichever surface owns #main now (this exact race blanked the
+    // rec page: its skeleton got replaced by the grid, and the engine's rows then
+    // reconciled into a detached node).
+    if (loadToken === gridLoadToken && browseGridOwnsMain()) {
+      await processAndDisplayMovies(allMovies);
+    }
 
     (async () => {
       if (pagesToFetch > firstWave) await fetchMoreTrending(pagesToFetch - firstWave, loadToken);
@@ -3110,8 +3128,7 @@ async function loadTrending() {
       await fetchQualityGems();
       if (loadToken !== gridLoadToken) return;
       // Only re-render if the browse grid still owns #main.
-      if (currentApp !== 'movies' || isWatchedMode || isFavoritesMode || isSearchMode || isTop250Mode) return;
-      if (tabRecommended.classList.contains('active')) return;
+      if (!browseGridOwnsMain()) return;
       await processAndDisplayMovies(allMovies);
     })().catch((e) => console.warn('background pool deepening failed:', e));
   } catch (error) {
@@ -3488,7 +3505,10 @@ function initFromUrl() {
   if (params.search) {
     search.value = params.search;
     handleSearch(params.search);
-  } else {
+  } else if (importedTitleCount === null) {
+    // An #import= landing goes straight to the Basket tab — don't burn hundreds of
+    // trending-page fetches (and queue slots the rec engine needs) on a grid the user
+    // isn't looking at. Clicking the Movies tab later runs loadTrending() fresh.
     loadTrending();
   }
 }
@@ -3732,6 +3752,7 @@ tabFavorites?.addEventListener('click', switchToFavorites);
 tabYouTube?.addEventListener('click', switchToYouTube);
 tabRecommended?.addEventListener('click', switchToRecommended);
 
-// A profile import just landed: open the Basket tab so the result is visible.
-// (Must run after the tab elements above are bound — switchToFavorites uses them.)
-if (importedTitleCount > 0) switchToFavorites();
+// A profile import just landed (even a re-click that added nothing): open the Basket
+// tab so the result is visible. (Must run after the tab elements above are bound —
+// switchToFavorites uses them.)
+if (importedTitleCount !== null) switchToFavorites();
