@@ -4,6 +4,7 @@ import { getRecommendations, getRecommendationRows, clearRecommendationCache } f
 import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
 import { fetchTmdbJson } from './tmdb-queue.js';
+import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -484,6 +485,35 @@ function dismissRow(key) {
     store[key] = Date.now();
     localStorage.setItem(DISMISSED_ROWS_KEY, JSON.stringify(store));
   } catch (e) { console.error('dismiss save failed:', e); }
+}
+
+// Profile import: a #import=<base64url> hash seeds the signal stores (basket / seen /
+// downvoted) in one visit. localStorage is per-browser and per-origin, so this is the
+// only way a taste profile built elsewhere can arrive here. Existing user signals win
+// over the payload; the hash is cleared afterwards so refresh/share doesn't re-import.
+// Returns the number of titles added (0 if no hash or nothing new).
+function handleProfileImportFromHash() {
+  const match = window.location.hash.match(/^#import=(.+)$/);
+  if (!match) return 0;
+  const payload = decodeImportPayload(match[1]);
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+  if (!payload) {
+    console.error('profile import: malformed payload, ignoring');
+    return 0;
+  }
+  const merged = mergeImportIntoStores(payload, {
+    starred: getStarredStore(),
+    downvoted: getDownvotedStore(),
+    seen: getSeenStore(),
+  }, Date.now());
+  if (merged.added > 0) {
+    saveStarredStore(merged.starred);
+    saveDownvotedStore(merged.downvoted);
+    saveSeenStore(merged.seen);
+    clearRecommendationCache();
+  }
+  console.log(`profile import: ${merged.added} titles added`);
+  return merged.added;
 }
 
 // Assemble the explicit signal input the engine consumes: the starred basket (positive,
@@ -3474,6 +3504,9 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', flushDwell);
 
 // Initialize
+// Ingest a #import= profile payload before anything renders, so the first paint of
+// any tab already reflects the imported signals.
+const importedTitleCount = handleProfileImportFromHash();
 populateSourceSelector();
 populateThemes(); // Populate theme filter dropdown
 loadProviderResultsFromFile(); // Load test results from JSON file and sync to localStorage
@@ -3698,3 +3731,7 @@ tabWatched?.addEventListener('click', switchToWatched);
 tabFavorites?.addEventListener('click', switchToFavorites);
 tabYouTube?.addEventListener('click', switchToYouTube);
 tabRecommended?.addEventListener('click', switchToRecommended);
+
+// A profile import just landed: open the Basket tab so the result is visible.
+// (Must run after the tab elements above are bound — switchToFavorites uses them.)
+if (importedTitleCount > 0) switchToFavorites();
