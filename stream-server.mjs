@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
 import { fetchYtsMovie } from './yts-api.mjs';
 import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle } from './subtitles.js';
+import { pieceWindow } from './stream-window.mjs';
 
 const PORT = process.env.PORT || 3000;
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -318,19 +319,18 @@ async function handleStream(req, res, url) {
 
   if (req.method === 'HEAD') return res.end();
 
-  // Sequential window: select a large forward run of pieces from the playhead
-  // (not just the immediate few) so there are enough in-flight pieces to
-  // saturate many peers at once, while staying near the read position. The
-  // first few are marked critical for fastest time-to-first-frame.
+  // Prioritise a sequential run from the playhead so there are enough in-flight
+  // pieces to saturate many peers, plus the TAIL of the file. The tail matters
+  // because a non-faststart MP4 keeps its moov index at the end: Chrome then asks
+  // for bytes=0- AND bytes=<near EOF>-, and decodes nothing until the tail lands.
+  // Selecting only one window per request made those two requests overwrite each
+  // other's priorities and neither finished (see stream-window.mjs).
   try {
-    const pieceLen = torrent.pieceLength || 1;
-    const fileStart = Math.floor(file.offset / pieceLen);
-    const fileEnd = Math.floor((file.offset + file.length - 1) / pieceLen);
-    const startPiece = Math.floor((file.offset + start) / pieceLen);
-    // Clear any prior window, then select ~256 pieces (hundreds of MB) ahead.
-    torrent.deselect(fileStart, fileEnd);
-    torrent.select(startPiece, Math.min(startPiece + 256, fileEnd), 1);
-    torrent.critical(startPiece, Math.min(startPiece + 5, fileEnd));
+    const w = pieceWindow({ file, pieceLength: torrent.pieceLength || 1, start });
+    torrent.deselect(w.fileStart, w.fileEnd);
+    torrent.select(w.window.from, w.window.to, 1);
+    torrent.select(w.tail.from, w.tail.to, 1);
+    torrent.critical(w.critical.from, w.critical.to);
   } catch { /* ignore */ }
 
   const stream = file.createReadStream({ start, end });
