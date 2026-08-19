@@ -5,6 +5,7 @@ import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
 import { fetchTmdbJson } from './tmdb-queue.js';
 import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
+import { describeYtsLookupFailure, describeImdbLookupFailure } from './yts-status.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -1331,22 +1332,44 @@ async function loadYtsStream(movie) {
 
   const reqId = movie.id;
   try {
-    // TMDB id -> IMDb id (YTS is indexed by IMDb id).
-    const ext = await fetchTmdbJson(ENDPOINTS.externalIds('movie', movie.id)).catch(() => null);
+    // TMDB id -> IMDb id (YTS is indexed by IMDb id). A failed REQUEST here is
+    // transient (TMDB rate-limits hard) and says nothing about whether the title
+    // has an IMDb id, so retry once and never report the two as the same thing.
+    let extFailed = false;
+    let ext = await fetchTmdbJson(ENDPOINTS.externalIds('movie', movie.id)).catch(() => { extFailed = true; return null; });
+    if (extFailed) {
+      extFailed = false;
+      await new Promise((r) => setTimeout(r, 1200));
+      if (currentPlayingMovie?.id !== reqId) return; // user switched away mid-retry
+      ext = await fetchTmdbJson(ENDPOINTS.externalIds('movie', movie.id)).catch(() => { extFailed = true; return null; });
+    }
     const imdbId = ext && ext.imdb_id;
-    if (!imdbId) { setYtsStatus('No IMDb id for this title — YTS unavailable.', true); return; }
+    if (!imdbId) { setYtsStatus(describeImdbLookupFailure({ requestFailed: extFailed }), true); return; }
     if (currentPlayingMovie?.id !== reqId) return; // user switched away
 
-    const data = await fetch(helperUrl(`/yts?imdb=${encodeURIComponent(imdbId)}`))
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
+    // The lookup fails in two completely different ways and they need different
+    // messages: the helper not being there at all (fetch throws) vs the helper
+    // answering that IT could not reach YTS (5xx — ISPs block the YTS domains, so
+    // this is transient and worth one retry before bothering the user).
+    const lookupYts = async () => {
+      try {
+        const r = await fetch(helperUrl(`/yts?imdb=${encodeURIComponent(imdbId)}`));
+        return r.ok ? { data: await r.json() } : { status: r.status };
+      } catch {
+        return { networkError: true };
+      }
+    };
+
+    let attempt = await lookupYts();
+    if (attempt.status >= 500) {
+      setYtsStatus("Couldn't reach YTS's API — retrying…");
+      await new Promise((r) => setTimeout(r, 1500));
+      if (currentPlayingMovie?.id !== reqId) return; // user switched away mid-retry
+      attempt = await lookupYts();
+    }
+    const data = attempt.data;
     if (!data) {
-      setYtsStatus(
-        STREAM_HELPER_BASE
-          ? `Could not reach the stream helper at ${STREAM_HELPER_BASE}. Is it running and reachable over HTTPS?`
-          : 'Could not reach the local stream helper. Run "npm start" (not a static server).',
-        true
-      );
+      setYtsStatus(describeYtsLookupFailure({ ...attempt, remoteBase: STREAM_HELPER_BASE }), true);
       return;
     }
     const torrents = (data.torrents || []).filter((t) => t.hash);
@@ -3421,6 +3444,7 @@ if (qualitySelect) {
     playYtsQuality((e.target.value || '').toLowerCase());
   });
 }
+
 
 // Episode control event listeners
 seasonSelect.addEventListener('change', (e) => {

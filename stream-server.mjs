@@ -19,6 +19,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
+import { fetchYtsMovie } from './yts-api.mjs';
 
 const PORT = process.env.PORT || 3000;
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -137,33 +138,6 @@ function destroyTorrent(hash) {
   }
 }
 
-// YTS API hosts, tried in order. The classic `yts.mx` is DNS-blocked by many
-// ISPs; `movies-api.accel.li` is the official current API host and `yts.bz` the
-// current site domain — both resolve where yts.mx doesn't. First host that
-// returns a valid `status: ok` payload wins.
-const YTS_HOSTS = [
-  'https://movies-api.accel.li/api/v2',
-  'https://yts.bz/api/v2',
-  'https://yts.mx/api/v2',
-];
-
-async function fetchYts(imdb) {
-  let lastErr = null;
-  for (const base of YTS_HOSTS) {
-    try {
-      const api = `${base}/list_movies.json?query_term=${encodeURIComponent(imdb)}`;
-      const r = await fetch(api, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(12_000) });
-      if (!r.ok) { lastErr = new Error(`${base} -> HTTP ${r.status}`); continue; }
-      const j = await r.json();
-      if (j?.status === 'ok' && j?.data) return j.data.movies?.[0] || null;
-      lastErr = new Error(`${base} -> unexpected payload`);
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || new Error('all YTS hosts failed');
-}
-
 async function handleYts(res, url) {
   const imdb = url.searchParams.get('imdb');
   if (!imdb) {
@@ -171,7 +145,7 @@ async function handleYts(res, url) {
     return res.end(JSON.stringify({ error: 'missing imdb param' }));
   }
   try {
-    const movie = await fetchYts(imdb);
+    const movie = await fetchYtsMovie(imdb);
     res.writeHead(200, {
       'content-type': 'application/json',
       'access-control-allow-origin': '*',
@@ -185,8 +159,11 @@ async function handleYts(res, url) {
       })
     );
   } catch (err) {
-    res.writeHead(502, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'YTS fetch failed: ' + String(err) }));
+    // Every YTS host was unreachable. Say so precisely: the helper is plainly
+    // running (it is answering this request), so the app must not blame itself.
+    console.error(`[yts] lookup failed for ${imdb}: ${(err.hostErrors || [String(err)]).join(' | ')}`);
+    res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+    res.end(JSON.stringify({ error: 'yts_unreachable', detail: err.hostErrors || [String(err)] }));
   }
 }
 
