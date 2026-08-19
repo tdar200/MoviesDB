@@ -6,6 +6,7 @@ import { calculateScore, newestWeightedScore } from './scoring.js';
 import { fetchTmdbJson } from './tmdb-queue.js';
 import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
 import { describeYtsLookupFailure, describeImdbLookupFailure } from './yts-status.js';
+import { dedupeTrackLabels } from './subtitles.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -62,6 +63,7 @@ const trailerIframe = document.getElementById('trailer-iframe');
 const playerVideo = document.getElementById('player-video');
 const ytsStatusEl = document.getElementById('yts-status');
 const qualitySelect = document.getElementById('quality-select');
+const subtitleSelect = document.getElementById('subtitle-select');
 const playerTitle = document.getElementById('player-title');
 const closeModalBtn = document.getElementById('close-modal');
 const watchContainer = document.getElementById('watch-container');
@@ -1190,6 +1192,7 @@ function showPlayerVideo(on) {
   if (playerVideo) playerVideo.style.display = on ? 'block' : 'none';
   if (playerIframe) playerIframe.style.display = on ? 'none' : 'block';
   if (qualitySelect && !on) qualitySelect.style.display = 'none';
+  if (subtitleSelect && !on) subtitleSelect.style.display = 'none';
   if (!on) setYtsStatus(null);
 }
 
@@ -1235,6 +1238,114 @@ function stopYtsStream() {
   currentYtsTorrents = [];
   currentYtsData = null;
   if (qualitySelect) { qualitySelect.style.display = 'none'; qualitySelect.innerHTML = ''; }
+  clearSubtitleTracks();
+}
+
+// ---- Subtitles (from the .srt files inside the YTS torrent) ----
+//
+// YTS torrents carry their own subtitles, so no external service is involved: the
+// helper lists them and serves each one converted to WebVTT (a <track> element
+// accepts nothing else). Remembering the choice matters because the picker is
+// rebuilt on every quality switch.
+
+const SUBTITLE_PREF_KEY = 'ytsSubtitlePref'; // 'off' | a track label
+// The tracks currently attached, in <track> element order. The index into this
+// array IS the track identity used by the picker and by showSubtitleTrack.
+let subtitleSlots = [];
+
+function subtitlePref() {
+  try { return localStorage.getItem(SUBTITLE_PREF_KEY) || ''; } catch { return ''; }
+}
+function setSubtitlePref(value) {
+  try { localStorage.setItem(SUBTITLE_PREF_KEY, value); } catch { /* private mode */ }
+}
+
+// Remove every <track> from the player. Detaching the elements is not enough on
+// its own — a stale track left showing would caption the *next* movie.
+function clearSubtitleTracks() {
+  subtitleSlots = [];
+  if (playerVideo) {
+    for (const t of [...playerVideo.querySelectorAll('track')]) t.remove();
+    for (const tt of playerVideo.textTracks || []) tt.mode = 'disabled';
+  }
+  if (subtitleSelect) { subtitleSelect.style.display = 'none'; subtitleSelect.innerHTML = ''; }
+}
+
+// Show only the chosen track, identified by its position among the <track>
+// elements we appended. Selecting by LABEL is wrong: one torrent can carry two
+// files that both label as "English" (a release-named sidecar plus
+// Subs/English.srt), and matching on the label turned both on, so the browser
+// rendered two overlapping caption streams at once.
+function showSubtitleTrack(slot) {
+  if (!playerVideo) return;
+  const tracks = playerVideo.textTracks || [];
+  const want = slot === '' || slot == null ? -1 : Number(slot);
+  for (let i = 0; i < tracks.length; i++) {
+    tracks[i].mode = i === want ? 'showing' : 'disabled';
+  }
+  const chosen = want >= 0 ? subtitleSlots[want] : null;
+  setSubtitlePref(chosen ? chosen.label : 'off');
+}
+
+// Pick the default track. NOT simply the first non-forced one: YTS often ships a
+// sidecar that is really the forced/partial track (Predator: Badlands has an
+// 11KB sidecar of alien dialogue beside a 31KB full English track), so the
+// largest non-forced track is what a viewer actually wants.
+function defaultSubtitleSlot(tracks) {
+  const pref = subtitlePref();
+  if (pref === 'off') return -1;
+  if (pref) {
+    const remembered = tracks.findIndex((t) => t.label === pref);
+    if (remembered >= 0) return remembered;
+  }
+  const candidates = tracks.some((t) => !t.forced) ? tracks.filter((t) => !t.forced) : tracks;
+  const best = [...candidates].sort((a, b) => (b.bytes || 0) - (a.bytes || 0))[0];
+  return best ? tracks.indexOf(best) : -1;
+}
+
+// Attach the subtitle tracks for one torrent and build the picker.
+async function loadSubtitlesFor(hash) {
+  if (!playerVideo || !subtitleSelect) return;
+  clearSubtitleTracks();
+
+  let tracks = [];
+  try {
+    // streaming=1: we are playing this torrent, so the helper must not deselect
+    // the video file to save bandwidth on our behalf.
+    const r = await fetch(helperUrl(`/subtitles?hash=${hash}&streaming=1`));
+    if (!r.ok) return;                      // no subtitles is not an error worth shouting about
+    tracks = dedupeTrackLabels((await r.json()).tracks || []);
+  } catch { return; }                       // helper gone; the film still plays
+
+  if (currentTorrentHash !== hash) return;  // user switched quality/movie mid-fetch
+  if (!tracks.length) return;
+
+  subtitleSlots = tracks;
+  for (const t of tracks) {
+    const el = document.createElement('track');
+    el.kind = 'subtitles';
+    el.label = t.label;
+    el.srclang = t.lang || 'en';
+    el.src = helperUrl(`/subtitle?hash=${hash}&index=${t.index}&streaming=1`);
+    playerVideo.appendChild(el);
+  }
+
+  const off = document.createElement('option');
+  off.value = '';
+  off.textContent = 'Subtitles: off';
+  subtitleSelect.appendChild(off);
+  tracks.forEach((t, slot) => {
+    const opt = document.createElement('option');
+    opt.value = String(slot);   // slot, not label: labels are not unique
+    opt.textContent = t.label;
+    subtitleSelect.appendChild(opt);
+  });
+  subtitleSelect.style.display = 'inline-block';
+
+  const slot = defaultSubtitleSlot(tracks);
+  subtitleSelect.value = slot >= 0 ? String(slot) : '';
+  // textTracks appear as the <track> elements are parsed; apply once they exist.
+  setTimeout(() => { if (currentTorrentHash === hash) showSubtitleTrack(slot >= 0 ? String(slot) : ''); }, 0);
 }
 
 function populateQualitySelect(torrents, selectedHash) {
@@ -1320,6 +1431,7 @@ function playYtsQuality(hash) {
   playerVideo.load();
   playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
   startYtsStatusPolling(hash);
+  loadSubtitlesFor(hash);
 }
 
 // Load a movie from YTS via the local helper into the native <video>.
@@ -3445,6 +3557,11 @@ if (qualitySelect) {
   });
 }
 
+if (subtitleSelect) {
+  subtitleSelect.addEventListener('change', (e) => {
+    showSubtitleTrack(e.target.value || '');
+  });
+}
 
 // Episode control event listeners
 seasonSelect.addEventListener('change', (e) => {

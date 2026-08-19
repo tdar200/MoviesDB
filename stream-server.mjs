@@ -20,6 +20,7 @@ import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
 import { fetchYtsMovie } from './yts-api.mjs';
+import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle } from './subtitles.js';
 
 const PORT = process.env.PORT || 3000;
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -167,6 +168,98 @@ async function handleYts(res, url) {
   }
 }
 
+// GET /subtitles?hash=..  -> the subtitle tracks inside this torrent.
+// YTS ships .srt sidecars (and often a Subs/ folder), so no external service or
+// API key is involved: the files are already in the swarm we are downloading.
+async function handleSubtitleList(res, url) {
+  const hash = (url.searchParams.get('hash') || '').toLowerCase().trim();
+  const name = url.searchParams.get('title') || '';
+  if (!/^[a-f0-9]{40}$/.test(hash)) {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid or missing hash' }));
+  }
+  // webtorrent selects every file the moment a torrent is added, so adding one
+  // just to read its file list would start pulling the whole 2GB movie. If this
+  // request is what introduced the torrent, deselect everything: listing needs
+  // metadata only. An already-streaming torrent is left alone.
+  // `streaming=1` means the caller is playing this torrent right now, so the video
+  // file must stay selected. Without it, a subtitle request that beat the video's
+  // own request to the server would deselect every file and the movie never
+  // downloaded at all (observed Aug 19, 2026: the [subs] lines preceded [stream]).
+  const streaming = url.searchParams.get('streaming') === '1';
+  const isNewToUs = !torrents.has(hash) && !streaming;
+  let torrent;
+  try {
+    torrent = await getTorrent(hash, name);
+  } catch (err) {
+    res.writeHead(504, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'torrent unavailable: ' + err.message }));
+  }
+  if (isNewToUs) torrent.files.forEach((f) => f.deselect());
+
+  const tracks = torrent.files
+    .map((f, index) => ({ f, index }))
+    .filter(({ f }) => isSubtitleFile(f.path || f.name))
+    .map(({ f, index }) => ({ index, ...subtitleLabel(f.path || f.name), bytes: f.length }));
+
+  res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+  res.end(JSON.stringify({ tracks }));
+}
+
+// GET /subtitle?hash=..&index=..  -> that file, converted to WebVTT.
+// A <track> element accepts WebVTT only; served an .srt, Chrome reports no error
+// and simply shows nothing, so the conversion has to happen here.
+async function handleSubtitleFile(res, url) {
+  const hash = (url.searchParams.get('hash') || '').toLowerCase().trim();
+  const index = Number.parseInt(url.searchParams.get('index') || '', 10);
+  if (!/^[a-f0-9]{40}$/.test(hash) || Number.isNaN(index)) {
+    res.writeHead(400);
+    return res.end('invalid or missing hash/index');
+  }
+  // `streaming=1` means the caller is playing this torrent right now, so the video
+  // file must stay selected. Without it, a subtitle request that beat the video's
+  // own request to the server would deselect every file and the movie never
+  // downloaded at all (observed Aug 19, 2026: the [subs] lines preceded [stream]).
+  const streaming = url.searchParams.get('streaming') === '1';
+  const isNewToUs = !torrents.has(hash) && !streaming;
+  let torrent;
+  try {
+    torrent = await getTorrent(hash, url.searchParams.get('title') || '');
+  } catch (err) {
+    res.writeHead(504);
+    return res.end('torrent unavailable: ' + err.message);
+  }
+  // Same guard as the listing: fetching a 40KB subtitle must not drag the movie
+  // down with it. Only ever deselect when we were the ones who added the torrent.
+  if (isNewToUs) torrent.files.forEach((f) => f.deselect());
+  const file = torrent.files[index];
+  if (!file || !isSubtitleFile(file.path || file.name)) {
+    res.writeHead(404);
+    return res.end('no subtitle file at that index');
+  }
+
+  // Subtitle files are tiny but sit outside the sequential video window, so the
+  // piece picker would otherwise leave them until last. Select explicitly, or
+  // subtitles arrive minutes after the picture.
+  try { file.select(1); } catch { /* older webtorrent: select() takes no priority */ }
+
+  try {
+    const raw = await file.arrayBuffer();
+    const text = decodeSubtitle(Buffer.from(raw));
+    const vtt = /\.vtt$/i.test(file.name) ? text : srtToVtt(text);
+    console.log(`[subs] ${file.path} -> ${vtt.length} bytes of VTT`);
+    res.writeHead(200, {
+      'content-type': 'text/vtt; charset=utf-8',
+      'access-control-allow-origin': '*',
+      'cache-control': 'public, max-age=3600',
+    });
+    res.end(vtt);
+  } catch (err) {
+    res.writeHead(504);
+    res.end('could not read subtitle: ' + err.message);
+  }
+}
+
 async function handleStream(req, res, url) {
   const hash = (url.searchParams.get('hash') || '').toLowerCase().trim();
   const name = url.searchParams.get('title') || '';
@@ -298,6 +391,8 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname === '/yts') return await handleYts(res, url);
+    if (url.pathname === '/subtitles') return await handleSubtitleList(res, url);
+    if (url.pathname === '/subtitle') return await handleSubtitleFile(res, url);
     if (url.pathname === '/stream') return await handleStream(req, res, url);
     if (url.pathname === '/stream-status') return handleStreamStatus(res, url);
     if (url.pathname === '/stream-stop') {
