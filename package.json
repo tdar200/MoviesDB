@@ -9,7 +9,8 @@
     "test": "node --test",
     "test-providers": "node provider-tester-cli.js",
     "check-links": "node check-links.mjs",
-    "check-playback": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_PLAYBACK=1 node --test check-playback.test.js"
+    "check-playback": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_PLAYBACK=1 node --test check-playback.test.js",
+    "check-fullscreen": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_FULLSCREEN=1 node --test fullscreen.test.js"
   },
   "keywords": [
     "movies",

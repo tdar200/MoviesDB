@@ -403,7 +403,7 @@ function testProvider(source, index, mediaType, mediaId, season, episode) {
     };
 
     iframe.src = url;
-    iframe.allow = 'autoplay; fullscreen; encrypted-media';
+    iframe.allow = 'autoplay *; fullscreen *; encrypted-media *';
     iframe.setAttribute('allowfullscreen', '');
 
     // Clear previous iframe and add new one
