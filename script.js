@@ -558,6 +558,7 @@ function populateSourceSelector() {
     if (source.torrent) {
       if (!HELPER_AVAILABLE) return;
       if (source.movieOnly && isTvNow) return;
+      if (source.tvOnly && !isTvNow) return;
       const option = document.createElement('option');
       option.value = index;
       option.textContent = source.name;
@@ -1516,6 +1517,104 @@ async function loadYtsStream(movie) {
   }
 }
 
+// ---- TV torrents (torrentio -> the same native player as YTS) ----
+//
+// Unlike YTS, almost nothing on offer for shows is browser-playable: of 200 sources
+// sampled across four shows, 24 were .mp4 and the rest .mkv, which Chrome cannot
+// play. The helper filters to playable sources, so an empty list here means "no
+// playable version of this episode", not "no torrents".
+
+let currentTvSources = [];   // ranked playable sources for the episode on screen
+
+async function loadTvStream(movie, season, episode) {
+  stopYtsStream();
+  playerIframe.src = '';
+  playerIframe.removeAttribute('srcdoc');
+  showPlayerVideo(true);
+  setYtsStatus('Finding a source…');
+
+  const reqId = movie.id;
+  try {
+    // torrentio is indexed by IMDb id, same as YTS. Retry once: a failed request
+    // says nothing about whether the show has an id.
+    let extFailed = false;
+    let ext = await fetchTmdbJson(ENDPOINTS.externalIds('tv', movie.id)).catch(() => { extFailed = true; return null; });
+    if (extFailed) {
+      extFailed = false;
+      await new Promise((r) => setTimeout(r, 1200));
+      if (currentPlayingMovie?.id !== reqId) return;
+      ext = await fetchTmdbJson(ENDPOINTS.externalIds('tv', movie.id)).catch(() => { extFailed = true; return null; });
+    }
+    const imdbId = ext && ext.imdb_id;
+    if (!imdbId) { setYtsStatus(describeImdbLookupFailure({ requestFailed: extFailed }), true); return; }
+    if (currentPlayingMovie?.id !== reqId) return;
+
+    let attempt;
+    try {
+      const r = await fetch(helperUrl(`/tv-torrents?imdb=${encodeURIComponent(imdbId)}&season=${season}&episode=${episode}`));
+      attempt = r.ok ? { data: await r.json() } : { status: r.status };
+    } catch { attempt = { networkError: true }; }
+
+    if (!attempt.data) {
+      setYtsStatus(
+        attempt.networkError
+          ? describeYtsLookupFailure({ networkError: true, remoteBase: STREAM_HELPER_BASE })
+          : "Couldn't reach the torrent index — it's a volunteer service and does go down. Try again in a moment.",
+        true
+      );
+      return;
+    }
+    if (currentPlayingMovie?.id !== reqId) return;
+
+    currentTvSources = attempt.data.sources || [];
+    if (!currentTvSources.length) {
+      setYtsStatus(`No browser-playable (.mp4) source for S${season}E${episode}. Most TV releases are .mkv, which the browser can't play — try an embed source for this one.`, true);
+      return;
+    }
+
+    populateTvQualitySelect(currentTvSources);
+    playTvSource(currentTvSources[0].hash, season, episode);
+  } catch (err) {
+    console.error('TV torrent error:', err);
+    setYtsStatus('Failed to start the torrent stream.', true);
+  }
+}
+
+// The quality dropdown doubles as the source list for TV: each entry is a
+// different torrent, labelled by what it actually is.
+function populateTvQualitySelect(sources) {
+  if (!qualitySelect) return;
+  qualitySelect.innerHTML = '';
+  sources.forEach((src) => {
+    const opt = document.createElement('option');
+    opt.value = src.hash;
+    opt.textContent = `${src.quality}${src.seeds ? ' · ' + src.seeds + ' seeds' : ''}`;
+    qualitySelect.appendChild(opt);
+  });
+  qualitySelect.style.display = sources.length ? 'inline-block' : 'none';
+}
+
+// Stream one source. s/e are passed to the helper so it serves the right episode
+// out of a season pack rather than whichever file happens to be largest.
+function playTvSource(hash, season, episode) {
+  if (!hash) return;
+  if (currentTorrentHash && currentTorrentHash !== hash) beaconStop(currentTorrentHash);
+  clearYtsPoll();
+  currentTorrentHash = hash;
+  if (qualitySelect) qualitySelect.value = hash;
+
+  const src = currentTvSources.find((x) => x.hash === hash);
+  setYtsStatus(`Connecting to peers… (${src?.quality || ''})\nFirst frames can take a moment.`);
+
+  playerVideo.src = helperUrl(`/stream?hash=${hash}&s=${season}&e=${episode}&title=${encodeURIComponent(src?.filename || '')}`);
+  playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
+  playerVideo.onerror = () => setYtsStatus('Stream error — try another source in the dropdown.', true);
+  playerVideo.load();
+  playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
+  startYtsStatusPolling(hash);
+  loadSubtitlesFor(hash);   // season packs occasionally ship a Subs folder
+}
+
 // Change video source
 function changeSource(newIndex) {
   currentSourceIndex = newIndex;
@@ -1524,10 +1623,12 @@ function changeSource(newIndex) {
 
   const source = EMBED_SOURCES[newIndex];
 
-  // YTS torrent source -> native <video> via local helper (movies only).
+  // Torrent sources -> native <video> via the local helper. YTS covers movies;
+  // torrentio covers shows (YTS has no TV catalogue).
   if (source && source.torrent) {
     playerIframe.src = '';
-    loadYtsStream(currentPlayingMovie);
+    if (source.tvOnly) loadTvStream(currentPlayingMovie, currentSeason, currentEpisode);
+    else loadYtsStream(currentPlayingMovie);
     return;
   }
 
@@ -1644,6 +1745,9 @@ function playEpisode(season, episode) {
         </body>
       </html>
     `;
+  } else if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) {
+    // Torrent source: every episode is a different torrent, so re-resolve.
+    loadTvStream(currentPlayingMovie, season, episode);
   } else {
     const embedUrl = getEmbedUrl('tv', currentPlayingMovie.id, season, episode);
     loadIframeSrc(embedUrl);
@@ -1778,7 +1882,7 @@ async function openPlayer(movie) {
   // If the previously selected source isn't valid for this title (e.g. a
   // movies-only torrent source while opening a TV show), fall back to the first.
   const sel = EMBED_SOURCES[currentSourceIndex];
-  if (sel && sel.torrent && sel.movieOnly && type === 'tv') {
+  if (sel && sel.torrent && ((sel.movieOnly && type === 'tv') || (sel.tvOnly && type !== 'tv'))) {
     currentSourceIndex = 0;
   }
 
@@ -3553,7 +3657,10 @@ sourceSelect.addEventListener('change', (e) => {
 // YTS quality switch — restart the stream with the chosen quality's torrent.
 if (qualitySelect) {
   qualitySelect.addEventListener('change', (e) => {
-    playYtsQuality((e.target.value || '').toLowerCase());
+    const hash = (e.target.value || '').toLowerCase();
+    // For TV the dropdown lists whole torrents, not qualities of one movie.
+    if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) playTvSource(hash, currentSeason, currentEpisode);
+    else playYtsQuality(hash);
   });
 }
 

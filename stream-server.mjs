@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
 import { fetchYtsMovie } from './yts-api.mjs';
 import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle } from './subtitles.js';
+import { fetchTvSources, pickEpisodeFile } from './tv-api.mjs';
 import { pieceWindow } from './stream-window.mjs';
 
 const PORT = process.env.PORT || 3000;
@@ -169,6 +170,31 @@ async function handleYts(res, url) {
   }
 }
 
+// GET /tv-torrents?imdb=..&season=..&episode=..  -> playable sources for one episode.
+// YTS is movies-only, so shows get their torrents from torrentio instead (EZTV's
+// own CDN 451s UK traffic and apibay's search is dead). Almost everything on offer
+// is .mkv/x265 which a browser cannot play, so tv-api does the filtering and
+// ranking and this returns only what will actually stream.
+async function handleTvTorrents(res, url) {
+  const imdb = (url.searchParams.get('imdb') || '').trim();
+  const season = Number.parseInt(url.searchParams.get('season') || '', 10);
+  const episode = Number.parseInt(url.searchParams.get('episode') || '', 10);
+  if (!/^tt\d+$/.test(imdb) || !Number.isFinite(season) || !Number.isFinite(episode)) {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'need imdb=tt.., season=, episode=' }));
+  }
+  try {
+    const sources = await fetchTvSources(imdb, season, episode);
+    console.log(`[tv] ${imdb} S${season}E${episode} -> ${sources.length} playable source(s)`);
+    res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+    res.end(JSON.stringify({ sources }));
+  } catch (err) {
+    console.error(`[tv] lookup failed for ${imdb} S${season}E${episode}: ${err.message}`);
+    res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+    res.end(JSON.stringify({ error: 'torrentio_unreachable', detail: err.message }));
+  }
+}
+
 // GET /subtitles?hash=..  -> the subtitle tracks inside this torrent.
 // YTS ships .srt sidecars (and often a Subs/ folder), so no external service or
 // API key is involved: the files are already in the swarm we are downloading.
@@ -277,10 +303,17 @@ async function handleStream(req, res, url) {
     return res.end('torrent unavailable: ' + err.message);
   }
 
-  const file = pickVideoFile(torrent);
+  // A TV request names an episode. Season packs hold every episode, so picking the
+  // largest playable file (right for a movie) would serve a random one.
+  const s = Number.parseInt(url.searchParams.get('s') || '', 10);
+  const e = Number.parseInt(url.searchParams.get('e') || '', 10);
+  const wantsEpisode = Number.isFinite(s) && Number.isFinite(e);
+  const file = wantsEpisode ? pickEpisodeFile(torrent.files, s, e) : pickVideoFile(torrent);
   if (!file) {
     res.writeHead(404);
-    return res.end('no playable video file in torrent');
+    return res.end(wantsEpisode
+      ? `no playable file for S${s}E${e} in this torrent`
+      : 'no playable video file in torrent');
   }
   console.log(`[stream] ${file.name} (${(file.length / 1e9).toFixed(2)} GB) peers=${torrent.numPeers} range=${req.headers.range || 'none'}`);
 
@@ -391,6 +424,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname === '/yts') return await handleYts(res, url);
+    if (url.pathname === '/tv-torrents') return await handleTvTorrents(res, url);
     if (url.pathname === '/subtitles') return await handleSubtitleList(res, url);
     if (url.pathname === '/subtitle') return await handleSubtitleFile(res, url);
     if (url.pathname === '/stream') return await handleStream(req, res, url);

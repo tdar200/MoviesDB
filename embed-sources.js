@@ -46,6 +46,10 @@ export const EMBED_SOURCES = [
   // YTS torrent source. Not an iframe embed: streamed through the local helper
   // (stream-server.mjs) into a native <video>. Movies only; requires `npm start`.
   { name: 'YTS (Torrent)', torrent: true, movieOnly: true, getUrl: () => '' },
+  // TV torrents via torrentio, streamed through the same local helper into the
+  // native <video>. Shows only; YTS has no TV catalogue at all. Only sources that
+  // are genuinely browser-playable (.mp4, not x265) are ever offered.
+  { name: 'TV (Torrent)', torrent: true, tvOnly: true, getUrl: () => '' },
 ];
 
 // Providers that block iframe embedding - will open in new tab instead
