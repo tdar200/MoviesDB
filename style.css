@@ -849,6 +849,16 @@ main {
   cursor: not-allowed;
 }
 
+/* App-level fullscreen button (player-fullscreen.js). Pushed to the right edge
+   of the controls row, away from the source/episode selects. */
+.fullscreen-btn {
+  margin-left: auto;
+}
+
+.fullscreen-btn svg {
+  display: block;
+}
+
 .player-container {
   position: relative;
   width: 100%;

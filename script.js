@@ -66,6 +66,7 @@ const qualitySelect = document.getElementById('quality-select');
 const subtitleSelect = document.getElementById('subtitle-select');
 const playerTitle = document.getElementById('player-title');
 const closeModalBtn = document.getElementById('close-modal');
+const playerFullscreenBtn = document.getElementById('player-fullscreen');
 const watchContainer = document.getElementById('watch-container');
 const trailerContainer = document.getElementById('trailer-container');
 const tabWatch = document.getElementById('tab-watch');
@@ -74,6 +75,7 @@ const tabTrailer = document.getElementById('tab-trailer');
 // Video embed sources live in a shared module so the live link-checker
 // (check-links.mjs / `npm run check-links`) tests the exact same list the app plays.
 import { EMBED_SOURCES, IFRAME_BLOCKED_PROVIDERS, BLOCKED_PROVIDERS } from './embed-sources.js';
+import { pickFullscreenTarget, toggleFullscreen, isTypingTarget, isFullscreenKey } from './player-fullscreen.js';
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
@@ -3689,9 +3691,31 @@ playerModal.addEventListener('click', (e) => {
   }
 });
 
+// App-level fullscreen. The provider's own fullscreen button can be hijacked by
+// an ad overlay inside its frame (111Movies does this); a click on our page
+// cannot — see player-fullscreen.js. Sends the visible player element fullscreen
+// with the provider's player still inside it.
+function togglePlayerFullscreen() {
+  const target = pickFullscreenTarget({
+    activeTab: activePlayerTab,
+    videoVisible: !!playerVideo && playerVideo.style.display !== 'none',
+    playerIframe, playerVideo, trailerIframe,
+  });
+  toggleFullscreen(document, target).catch((err) => console.warn('Fullscreen failed:', err?.message || err));
+}
+if (playerFullscreenBtn) playerFullscreenBtn.addEventListener('click', togglePlayerFullscreen);
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && playerModal.style.display === 'flex') {
-    closePlayer();
+  if (playerModal.style.display !== 'flex') return;
+  if (e.key === 'Escape') {
+    // Escape leaves fullscreen first (the browser does that); only a second
+    // Escape, outside fullscreen, closes the player.
+    if (!document.fullscreenElement) closePlayer();
+    return;
+  }
+  if (isFullscreenKey(e) && !isTypingTarget(e.target)) {
+    e.preventDefault();
+    togglePlayerFullscreen();
   }
 });
 

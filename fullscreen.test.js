@@ -144,3 +144,108 @@ test(
     }
   }
 );
+
+// ---- app-level fullscreen control (added 3 Sep 2026) ----
+//
+// Root cause this covers: 111Movies (player.vidlove.cc) lays a transparent
+// about:blank ad frame over its player. The first click on any control — its
+// fullscreen button included — lands on that frame, which opens a popunder and
+// swallows the click; the player's fullscreen handler never runs. The permission
+// chain is fine (with the overlay neutralised the same click resolves
+// requestFullscreen()), only the click is stolen. So the app carries its own
+// fullscreen control: a click on OUR page cannot be intercepted by the frame, and
+// the <iframe> element goes fullscreen with the provider's player inside it.
+
+test('the app has its own fullscreen control, wired to player-fullscreen.js', () => {
+  assert.match(html, /<button[^>]*\bid=["']player-fullscreen["']/i, 'index.html needs a #player-fullscreen button');
+  const js = readFileSync(new URL('./script.js', import.meta.url), 'utf8');
+  assert.match(js, /from '\.\/player-fullscreen\.js'/, 'script.js must import player-fullscreen.js');
+  assert.match(js, /playerFullscreenBtn\.addEventListener\('click'/, 'the button must be wired');
+  assert.match(js, /isFullscreenKey\(e\)/, 'the F shortcut must be wired');
+});
+
+test(
+  'real Chrome: an ad overlay steals the provider button\'s click, the app-level control still enters fullscreen',
+  { skip: RUN ? false : 'set CHECK_FULLSCREEN=1 (use `npm run check-fullscreen`) to run the real-browser fullscreen check' },
+  async (t) => {
+    assert.ok(process.env.DISPLAY, 'no DISPLAY — headed Chrome needs one. Use `npm run check-fullscreen` (wraps Xvfb).');
+    const http = await import('node:http');
+    const { chromium } = await import('playwright');
+    const moduleSrc = readFileSync(new URL('./player-fullscreen.js', import.meta.url), 'utf8');
+
+    const tag = iframeTag('player-iframe');
+    const attrs = [/\ballowfullscreen\b/i.test(tag) ? 'allowfullscreen' : '', tag.match(/\ballow=["'][^"']*["']/i)?.[0] || ''].join(' ').trim();
+
+    // The "provider" (127.0.0.1, cross-origin): a fullscreen button, and over it a
+    // transparent about:blank ad frame that opens a popunder and swallows clicks.
+    const child = `<!doctype html><body style="margin:0;background:#123">
+      <button id="b" style="position:absolute;left:20px;top:20px;width:240px;height:90px">FS</button>
+      <iframe id="ad" style="position:absolute;left:0;top:0;width:100%;height:100%;border:0;opacity:0.01"></iframe>
+      <script>
+        document.getElementById('b').addEventListener('click', () => {
+          document.documentElement.requestFullscreen().then(() => { window.__fs = 'resolved'; }, (e) => { window.__fs = 'rejected: ' + e.name; });
+        });
+        const ad = document.getElementById('ad');
+        ad.contentDocument.body.style.cssText = 'margin:0;width:100vw;height:100vh;';
+        ad.contentDocument.addEventListener('click', () => { window.__adClicks = (window.__adClicks || 0) + 1; ad.contentWindow.open('about:blank', '_blank'); }, true);
+      </script></body>`;
+    const srvB = http.createServer((_q, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(child); });
+    await new Promise((r) => srvB.listen(0, '127.0.0.1', r));
+    const childUrl = `http://127.0.0.1:${srvB.address().port}/child`;
+
+    // The app page (localhost): the real iframe attributes, plus our own control
+    // driving the real module.
+    const srvA = http.createServer((req, res) => {
+      if (req.url === '/player-fullscreen.js') { res.writeHead(200, { 'Content-Type': 'application/javascript' }); return res.end(moduleSrc); }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<!doctype html><body style="margin:0">
+        <button id="app-fs" style="width:200px;height:60px">App fullscreen</button>
+        <div style="position:relative;width:100%;padding-top:56.25%">
+          <iframe id="f" ${attrs} src="${childUrl}" style="position:absolute;top:0;left:0;width:100%;height:100%;border:none"></iframe>
+        </div>
+        <script type="module">
+          import { toggleFullscreen } from '/player-fullscreen.js';
+          document.getElementById('app-fs').addEventListener('click', () => {
+            toggleFullscreen(document, document.getElementById('f')).then(() => { window.__appfs = 'resolved'; }, (e) => { window.__appfs = 'rejected: ' + e.name; });
+          });
+        </script></body>`);
+    });
+    await new Promise((r) => srvA.listen(0, 'localhost', r));
+
+    const ctx = await chromium.launchPersistentContext('/tmp/moviesdb-pw-fullscreen-overlay', {
+      headless: false, channel: 'chrome', viewport: { width: 1280, height: 720 },
+      args: ['--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
+    });
+    try {
+      const page = await ctx.newPage();
+      let popups = 0;
+      page.on('popup', (p) => { popups++; p.close().catch(() => {}); });
+      await page.goto(`http://localhost:${srvA.address().port}/`, { waitUntil: 'load' });
+      await page.waitForTimeout(800);
+      const frame = page.frames().find((f) => f.url() === childUrl);
+      assert.ok(frame, 'child frame never loaded');
+
+      // 1) The provider's own button: the click lands on the ad overlay instead.
+      const box = await (await frame.$('#b')).boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await page.waitForTimeout(700);
+      const stolen = await frame.evaluate(() => ({ fs: window.__fs, adClicks: window.__adClicks || 0 }));
+      t.diagnostic(`provider button: fullscreen=${stolen.fs ?? 'never requested'}, overlay clicks=${stolen.adClicks}, popups=${popups}`);
+      assert.equal(stolen.fs, undefined, 'the overlay should have swallowed the click before the player saw it');
+      assert.ok(stolen.adClicks >= 1, 'the ad overlay did not receive the click — harness is not reproducing the hijack');
+      assert.equal(await page.evaluate(() => document.fullscreenElement), null);
+
+      // 2) The app-level control: the frame cannot touch this click.
+      await page.click('#app-fs');
+      await page.waitForTimeout(700);
+      const appfs = await page.evaluate(() => ({ r: window.__appfs, el: document.fullscreenElement?.id }));
+      t.diagnostic(`app control: ${appfs.r}, fullscreenElement=${appfs.el}`);
+      assert.equal(appfs.r, 'resolved', 'the app-level requestFullscreen() was rejected');
+      assert.equal(appfs.el, 'f', 'the player iframe did not become the fullscreen element');
+      await page.evaluate(() => document.exitFullscreen()).catch(() => {});
+    } finally {
+      await ctx.close().catch(() => {});
+      srvA.close(); srvB.close();
+    }
+  }
+);
