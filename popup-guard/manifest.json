@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "MoviesDB Popup Guard",
+  "version": "1.0.0",
+  "description": "Stops the popups and popunders that streaming embed providers open from inside the MoviesDB player. Only acts on frames embedded by the MoviesDB page.",
+  "permissions": ["webNavigation", "tabs"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start",
+      "world": "MAIN",
+      "js": ["guard-origins.js", "defuse.js"]
+    }
+  ]
+}

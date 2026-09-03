@@ -10,7 +10,27 @@
 // (the `npm run check-playback` script does this for you).
 
 import { chromium } from 'playwright';
+import { readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { EMBED_SOURCES as SHARED_SOURCES, BLOCKED_PROVIDERS } from './embed-sources.js';
+
+// Newest Chrome for Testing in the puppeteer cache, or null. Needed to load an
+// unpacked extension under automation: branded Google Chrome ignores
+// --load-extension since v137, Chrome for Testing (same engine, same brand) still
+// honours it. Install one with:
+//   npx @puppeteer/browsers install chrome@stable --path ~/.cache/puppeteer
+export function findChromeForTesting() {
+  const root = join(homedir(), '.cache', 'puppeteer', 'chrome');
+  let dirs = [];
+  try { dirs = readdirSync(root).filter((d) => d.startsWith('linux-')); } catch { return null; }
+  dirs.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  for (const d of dirs) {
+    const p = join(root, d, 'chrome-linux64', 'chrome');
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
 
 // The list the app actually plays, minus the torrent source and known-dead hosts.
 export const EMBED_SOURCES = SHARED_SOURCES.filter(
@@ -20,17 +40,22 @@ export const EMBED_SOURCES = SHARED_SOURCES.filter(
 // Launch a persistent Chrome context tuned to look like a real user, not a bot.
 // A persistent (non-incognito) context + the real 'chrome' channel + hidden
 // webdriver flag is the combination that gets past the stream CDNs.
-export async function launchContext({ headless = false, profileDir = '/tmp/moviesdb-pw-profile' } = {}) {
+// `extensionPath` loads an unpacked extension (popup-guard/) into the profile —
+// pair it with `executablePath` = findChromeForTesting(), see above. Without
+// `executablePath` the real 'chrome' channel is used.
+export async function launchContext({ headless = false, profileDir = '/tmp/moviesdb-pw-profile', extensionPath = null, executablePath = null } = {}) {
+  const args = [
+    '--disable-blink-features=AutomationControlled',
+    '--autoplay-policy=no-user-gesture-required',
+    '--no-first-run',
+    '--no-default-browser-check',
+  ];
+  if (extensionPath) args.push(`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`);
   const ctx = await chromium.launchPersistentContext(profileDir, {
     headless,
-    channel: 'chrome',
+    ...(executablePath ? { executablePath } : { channel: 'chrome' }),
     viewport: { width: 1280, height: 720 },
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--autoplay-policy=no-user-gesture-required',
-      '--no-first-run',
-      '--no-default-browser-check',
-    ],
+    args,
   });
   await ctx.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -89,18 +114,24 @@ async function maxVideoTime(page) {
 // Play one source and measure whether video time actually advances. Polls up to
 // maxWaitMs, re-nudging each round, and returns as soon as it detects real
 // progress (providers resolve the stream server-side, which can take 20-40s).
-// Returns { name, url, played, advancedSecs, forbidden, error }.
-export async function testPlayback(ctx, source, { mediaType = 'movie', mediaId = 27205, season = 1, episode = 1, maxWaitMs = 40000 } = {}) {
+// `embed(url)` maps the provider URL to the page actually opened — e.g. a local
+// host page that frames it with the app's real <iframe> attributes, so the
+// provider runs exactly as it does inside the app. `keepPopups` leaves popups open
+// for the run so the caller can see which survive (default: close them as they
+// appear).
+// Returns { name, url, played, advancedSecs, forbidden, popups, popupsOpen, error }.
+export async function testPlayback(ctx, source, { mediaType = 'movie', mediaId = 27205, season = 1, episode = 1, maxWaitMs = 40000, embed = null, keepPopups = false } = {}) {
   const url = source.getUrl(mediaType, mediaId, season, episode);
   const page = await ctx.newPage();
-  page.on('popup', (pop) => pop.close().catch(() => {})); // ads open popups — close them
+  const popups = []; // ads open popups — count them, and close them unless asked to keep them
+  page.on('popup', (pop) => { popups.push(pop); if (!keepPopups) pop.close().catch(() => {}); });
   let forbidden = 0;
   page.on('response', (r) => {
     if (r.status() === 403 && /stream|\.m3u8|\.ts|\.mp4|vd\/|cdn|moon|cloud|seg/i.test(r.url())) forbidden++;
   });
-  const result = { name: source.name, url, played: false, advancedSecs: 0, forbidden: 0, error: null };
+  const result = { name: source.name, url, played: false, advancedSecs: 0, forbidden: 0, popups: 0, popupsOpen: 0, error: null };
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => {});
+    await page.goto(embed ? embed(url) : url, { waitUntil: 'domcontentloaded', timeout: 40000 }).catch(() => {});
     await page.waitForTimeout(3500);
     const t0 = await maxVideoTime(page);
     let elapsed = 0;
@@ -115,9 +146,12 @@ export async function testPlayback(ctx, source, { mediaType = 'movie', mediaId =
     if (!result.advancedSecs) result.advancedSecs = +((await maxVideoTime(page)) - t0).toFixed(1);
     result.played = result.advancedSecs > 1;
     result.forbidden = forbidden;
+    result.popups = popups.length;
+    result.popupsOpen = popups.filter((p) => !p.isClosed()).length;
   } catch (e) {
     result.error = e.message?.slice(0, 80) || String(e);
   } finally {
+    for (const p of popups) await p.close().catch(() => {});
     await page.close().catch(() => {});
   }
   return result;
