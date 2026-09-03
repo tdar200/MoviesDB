@@ -23,8 +23,12 @@ import { fetchYtsMovie } from './yts-api.mjs';
 import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle } from './subtitles.js';
 import { fetchTvSources, pickEpisodeFile } from './tv-api.mjs';
 import { pieceWindow } from './stream-window.mjs';
+import { helperRequestAllowed } from './helper-auth.js';
 
 const PORT = process.env.PORT || 3000;
+// Access key for the API endpoints. Empty = open (local npm start). Set it when
+// the helper is published beyond your own machines (see helper-auth.js).
+const HELPER_KEY = process.env.HELPER_KEY || '';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const READY_TIMEOUT_MS = 60_000;
 
@@ -428,6 +432,10 @@ function handleStreamStatus(res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (!helperRequestAllowed({ pathname: url.pathname, searchParams: url.searchParams, requiredKey: HELPER_KEY })) {
+      res.writeHead(401, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      return res.end(JSON.stringify({ error: 'access key required' }));
+    }
     if (url.pathname === '/yts') return await handleYts(res, url);
     if (url.pathname === '/tv-torrents') return await handleTvTorrents(res, url);
     if (url.pathname === '/subtitles') return await handleSubtitleList(res, url);

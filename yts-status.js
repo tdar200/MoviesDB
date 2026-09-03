@@ -21,6 +21,12 @@ export function describeYtsLookupFailure({ networkError = false, status = 0, rem
     return "Couldn't reach YTS's API — ISPs often block it. The stream helper is fine; try again in a moment.";
   }
 
+  // The helper is published with an access key and this browser has none (or a
+  // stale one). The key travels in the shared link as ?helperkey=<key>.
+  if (status === 401 || status === 403) {
+    return 'This stream helper needs an access key. Open the app from the link you were given (it ends in ?helperkey=...) and try again.';
+  }
+
   if (status) {
     return `The stream helper rejected the YTS lookup (HTTP ${status}).`;
   }

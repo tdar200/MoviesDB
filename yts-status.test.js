@@ -81,3 +81,10 @@ test('a remote helper failure tells the user about the local-network permission 
   assert.match(msg, /allow/i);
   assert.doesNotMatch(describeYtsLookupFailure({ networkError: true }), /local network/i, 'same-origin failures should not mention it');
 });
+
+test('a 401/403 from the helper points at the ?helperkey= link, not at YTS', () => {
+  for (const status of [401, 403]) {
+    const msg = describeYtsLookupFailure({ status, remoteBase: 'https://h.example' });
+    assert.match(msg, /access key/i); assert.match(msg, /helperkey/); assert.doesNotMatch(msg, /YTS's API/);
+  }
+});

@@ -45,3 +45,18 @@ test('helper handlers used by the page send Access-Control-Allow-Origin', () => 
     assert.match(handlerBody(name), /access-control-allow-origin/i, `${name} must send access-control-allow-origin`);
   }
 });
+
+// The helper is published to the public internet (Tailscale Funnel), so its API
+// must be gated on the access key BEFORE any route runs, and the page must send
+// the key on every helper URL.
+test('stream-server checks the access key before routing, and the app sends it', () => {
+  const routing = server.slice(server.indexOf('http.createServer('));
+  const check = routing.indexOf('helperRequestAllowed(');
+  const firstRoute = routing.indexOf("url.pathname === '/yts'");
+  assert.ok(check >= 0, 'stream-server.mjs must call helperRequestAllowed()');
+  assert.ok(firstRoute > check, 'the key check must run before the first API route');
+  assert.match(server, /process\.env\.HELPER_KEY/, 'the key comes from the HELPER_KEY environment variable');
+  const js = readFileSync(new URL('./script.js', import.meta.url), 'utf8');
+  assert.match(js, /buildHelperUrl\(STREAM_HELPER_BASE, path, STREAM_HELPER_KEY\)/, 'helperUrl() must append the key');
+  assert.match(js, /resolveHelperKey\(location\.search/, 'the key must be picked up from ?helperkey=');
+});

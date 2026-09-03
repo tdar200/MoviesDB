@@ -76,6 +76,7 @@ const tabTrailer = document.getElementById('tab-trailer');
 // (check-links.mjs / `npm run check-links`) tests the exact same list the app plays.
 import { EMBED_SOURCES, IFRAME_BLOCKED_PROVIDERS, BLOCKED_PROVIDERS } from './embed-sources.js';
 import { pickFullscreenTarget, toggleFullscreen, isTypingTarget, isFullscreenKey } from './player-fullscreen.js';
+import { buildHelperUrl, resolveHelperKey } from './helper-url.js';
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
@@ -103,8 +104,13 @@ const STREAM_HELPER_BASE = (() => {
 // The helper is reachable if we're same-origin local OR a remote base is configured.
 const HELPER_AVAILABLE = IS_LOCAL_HELPER || STREAM_HELPER_BASE !== '';
 
+// The helper's access key, when it is published beyond the tailnet (see
+// helper-auth.js). Arrives once via ?helperkey=<key> in the shared link and is
+// kept in localStorage; every helper URL carries it as ?key=.
+const STREAM_HELPER_KEY = resolveHelperKey(location.search, (() => { try { return localStorage; } catch { return null; } })());
+
 // Build a helper endpoint URL (prepends the configured base; '' = same origin).
-const helperUrl = (path) => STREAM_HELPER_BASE + path;
+const helperUrl = (path) => buildHelperUrl(STREAM_HELPER_BASE, path, STREAM_HELPER_KEY);
 
 // Provider test results storage key
 const PROVIDER_RESULTS_KEY = 'providerTestResults';
