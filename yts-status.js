@@ -12,7 +12,7 @@ export function describeYtsLookupFailure({ networkError = false, status = 0, rem
   // Nothing answered: the helper really is absent/unreachable.
   if (networkError) {
     return remoteBase
-      ? `Could not reach the stream helper at ${remoteBase}. Is it running and reachable over HTTPS?`
+      ? `Could not reach the stream helper at ${remoteBase}. Is it running and reachable over HTTPS? If the browser asked to allow this site to access your local network, choose Allow and try again.`
       : 'Could not reach the local stream helper. Run "npm start" (not a static server).';
   }
 

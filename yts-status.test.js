@@ -71,3 +71,13 @@ test('the two IMDb outcomes never produce the same message', () => {
     describeImdbLookupFailure({ requestFailed: false })
   );
 });
+
+// Chrome's Local Network Access permission: a public https page reaching a helper on
+// a private/tailnet address gets a permission prompt; if it is dismissed the fetch
+// fails and looks exactly like a dead helper. The message must say what to do.
+test('a remote helper failure tells the user about the local-network permission prompt', () => {
+  const msg = describeYtsLookupFailure({ networkError: true, remoteBase: 'https://dell-g15.example.ts.net' });
+  assert.match(msg, /local network/i);
+  assert.match(msg, /allow/i);
+  assert.doesNotMatch(describeYtsLookupFailure({ networkError: true }), /local network/i, 'same-origin failures should not mention it');
+});
