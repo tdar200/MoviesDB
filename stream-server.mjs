@@ -333,20 +333,25 @@ async function handleStream(req, res, url) {
       if (m[2]) end = parseInt(m[2], 10);
     }
     if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= total) {
-      res.writeHead(416, { 'content-range': `bytes */${total}` });
+      res.writeHead(416, { 'content-range': `bytes */${total}`, 'access-control-allow-origin': '*' });
       return res.end();
     }
+    // CORS on the media responses too: the deployed page reaches this helper
+    // cross-origin and its <video> is in CORS mode (crossorigin="anonymous") so
+    // subtitle tracks load — without this header the video itself would fail.
     res.writeHead(206, {
       'content-range': `bytes ${start}-${end}/${total}`,
       'accept-ranges': 'bytes',
       'content-length': end - start + 1,
       'content-type': type,
+      'access-control-allow-origin': '*',
     });
   } else {
     res.writeHead(200, {
       'accept-ranges': 'bytes',
       'content-length': total,
       'content-type': type,
+      'access-control-allow-origin': '*',
     });
   }
 

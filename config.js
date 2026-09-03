@@ -26,7 +26,11 @@ export const CONFIG = {
   // a Cloudflare Tunnel) and put its base URL here, e.g. 'https://helper.example.com'.
   // No trailing slash. Can also be set per-device at runtime with
   // ?helper=<url> (persists) or localStorage.streamHelperBase — those win over this.
-  STREAM_HELPER_BASE: '',
+  // Set 2026-09-03: this laptop's helper, published tailnet-only over HTTPS with
+  // `tailscale serve --bg 8123` (moviesdb-helper.service keeps it running). Only
+  // devices signed into the tailnet can reach it; elsewhere the torrent sources
+  // show but report the helper as unreachable.
+  STREAM_HELPER_BASE: 'https://dell-g15.taild19ce1.ts.net',
 
   // Performance settings
   MAX_PAGES: 10,
