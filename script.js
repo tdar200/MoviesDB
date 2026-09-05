@@ -78,6 +78,7 @@ import { EMBED_SOURCES, IFRAME_BLOCKED_PROVIDERS, BLOCKED_PROVIDERS } from './em
 import { pickFullscreenTarget, toggleFullscreen, isTypingTarget, isFullscreenKey } from './player-fullscreen.js';
 import { buildHelperUrl, resolveHelperKey } from './helper-url.js';
 import { pickNextSource, describeSourceAttempt, TV_SOURCE_ATTEMPT_CAP } from './tv-fallback.js';
+import { absolutePosition, seekTarget, seekToFraction, formatTime } from './torrent-seek.js';
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
@@ -1203,6 +1204,10 @@ function showPlayerVideo(on) {
   if (playerIframe) playerIframe.style.display = on ? 'none' : 'block';
   if (qualitySelect && !on) qualitySelect.style.display = 'none';
   if (subtitleSelect && !on) subtitleSelect.style.display = 'none';
+  // The seek bar belongs to the native torrent player; hide it whenever we leave
+  // the <video> for an embed iframe or close the player. playTvSource re-shows it
+  // for remuxed sources.
+  if (!on) showTorrentSeek(false);
   if (!on) setYtsStatus(null);
 }
 
@@ -1314,17 +1319,21 @@ function defaultSubtitleSlot(tracks) {
 }
 
 // Attach the subtitle tracks for one torrent and build the picker.
-async function loadSubtitlesFor(hash) {
+async function loadSubtitlesFor(hash, season, episode) {
   if (!playerVideo || !subtitleSelect) return;
   clearSubtitleTracks();
 
   let tracks = [];
   try {
     // streaming=1: we are playing this torrent, so the helper must not deselect
-    // the video file to save bandwidth on our behalf.
-    const r = await fetch(helperUrl(`/subtitles?hash=${hash}&streaming=1`));
+    // the video file to save bandwidth on our behalf. s/e let the helper pick the
+    // right episode inside a season pack to read its embedded subtitle tracks.
+    const ep = (Number.isFinite(season) && Number.isFinite(episode)) ? `&s=${season}&e=${episode}` : '';
+    const r = await fetch(helperUrl(`/subtitles?hash=${hash}${ep}&streaming=1`));
     if (!r.ok) return;                      // no subtitles is not an error worth shouting about
-    tracks = dedupeTrackLabels((await r.json()).tracks || []);
+    const body = await r.json();
+    tracks = dedupeTrackLabels(body.tracks || []);
+    if (body.duration && currentTorrentHash === hash) setTorrentDuration(body.duration);
   } catch { return; }                       // helper gone; the film still plays
 
   if (currentTorrentHash !== hash) return;  // user switched quality/movie mid-fetch
@@ -1336,7 +1345,9 @@ async function loadSubtitlesFor(hash) {
     el.kind = 'subtitles';
     el.label = t.label;
     el.srclang = t.lang || 'en';
-    el.src = helperUrl(`/subtitle?hash=${hash}&index=${t.index}&streaming=1`);
+    // t.id is the stable track id (file "f3" or embedded "e1:2"); older helpers
+    // sent t.index, kept as a fallback.
+    el.src = helperUrl(`/subtitle?hash=${hash}&id=${t.id || ('f' + t.index)}&streaming=1`);
     playerVideo.appendChild(el);
   }
 
@@ -1618,6 +1629,80 @@ function populateTvQualitySelect(sources) {
 
 // Stream one source. s/e are passed to the helper so it serves the right episode
 // out of a season pack rather than whichever file happens to be largest.
+// --- Torrent seek: restart-at-timestamp for the remuxed MKV player ---
+//
+// A live-remuxed MKV is a fragmented MP4 with no seekable index, so the native
+// scrub bar cannot move within it. Seeking reloads the stream at a new start time
+// (?t=<seconds>); the <video> clock then runs from 0 and the true position is the
+// start offset plus video.currentTime. torrent-seek.js does the pure arithmetic.
+let tvPlayCtx = null;        // { hash, season, episode, src } for re-issuing ?t=
+let torrentSeekBase = 0;     // seconds the current stream was started at
+let torrentDuration = 0;     // episode length, from the /subtitles probe
+let suppressSourceWalk = false;
+
+function buildTvStreamUrl(hash, season, episode, src, t, ready) {
+  let path = `/stream?hash=${hash}&s=${season}&e=${episode}&ready=${ready}` +
+    `&title=${encodeURIComponent(src?.filename || '')}` +
+    `&ctx=${encodeURIComponent((src?.title || '').slice(0, 200))}`;
+  if (t > 0) path += `&t=${Math.floor(t)}`;
+  return helperUrl(path);
+}
+
+function setTorrentDuration(d) { torrentDuration = Number(d) || 0; renderTorrentTime(); }
+
+const tsEls = () => ({
+  wrap: document.getElementById('torrent-seek'),
+  bar: document.getElementById('ts-bar'),
+  fill: document.getElementById('ts-fill'),
+  buffered: document.getElementById('ts-buffered'),
+  time: document.getElementById('ts-time'),
+});
+function showTorrentSeek(on) { const { wrap } = tsEls(); if (wrap) wrap.style.display = on ? 'flex' : 'none'; }
+function renderTorrentTime() {
+  const { fill, buffered, time } = tsEls();
+  if (!time || !playerVideo) return;
+  const pos = absolutePosition(torrentSeekBase, playerVideo.currentTime);
+  if (fill) fill.style.width = (torrentDuration > 0 ? Math.min(100, pos / torrentDuration * 100) : 0) + '%';
+  if (buffered && playerVideo.buffered && playerVideo.buffered.length) {
+    const end = torrentSeekBase + playerVideo.buffered.end(playerVideo.buffered.length - 1);
+    buffered.style.width = (torrentDuration > 0 ? Math.min(100, end / torrentDuration * 100) : 0) + '%';
+  }
+  time.textContent = `${formatTime(pos)} / ${formatTime(torrentDuration)}`;
+}
+// After a seek, the <video> clock is 0-based but the subtitle cues are absolute,
+// so realign them by refetching each track shifted by the seek offset (?t=). The
+// helper caches the extracted VTT, so this is a cheap string shift server-side.
+function reloadSubtitlesAtOffset(offset) {
+  if (!playerVideo || !subtitleSelect) return;
+  const selected = subtitleSelect.value;
+  playerVideo.querySelectorAll('track').forEach((el) => {
+    try {
+      const u = new URL(el.src, location.href);
+      if (offset > 0) u.searchParams.set('t', Math.floor(offset)); else u.searchParams.delete('t');
+      el.src = u.toString();   // reassigning src refetches and reparses the cues
+    } catch { /* leave this track as-is */ }
+  });
+  // Cues reload asynchronously; re-apply the chosen track once they exist.
+  setTimeout(() => { if (currentTorrentHash) showSubtitleTrack(selected); }, 60);
+}
+
+// Reload the current source at absolute time t, without triggering the source-walk
+// (a seek stumble means the swarm hiccupped, not that the source is dead).
+function torrentSeekTo(t) {
+  if (!tvPlayCtx) return;
+  torrentSeekBase = seekTarget(0, t, torrentDuration);   // clamp into the episode
+  suppressSourceWalk = true;
+  setYtsStatus('Seeking…');
+  playerVideo.src = buildTvStreamUrl(tvPlayCtx.hash, tvPlayCtx.season, tvPlayCtx.episode, tvPlayCtx.src, torrentSeekBase, 20000);
+  playerVideo.load();
+  playerVideo.play().catch(() => {});
+  renderTorrentTime();
+  reloadSubtitlesAtOffset(torrentSeekBase);
+}
+function torrentSeekBy(delta) {
+  torrentSeekTo(seekTarget(absolutePosition(torrentSeekBase, playerVideo.currentTime), delta, torrentDuration));
+}
+
 function playTvSource(hash, season, episode, tried = []) {
   if (!hash) return;
   if (currentTorrentHash && currentTorrentHash !== hash) beaconStop(currentTorrentHash);
@@ -1629,13 +1714,23 @@ function playTvSource(hash, season, episode, tried = []) {
   const src = currentTvSources.find((x) => x.hash === hash);
   setYtsStatus(describeSourceAttempt({ attempt: attempted.length, quality: src?.quality, remux: src?.remux }));
 
+  // A fresh source starts at 0 and its length is unknown until the subtitle probe
+  // returns it. The seek bar only helps for remuxed MKV; native <video> controls
+  // already seek a direct MP4.
+  tvPlayCtx = { hash, season, episode, src };
+  torrentSeekBase = 0;
+  torrentDuration = 0;
+  showTorrentSeek(Boolean(src?.remux));
+  renderTorrentTime();
+
   // Ask the helper to give up on a peerless swarm quickly: the index's seed
   // counts include private trackers we cannot reach, so a dead top source is
   // routine and the useful move is the next source, not a longer wait.
   const ready = attempted.length >= TV_SOURCE_ATTEMPT_CAP ? 60000 : 20000;
-  playerVideo.src = helperUrl(`/stream?hash=${hash}&s=${season}&e=${episode}&ready=${ready}&title=${encodeURIComponent(src?.filename || '')}&ctx=${encodeURIComponent((src?.title || '').slice(0, 200))}`);
+  playerVideo.src = buildTvStreamUrl(hash, season, episode, src, 0, ready);
   playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
   playerVideo.onerror = () => {
+    if (suppressSourceWalk) { suppressSourceWalk = false; return; }   // a seek reload, not a dead source
     const next = pickNextSource(currentTvSources, attempted);
     if (next) return playTvSource(next.hash, season, episode, attempted);
     setYtsStatus(
@@ -1646,7 +1741,7 @@ function playTvSource(hash, season, episode, tried = []) {
   playerVideo.load();
   playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
   startYtsStatusPolling(hash);
-  loadSubtitlesFor(hash);   // season packs occasionally ship a Subs folder
+  loadSubtitlesFor(hash, season, episode);   // embedded tracks live inside the MKV
 }
 
 // Change video source
@@ -3748,8 +3843,32 @@ document.addEventListener('keydown', (e) => {
   if (isFullscreenKey(e) && !isTypingTarget(e.target)) {
     e.preventDefault();
     togglePlayerFullscreen();
+    return;
+  }
+  // Arrow keys seek the torrent player (only while its seek bar is showing).
+  if (!isTypingTarget(e.target) && document.getElementById('torrent-seek')?.style.display === 'flex') {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); torrentSeekBy(-10); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); torrentSeekBy(30); }
   }
 });
+
+// Torrent seek-bar wiring: keep the readout live and turn clicks/buttons into
+// restart-at-timestamp seeks.
+if (playerVideo) {
+  playerVideo.addEventListener('timeupdate', renderTorrentTime);
+  playerVideo.addEventListener('progress', renderTorrentTime);
+}
+{
+  const tsBar = document.getElementById('ts-bar');
+  if (tsBar) tsBar.addEventListener('click', (e) => {
+    const rect = tsBar.getBoundingClientRect();
+    torrentSeekTo(seekToFraction((e.clientX - rect.left) / rect.width, torrentDuration));
+  });
+  const tsBack = document.getElementById('ts-back');
+  const tsFwd = document.getElementById('ts-fwd');
+  if (tsBack) tsBack.addEventListener('click', () => torrentSeekBy(-10));
+  if (tsFwd) tsFwd.addEventListener('click', () => torrentSeekBy(30));
+}
 
 // Initialize from URL params
 function initFromUrl() {

@@ -3,3 +3,6 @@
 # dependencies
 /node_modules
 .vercel
+
+# downloaded subtitle files (not part of the app)
+/subs

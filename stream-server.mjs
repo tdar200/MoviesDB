@@ -21,11 +21,15 @@ import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
 import { fetchYtsMovie } from './yts-api.mjs';
-import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle } from './subtitles.js';
-import { fetchTvSources, isRemuxableTvFile, pickEpisodeFile } from './tv-api.mjs';
+import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle, shiftVtt } from './subtitles.js';
+import { fetchTvSources, isRemuxableTvFile, pickEpisodeFile, pickEpisodeVideoFile } from './tv-api.mjs';
 import { pieceWindow } from './stream-window.mjs';
 import { helperRequestAllowed } from './helper-auth.js';
 import { clampReadyTimeout } from './tv-fallback.js';
+import {
+  parseEmbeddedSubStreams, embeddedTrackLabel,
+  fileTrackId, embeddedTrackId, parseTrackId,
+} from './subtitle-tracks.js';
 
 const PORT = process.env.PORT || 3000;
 // Access key for the API endpoints. Empty = open (local npm start). Set it when
@@ -177,6 +181,61 @@ function destroyTorrent(hash) {
   }
 }
 
+// The file webtorrent is writing to on disk. Embedded-subtitle extraction and
+// seek-by-timestamp both need a real seekable file, not the on-demand stream.
+function diskPathOf(torrent, file) {
+  return join(torrent.path, file.path);
+}
+
+// ffprobe the video: total duration (for the seek bar) and its embedded text
+// subtitle streams. The header carries all of this and downloads first, so this
+// answers quickly even mid-download.
+function probeVideo(diskPath) {
+  return new Promise((resolve) => {
+    const p = spawn('ffprobe', [
+      '-v', 'error', '-show_entries', 'format=duration',
+      '-show_streams', '-of', 'json', diskPath,
+    ]);
+    let out = '';
+    p.stdout.on('data', (c) => { out += c; });
+    p.on('error', () => resolve({ duration: 0, subStreams: [] }));
+    p.on('close', () => {
+      try {
+        const j = JSON.parse(out || '{}');
+        resolve({
+          duration: Number(j.format?.duration) || 0,
+          subStreams: parseEmbeddedSubStreams(j.streams),
+        });
+      } catch {
+        resolve({ duration: 0, subStreams: [] });
+      }
+    });
+  });
+}
+
+// Extract one embedded subtitle stream as WebVTT, cached by torrent+stream so the
+// ffmpeg pass runs once. Works on a partially-downloaded file: it yields cues for
+// whatever contiguous prefix is on disk, which grows as the episode downloads.
+const embeddedVttCache = new Map(); // `${hash}:${streamIndex}` -> vtt string
+function extractEmbeddedVtt(diskPath, streamIndex, cacheKey) {
+  const hit = embeddedVttCache.get(cacheKey);
+  if (hit) return Promise.resolve(hit);
+  return new Promise((resolve, reject) => {
+    const p = spawn('ffmpeg', ['-v', 'error', '-i', diskPath, '-map', `0:${streamIndex}`, '-f', 'webvtt', 'pipe:1']);
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (c) => { out += c; });
+    p.stderr.on('data', (c) => { err = (err + c).slice(-2000); });
+    p.on('error', (e) => reject(e));
+    p.on('close', () => {
+      // ffmpeg logs "File ended prematurely" on a partial file but still emits
+      // valid VTT for the downloaded prefix, so trust the output, not the code.
+      if (out.includes('-->')) { embeddedVttCache.set(cacheKey, out); resolve(out); }
+      else reject(new Error(err || 'no cues extracted'));
+    });
+  });
+}
+
 async function handleYts(res, url) {
   const imdb = url.searchParams.get('imdb');
   if (!imdb) {
@@ -264,13 +323,34 @@ async function handleSubtitleList(res, url) {
   }
   if (isNewToUs) torrent.files.forEach((f) => f.deselect());
 
+  // Standalone subtitle files sitting in the torrent (YTS movies ship these).
   const tracks = torrent.files
     .map((f, index) => ({ f, index }))
     .filter(({ f }) => isSubtitleFile(f.path || f.name))
-    .map(({ f, index }) => ({ index, ...subtitleLabel(f.path || f.name), bytes: f.length }));
+    .map(({ f, index }) => ({ id: fileTrackId(index), ...subtitleLabel(f.path || f.name), bytes: f.length }));
+
+  // Subtitles embedded INSIDE the .mkv (almost every TV release). Probe the exact
+  // file that will be streamed for this episode, so a season pack does not offer
+  // another episode's tracks. Also report the episode duration for the seek bar.
+  let duration = 0;
+  const s = Number.parseInt(url.searchParams.get('s') || '', 10);
+  const e = Number.parseInt(url.searchParams.get('e') || '', 10);
+  const videoFile = (Number.isFinite(s) && Number.isFinite(e))
+    ? pickEpisodeVideoFile(torrent.files, s, e)
+    : pickVideoFile(torrent);
+  if (videoFile) {
+    const vIndex = torrent.files.indexOf(videoFile);
+    try {
+      const info = await probeVideo(diskPathOf(torrent, videoFile));
+      duration = info.duration;
+      for (const st of info.subStreams) {
+        tracks.push({ id: embeddedTrackId(vIndex, st.streamIndex), label: embeddedTrackLabel(st), embedded: true });
+      }
+    } catch { /* probe is best-effort; fall back to whatever files gave us */ }
+  }
 
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-  res.end(JSON.stringify({ tracks }));
+  res.end(JSON.stringify({ tracks, duration }));
 }
 
 // GET /subtitle?hash=..&index=..  -> that file, converted to WebVTT.
@@ -278,10 +358,13 @@ async function handleSubtitleList(res, url) {
 // and simply shows nothing, so the conversion has to happen here.
 async function handleSubtitleFile(res, url) {
   const hash = (url.searchParams.get('hash') || '').toLowerCase().trim();
-  const index = Number.parseInt(url.searchParams.get('index') || '', 10);
-  if (!/^[a-f0-9]{40}$/.test(hash) || Number.isNaN(index)) {
+  // Prefer the stable track id (?id=f3 / e0:2); fall back to the legacy ?index=
+  // for a file track so older clients keep working.
+  const rawIndex = url.searchParams.get('index');
+  const track = parseTrackId(url.searchParams.get('id') || (rawIndex != null ? fileTrackId(Number(rawIndex)) : ''));
+  if (!/^[a-f0-9]{40}$/.test(hash) || !track) {
     res.writeHead(400);
-    return res.end('invalid or missing hash/index');
+    return res.end('invalid or missing hash/id');
   }
   // `streaming=1` means the caller is playing this torrent right now, so the video
   // file must stay selected. Without it, a subtitle request that beat the video's
@@ -296,15 +379,45 @@ async function handleSubtitleFile(res, url) {
     res.writeHead(504);
     return res.end('torrent unavailable: ' + err.message);
   }
-  // Same guard as the listing: fetching a 40KB subtitle must not drag the movie
-  // down with it. Only ever deselect when we were the ones who added the torrent.
+  // Same guard as the listing: fetching a subtitle must not drag the movie down
+  // with it. Only ever deselect when we were the ones who added the torrent.
   if (isNewToUs) torrent.files.forEach((f) => f.deselect());
-  const file = torrent.files[index];
+
+  // ?t=<seconds> shifts every cue earlier by that much, to match a stream that
+  // was restarted at a timestamp (the seek): the <video> clock is then 0-based,
+  // but the subtitle's times are absolute, so without the shift captions lead the
+  // picture by exactly the seek offset.
+  const subShift = Math.max(0, Number(url.searchParams.get('t')) || 0);
+  const sendVtt = (vtt) => {
+    res.writeHead(200, {
+      'content-type': 'text/vtt; charset=utf-8',
+      'access-control-allow-origin': '*',
+      'cache-control': 'public, max-age=3600',
+    });
+    res.end(subShift ? shiftVtt(vtt, subShift) : vtt);
+  };
+
+  // A subtitle embedded inside the .mkv: extract the one stream as WebVTT.
+  if (track.kind === 'embedded') {
+    const file = torrent.files[track.fileIndex];
+    if (!file) { res.writeHead(404); return res.end('no video file at that index'); }
+    try { file.select(); } catch { /* keep it downloading so more cues become available */ }
+    try {
+      const vtt = await extractEmbeddedVtt(diskPathOf(torrent, file), track.streamIndex, `${hash}:${track.streamIndex}`);
+      console.log(`[subs] embedded ${file.name} stream ${track.streamIndex} -> ${vtt.length} bytes of VTT`);
+      return sendVtt(vtt);
+    } catch (err) {
+      res.writeHead(504);
+      return res.end('could not extract embedded subtitle: ' + err.message);
+    }
+  }
+
+  // A standalone subtitle file in the torrent.
+  const file = torrent.files[track.fileIndex];
   if (!file || !isSubtitleFile(file.path || file.name)) {
     res.writeHead(404);
     return res.end('no subtitle file at that index');
   }
-
   // Subtitle files are tiny but sit outside the sequential video window, so the
   // piece picker would otherwise leave them until last. Select explicitly, or
   // subtitles arrive minutes after the picture.
@@ -315,12 +428,7 @@ async function handleSubtitleFile(res, url) {
     const text = decodeSubtitle(Buffer.from(raw));
     const vtt = /\.vtt$/i.test(file.name) ? text : srtToVtt(text);
     console.log(`[subs] ${file.path} -> ${vtt.length} bytes of VTT`);
-    res.writeHead(200, {
-      'content-type': 'text/vtt; charset=utf-8',
-      'access-control-allow-origin': '*',
-      'cache-control': 'public, max-age=3600',
-    });
-    res.end(vtt);
+    sendVtt(vtt);
   } catch (err) {
     res.writeHead(504);
     res.end('could not read subtitle: ' + err.message);
@@ -341,7 +449,7 @@ function prioritizeTorrentFile(torrent, file, start = 0) {
 // Chrome cannot parse Matroska. Compatible TV releases are remuxed to a
 // fragmented MP4 stream: H.264 video is copied unchanged and audio is converted
 // to AAC, keeping CPU use low while producing a browser-native container.
-function streamRemuxedMkv(req, res, file) {
+function streamRemuxedMkv(req, res, file, { startSec = 0, diskPath = '' } = {}) {
   const headers = {
     'content-type': 'video/mp4',
     'accept-ranges': 'none',
@@ -353,27 +461,32 @@ function streamRemuxedMkv(req, res, file) {
     return res.end();
   }
 
-  const ffmpeg = spawn('ffmpeg', [
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-i', 'pipe:0',
-    '-map', '0:v:0',
-    '-map', '0:a:0?',
-    '-c:v', 'copy',
-    '-c:a', 'aac',
-    '-b:a', '160k',
-    '-sn',
+  // A live-remuxed fragmented MP4 cannot be byte-range seeked, so seeking is done
+  // by restarting ffmpeg at a timestamp. Fast input `-ss` needs a seekable file,
+  // which means reading the on-disk file directly rather than the on-demand
+  // webtorrent stream — fine because a backward seek is over already-downloaded
+  // bytes. From the start (startSec 0) we keep streaming through the webtorrent
+  // pipe so playback needs no full download.
+  const seeking = startSec > 0 && diskPath;
+  const args = ['-hide_banner', '-loglevel', 'error'];
+  if (seeking) args.push('-ss', String(startSec), '-i', diskPath);
+  else args.push('-i', 'pipe:0');
+  args.push(
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-sn',
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-f', 'mp4',
-    'pipe:1',
-  ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    '-f', 'mp4', 'pipe:1',
+  );
+  const ffmpeg = spawn('ffmpeg', args, { stdio: [seeking ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
 
   let input = null;
   let stderr = '';
   ffmpeg.stderr.on('data', (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-4000);
   });
-  ffmpeg.stdin.on('error', () => { /* browser disconnect / torrent teardown */ });
+  if (!seeking) {
+    ffmpeg.stdin.on('error', () => { /* browser disconnect / torrent teardown */ });
+  }
   ffmpeg.stdout.on('error', () => { /* browser disconnect */ });
 
   ffmpeg.once('spawn', () => {
@@ -382,12 +495,13 @@ function streamRemuxedMkv(req, res, file) {
       return;
     }
     res.writeHead(200, headers);
+    ffmpeg.stdout.pipe(res);
+    if (seeking) return;   // ffmpeg reads the file itself
     input = file.createReadStream();
     input.once('error', (err) => {
       ffmpeg.stdin.destroy(err);
       if (!res.destroyed) res.destroy(err);
     });
-    ffmpeg.stdout.pipe(res);
     input.pipe(ffmpeg.stdin);
   });
 
@@ -452,8 +566,12 @@ async function handleStream(req, res, url) {
   console.log(`[stream] ${file.name} (${(file.length / 1e9).toFixed(2)} GB) peers=${torrent.numPeers} range=${req.headers.range || 'none'}`);
 
   if (isRemuxableTvFile(file.path || file.name, releaseContext)) {
-    if (req.method !== 'HEAD') prioritizeTorrentFile(torrent, file);
-    return streamRemuxedMkv(req, res, file);
+    // ?t=<seconds> restarts the remux at a timestamp (the player's seek). A
+    // backward seek reads bytes already on disk; a forward seek needs them
+    // downloaded, so keep prioritising this file either way.
+    const startSec = Math.max(0, Number(url.searchParams.get('t')) || 0);
+    if (req.method !== 'HEAD') prioritizeTorrentFile(torrent, file, 0);
+    return streamRemuxedMkv(req, res, file, { startSec, diskPath: diskPathOf(torrent, file) });
   }
 
   const total = file.length;
