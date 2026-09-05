@@ -44,3 +44,24 @@ export function describeImdbLookupFailure({ requestFailed = false } = {}) {
   }
   return 'TMDB has no IMDb id for this title, so YTS cannot be searched for it.';
 }
+
+// The TV equivalent. `/tv-torrents` failures used to collapse to one sentence
+// blaming the volunteer index, so a 401 from the helper's own access-key gate —
+// which happens to every browser holding a stale key after the key is rotated —
+// read as "a third party is down, wait it out" and hid the actual one-click fix.
+// Only 5xx is genuinely the index's fault; keep that wording exactly there.
+export function describeTvTorrentFailure({ networkError = false, status = 0, remoteBase = '' } = {}) {
+  if (networkError) return describeYtsLookupFailure({ networkError: true, remoteBase });
+
+  if (status === 401 || status === 403) {
+    return 'This stream helper needs an access key. Open the app from the link you were given (it ends in ?helperkey=...) and try again.';
+  }
+
+  if (status >= 500) {
+    return "Couldn't reach the torrent index — it's a volunteer service and does go down. Try again in a moment.";
+  }
+
+  if (status) return `The stream helper rejected the episode lookup (HTTP ${status}).`;
+
+  return 'The episode lookup failed for an unknown reason.';
+}

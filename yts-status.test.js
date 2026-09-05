@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeYtsLookupFailure, describeImdbLookupFailure } from './yts-status.js';
+import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentFailure } from './yts-status.js';
 
 test('a real network error means the helper itself is not there', () => {
   const msg = describeYtsLookupFailure({ networkError: true });
@@ -87,4 +87,33 @@ test('a 401/403 from the helper points at the ?helperkey= link, not at YTS', () 
     const msg = describeYtsLookupFailure({ status, remoteBase: 'https://h.example' });
     assert.match(msg, /access key/i); assert.match(msg, /helperkey/); assert.doesNotMatch(msg, /YTS's API/);
   }
+});
+
+// The SAME wrong-component bug, in the TV path. `/tv-torrents` answering 401
+// (this browser holds a stale key after the helper's key was rotated) was shown
+// as "Couldn't reach the torrent index — it's a volunteer service and does go
+// down", which blames a healthy third party and hides the one-click fix.
+test('describeTvTorrentFailure: 401/403 names the access key, not the index', () => {
+  for (const status of [401, 403]) {
+    const msg = describeTvTorrentFailure({ status });
+    assert.match(msg, /access key/i);
+    assert.match(msg, /helperkey/);
+    assert.doesNotMatch(msg, /volunteer/i);
+  }
+});
+
+test('describeTvTorrentFailure: 5xx still blames the index, which is then true', () => {
+  const msg = describeTvTorrentFailure({ status: 502 });
+  assert.match(msg, /torrent index/i);
+  assert.doesNotMatch(msg, /access key/i);
+});
+
+test('describeTvTorrentFailure: a network error reports the helper, not the index', () => {
+  const msg = describeTvTorrentFailure({ networkError: true, remoteBase: 'https://h.example' });
+  assert.match(msg, /h\.example/);
+  assert.doesNotMatch(msg, /volunteer/i);
+});
+
+test('describeTvTorrentFailure: an unexpected status is reported honestly', () => {
+  assert.match(describeTvTorrentFailure({ status: 418 }), /418/);
 });
