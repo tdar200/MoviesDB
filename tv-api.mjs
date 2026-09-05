@@ -1,39 +1,54 @@
-// tv-api.mjs — the TV torrent source: torrentio lookup -> a browser-playable episode.
+// tv-api.mjs — TV torrent indexes -> a browser-playable episode.
 //
 // YTS is movies only (its API is literally list_movies.json), so shows had no
 // torrent fallback at all. EZTV would have been the natural analogue but its own
 // Cloudflare edge returns 451 to UK traffic across every domain and mirror, and
 // apibay answers 200 while its search returns "No results returned" for every
-// query. torrentio is what actually works from here: keyless, IMDb-keyed, one
-// request per episode, ~50 sources, 0.6-2.8s (measured Aug 19, 2026).
+// query. The indexes below speak the Stremio stream API: keyless, IMDb-keyed,
+// and one request per episode.
 //
-// The hard part is not finding sources, it is that almost none of them play. Of
-// 200 sampled sources only 24 were .mp4; the rest were .mkv, which Chrome cannot
-// play at all, and x265 outnumbered x264 among those stating a codec. Every
-// sampled episode still had 2-9 usable .mp4 sources, and one is all we need — so
-// this module's real job is filtering, ranking, and finding the right episode
-// inside a season pack.
+// Torrentio's public host became unreachable in Aug 2026 (AAAA-only and the
+// published address times out from this network), so Comet is the primary and
+// Torrentio remains a fallback for when it recovers. Override the list without
+// changing code by setting TV_TORRENT_INDEXES to comma-separated base URLs.
 //
-// Deliberately no ffmpeg: remuxing or transcoding would widen coverage enormously
-// but is a different feature with a real CPU cost. This ships the MP4-only path.
+// Native MP4 remains preferred. H.264 MKV is also accepted because the local
+// helper remuxes it to fragmented MP4; video is copied, not re-encoded.
 
-const TORRENTIO = 'https://torrentio.strem.fun';
+import { createResolvingFetch } from './dns-fetch.js';
+
+// UK ISPs poison the DNS for torrent indexes; this retries by resolved IP.
+const resolvingFetch = createResolvingFetch();
+
+export const DEFAULT_TV_INDEXES = [
+  { name: 'Comet', url: 'https://comet.feels.legal' },
+  { name: 'Torrentio', url: 'https://torrentio.strem.fun' },
+];
 
 export const TV_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-// key `imdb:season:episode` -> { sources, at }
+// key `imdb:season:episode:year:country` -> { sources, at }
 const cache = new Map();
 
 export function clearTvCache() {
   cache.clear();
 }
 
-// Containers a browser can play. .mkv is excluded because Chrome cannot decode
-// Matroska at all, not merely because of its codecs.
-const PLAYABLE_CONTAINER = /\.(mp4|m4v)$/i;
+// Containers a browser can play without help.
+const NATIVE_CONTAINER = /\.(mp4|m4v)$/i;
+const REMUXABLE_CONTAINER = /\.mkv$/i;
 // Codecs Chrome cannot be relied on to decode even inside a playable container.
 // HEVC support is hardware-dependent and absent often enough to be unusable here.
 const UNPLAYABLE_CODEC = /(^|[^a-z])(x265|h\.?265|hevc)([^a-z]|$)/i;
+const H264_CODEC = /(^|[^a-z])(x264|h\.?264|avc)([^a-z]|$)/i;
+
+export function isRemuxableTvFile(name, context = '') {
+  const n = String(name || '');
+  const details = `${n} ${String(context || '')}`;
+  return REMUXABLE_CONTAINER.test(n)
+    && H264_CODEC.test(details)
+    && !UNPLAYABLE_CODEC.test(details);
+}
 
 // `context` is the release title, which frequently carries codec information the
 // filename omits. Real case: filename "...2160p.WEB-DL.DV.HDR[Ben The Men].mp4"
@@ -42,8 +57,9 @@ const UNPLAYABLE_CODEC = /(^|[^a-z])(x265|h\.?265|hevc)([^a-z]|$)/i;
 // claiming "MP4" says nothing about the actual file.
 export function isPlayableTvFile(name, context = '') {
   const n = String(name || '');
-  if (!PLAYABLE_CONTAINER.test(n)) return false;
-  return !UNPLAYABLE_CODEC.test(n) && !UNPLAYABLE_CODEC.test(String(context || ''));
+  const details = `${n} ${String(context || '')}`;
+  if (NATIVE_CONTAINER.test(n)) return !UNPLAYABLE_CODEC.test(details);
+  return isRemuxableTvFile(n, context);
 }
 
 // Does this filename belong to the requested season and episode?
@@ -89,7 +105,11 @@ export function rankTvSources(sources) {
   return (Array.isArray(sources) ? sources : [])
     .filter((s) => isPlayableTvFile(s.filename, s.title))
     .filter((s) => (Number(s.seeds) || 0) > 0)
-    .map((s) => ({ ...s, quality: detectQuality(s.filename, s.title) }))
+    .map((s) => ({
+      ...s,
+      quality: detectQuality(s.filename, s.title),
+      remux: isRemuxableTvFile(s.filename, s.title),
+    }))
     .sort((a, b) => {
       const q = (QUALITY_RANK[a.quality] ?? 3) - (QUALITY_RANK[b.quality] ?? 3);
       return q !== 0 ? q : (Number(b.seeds) || 0) - (Number(a.seeds) || 0);
@@ -101,8 +121,11 @@ export function rankTvSources(sources) {
 // is what the movie path does) would serve a random episode. Match first; only
 // fall back to "the one playable video" for single-episode torrents, which are
 // sometimes named without any SxxExx marker.
-export function pickEpisodeFile(files, season, episode) {
-  const playable = (Array.isArray(files) ? files : []).filter((f) => isPlayableTvFile(f.path || f.name));
+export function pickEpisodeFile(files, season, episode, context = '') {
+  // `context` is the release title. Codec information usually lives there and not
+  // in the per-episode filename inside a season pack, and judging the file
+  // without it rejects torrents the source-level filter has already vouched for.
+  const playable = (Array.isArray(files) ? files : []).filter((f) => isPlayableTvFile(f.path || f.name, context));
   if (!playable.length) return null;
 
   const matched = playable.filter((f) => matchesEpisode(f.path || f.name, season, episode));
@@ -113,54 +136,152 @@ export function pickEpisodeFile(files, season, episode) {
   return null;
 }
 
-// torrentio reports seeds inside the human-readable title, e.g. "👤 123".
-function parseSeeds(title) {
-  const m = String(title || '').match(/👤\s*(\d+)/);
+// Stremio torrent indexes report seeds inside human-readable text, e.g. "👤 123".
+function parseSeeds(text) {
+  const m = String(text || '').match(/👤\s*(\d+)/);
   return m ? Number(m[1]) : 0;
 }
 
+function configuredIndexes() {
+  const raw = String(process.env.TV_TORRENT_INDEXES || '').trim();
+  if (!raw) return DEFAULT_TV_INDEXES;
+  return raw.split(',').map((url) => url.trim()).filter(Boolean).map((url) => {
+    let name = url;
+    try { name = new URL(url).hostname; } catch { /* the fetch error will explain an invalid URL */ }
+    return { name, url };
+  });
+}
+
+function normalizeIndexes(indexes) {
+  return (Array.isArray(indexes) ? indexes : []).map((index) => {
+    if (typeof index === 'string') {
+      let name = index;
+      try { name = new URL(index).hostname; } catch { /* handled by fetch */ }
+      return { name, url: index };
+    }
+    return { name: index?.name || index?.url || 'torrent index', url: index?.url || '' };
+  }).filter((index) => index.url);
+}
+
+function normalizeStream(st, provider) {
+  const description = [st?.title, st?.description, st?.name].filter(Boolean).join('\n');
+  const filename = st?.behaviorHints?.filename
+    || String(st?.description || st?.title || st?.name || '').split('\n')[0]
+    || '';
+  return {
+    hash: String(st?.infoHash || '').toLowerCase(),
+    filename,
+    seeds: parseSeeds(description),
+    title: description,
+    provider,
+    fileIndex: Number.isInteger(st?.fileIdx) ? st.fileIdx : null,
+  };
+}
+
+const COUNTRY_MARKERS = {
+  AU: ['AU', 'AUS', 'AUSTRALIA'],
+  US: ['US', 'USA'],
+  UK: ['UK'],
+};
+
+function normalizeCountry(country) {
+  const c = String(country || '').trim().toUpperCase();
+  return c === 'GB' ? 'UK' : c;
+}
+
+// Some broad indexes search a title as well as its IMDb id. Reject an explicitly
+// conflicting year/country while retaining releases that simply omit those tags.
+function matchesSeriesHints(source, { year, country } = {}) {
+  const text = `${source.filename} ${source.title}`.toUpperCase();
+  const expectedYear = Number(year);
+  if (Number.isInteger(expectedYear)) {
+    const years = [...text.matchAll(/(^|[^0-9])((?:19|20)\d{2})([^0-9]|$)/g)].map((m) => Number(m[2]));
+    if (years.length && !years.includes(expectedYear)) return false;
+  }
+
+  const expectedCountry = normalizeCountry(country);
+  if (COUNTRY_MARKERS[expectedCountry]) {
+    const tokens = new Set(text.split(/[^A-Z0-9]+/).filter(Boolean));
+    const detected = Object.entries(COUNTRY_MARKERS)
+      .filter(([, markers]) => markers.some((marker) => tokens.has(marker)))
+      .map(([code]) => code);
+    if (detected.length && !detected.includes(expectedCountry)) return false;
+  }
+  return true;
+}
+
 // Look up playable sources for one episode. Returns a ranked (possibly empty)
-// array; throws only when torrentio itself could not be reached.
+// array; throws only when every configured index could not be reached.
 export async function fetchTvSources(imdb, season, episode, {
-  fetchImpl = fetch,
+  fetchImpl = resolvingFetch,
   timeoutMs = 15000,
   ttlMs = TV_CACHE_TTL_MS,
   retries = 1,
   retryDelayMs = 1200,
   now = () => Date.now(),
+  indexUrls = configuredIndexes(),
+  year,
+  country,
 } = {}) {
-  const key = `${imdb}:${season}:${episode}`;
+  const key = `${imdb}:${season}:${episode}:${year || ''}:${normalizeCountry(country)}`;
   const hit = cache.get(key);
   if (hit && now() - hit.at < ttlMs) return hit.sources;
 
-  const url = `${TORRENTIO}/stream/series/${encodeURIComponent(imdb)}:${season}:${episode}.json`;
-  let lastErr = null;
+  const errors = [];
+  let anyIndexResponded = false;
+  // Every index that answers contributes. Returning the first non-empty one meant
+  // Comet (which answers fastest) hid Torrentio's public-tracker torrents, and
+  // those are the ones with reachable peers.
+  const collected = [];
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
-    try {
-      const res = await fetchImpl(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.json();
-      const sources = rankTvSources(
-        (body?.streams || []).map((st) => ({
-          hash: (st.infoHash || '').toLowerCase(),
-          filename: st.behaviorHints?.filename || (st.title || '').split('\n')[0] || '',
-          seeds: parseSeeds(st.title),
-          title: (st.title || '').split('\n')[0] || '',
-        })).filter((s) => /^[a-f0-9]{40}$/.test(s.hash))
-      );
-      cache.set(key, { sources, at: now() });
-      return sources;
-    } catch (err) {
-      lastErr = err;
+  for (const index of normalizeIndexes(indexUrls)) {
+    const url = `${index.url.replace(/\/$/, '')}/stream/series/${encodeURIComponent(imdb)}:${season}:${episode}.json`;
+    let lastErr = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+      try {
+        const res = await fetchImpl(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        anyIndexResponded = true;
+        collected.push(
+          ...(body?.streams || [])
+            .map((st) => normalizeStream(st, index.name))
+            .filter((source) => /^[a-f0-9]{40}$/.test(source.hash))
+            .filter((source) => matchesSeriesHints(source, { year, country }))
+        );
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
     }
+    if (lastErr) errors.push(`${index.name}: ${lastErr?.message || lastErr}`);
   }
 
-  const err = new Error(`torrentio lookup failed for ${key}: ${lastErr?.message || lastErr}`);
-  err.cause = lastErr;
+  if (collected.length) {
+    // Rank BEFORE dedupe. Indexes describe the same infohash with different
+    // quality: one may omit the codec (reads as unplayable) or the seed count
+    // (reads as dead) while another describes it correctly. Filtering first and
+    // then keeping the best-ranked copy of each hash means a torrent is only
+    // dropped when NO index could vouch for it.
+    const seen = new Set();
+    const sources = rankTvSources(collected).filter((s) => !seen.has(s.hash) && seen.add(s.hash));
+    cache.set(key, { sources, at: now() });
+    return sources;
+  }
+
+  if (anyIndexResponded) {
+    const sources = [];
+    cache.set(key, { sources, at: now() });
+    return sources;
+  }
+
+  const err = new Error(`TV torrent indexes failed for ${imdb}:${season}:${episode}: ${errors.join(' | ') || 'no indexes configured'}`);
+  err.hostErrors = errors;
   throw err;
 }

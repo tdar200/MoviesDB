@@ -5,7 +5,7 @@ import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
 import { fetchTmdbJson } from './tmdb-queue.js';
 import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
-import { describeYtsLookupFailure, describeImdbLookupFailure } from './yts-status.js';
+import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentFailure } from './yts-status.js';
 import { dedupeTrackLabels } from './subtitles.js';
 
 // App state - which tab is active
@@ -77,6 +77,7 @@ const tabTrailer = document.getElementById('tab-trailer');
 import { EMBED_SOURCES, IFRAME_BLOCKED_PROVIDERS, BLOCKED_PROVIDERS } from './embed-sources.js';
 import { pickFullscreenTarget, toggleFullscreen, isTypingTarget, isFullscreenKey } from './player-fullscreen.js';
 import { buildHelperUrl, resolveHelperKey } from './helper-url.js';
+import { pickNextSource, describeSourceAttempt, TV_SOURCE_ATTEMPT_CAP } from './tv-fallback.js';
 let currentSourceIndex = 0;
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
@@ -1525,14 +1526,12 @@ async function loadYtsStream(movie) {
   }
 }
 
-// ---- TV torrents (torrentio -> the same native player as YTS) ----
+// ---- TV torrents (Stremio-compatible indexes -> the native player) ----
 //
-// Unlike YTS, almost nothing on offer for shows is browser-playable: of 200 sources
-// sampled across four shows, 24 were .mp4 and the rest .mkv, which Chrome cannot
-// play. The helper filters to playable sources, so an empty list here means "no
-// playable version of this episode", not "no torrents".
+// Native MP4 sources play directly. Compatible H.264 MKV sources are remuxed to
+// fragmented MP4 by the local helper without re-encoding the video.
 
-let currentTvSources = [];   // ranked playable sources for the episode on screen
+let currentTvSources = [];   // ranked streamable sources for the episode on screen
 
 async function loadTvStream(movie, season, episode) {
   stopYtsStream();
@@ -1543,8 +1542,8 @@ async function loadTvStream(movie, season, episode) {
 
   const reqId = movie.id;
   try {
-    // torrentio is indexed by IMDb id, same as YTS. Retry once: a failed request
-    // says nothing about whether the show has an id.
+    // TV torrent indexes use IMDb ids. Retry the TMDB external-id lookup once: a
+    // failed request says nothing about whether the show has an id.
     let extFailed = false;
     let ext = await fetchTmdbJson(ENDPOINTS.externalIds('tv', movie.id)).catch(() => { extFailed = true; return null; });
     if (extFailed) {
@@ -1557,17 +1556,30 @@ async function loadTvStream(movie, season, episode) {
     if (!imdbId) { setYtsStatus(describeImdbLookupFailure({ requestFailed: extFailed }), true); return; }
     if (currentPlayingMovie?.id !== reqId) return;
 
+    const series = currentTvData || movie;
+    const params = new URLSearchParams({
+      imdb: imdbId,
+      season: String(season),
+      episode: String(episode),
+    });
+    const year = String(series?.first_air_date || movie?.first_air_date || '').split('-')[0];
+    const country = series?.origin_country?.[0] || movie?.origin_country?.[0] || '';
+    if (year) params.set('year', year);
+    if (country) params.set('country', country);
+
     let attempt;
     try {
-      const r = await fetch(helperUrl(`/tv-torrents?imdb=${encodeURIComponent(imdbId)}&season=${season}&episode=${episode}`));
+      const r = await fetch(helperUrl(`/tv-torrents?${params}`));
       attempt = r.ok ? { data: await r.json() } : { status: r.status };
     } catch { attempt = { networkError: true }; }
 
     if (!attempt.data) {
       setYtsStatus(
-        attempt.networkError
-          ? describeYtsLookupFailure({ networkError: true, remoteBase: STREAM_HELPER_BASE })
-          : "Couldn't reach the torrent index — it's a volunteer service and does go down. Try again in a moment.",
+        describeTvTorrentFailure({
+          networkError: attempt.networkError,
+          status: attempt.status,
+          remoteBase: STREAM_HELPER_BASE,
+        }),
         true
       );
       return;
@@ -1576,7 +1588,7 @@ async function loadTvStream(movie, season, episode) {
 
     currentTvSources = attempt.data.sources || [];
     if (!currentTvSources.length) {
-      setYtsStatus(`No browser-playable (.mp4) source for S${season}E${episode}. Most TV releases are .mkv, which the browser can't play — try an embed source for this one.`, true);
+      setYtsStatus(`No active MP4 or H.264 MKV torrent for S${season}E${episode}. Try another source or episode.`, true);
       return;
     }
 
@@ -1596,7 +1608,9 @@ function populateTvQualitySelect(sources) {
   sources.forEach((src) => {
     const opt = document.createElement('option');
     opt.value = src.hash;
-    opt.textContent = `${src.quality}${src.seeds ? ' · ' + src.seeds + ' seeds' : ''}`;
+    const mode = src.remux ? ' · MKV→MP4' : '';
+    const provider = src.provider ? ' · ' + src.provider : '';
+    opt.textContent = `${src.quality}${src.seeds ? ' · ' + src.seeds + ' seeds' : ''}${mode}${provider}`;
     qualitySelect.appendChild(opt);
   });
   qualitySelect.style.display = sources.length ? 'inline-block' : 'none';
@@ -1604,19 +1618,31 @@ function populateTvQualitySelect(sources) {
 
 // Stream one source. s/e are passed to the helper so it serves the right episode
 // out of a season pack rather than whichever file happens to be largest.
-function playTvSource(hash, season, episode) {
+function playTvSource(hash, season, episode, tried = []) {
   if (!hash) return;
   if (currentTorrentHash && currentTorrentHash !== hash) beaconStop(currentTorrentHash);
   clearYtsPoll();
   currentTorrentHash = hash;
   if (qualitySelect) qualitySelect.value = hash;
 
+  const attempted = [...tried, hash];
   const src = currentTvSources.find((x) => x.hash === hash);
-  setYtsStatus(`Connecting to peers… (${src?.quality || ''})\nFirst frames can take a moment.`);
+  setYtsStatus(describeSourceAttempt({ attempt: attempted.length, quality: src?.quality, remux: src?.remux }));
 
-  playerVideo.src = helperUrl(`/stream?hash=${hash}&s=${season}&e=${episode}&title=${encodeURIComponent(src?.filename || '')}`);
+  // Ask the helper to give up on a peerless swarm quickly: the index's seed
+  // counts include private trackers we cannot reach, so a dead top source is
+  // routine and the useful move is the next source, not a longer wait.
+  const ready = attempted.length >= TV_SOURCE_ATTEMPT_CAP ? 60000 : 20000;
+  playerVideo.src = helperUrl(`/stream?hash=${hash}&s=${season}&e=${episode}&ready=${ready}&title=${encodeURIComponent(src?.filename || '')}&ctx=${encodeURIComponent((src?.title || '').slice(0, 200))}`);
   playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
-  playerVideo.onerror = () => setYtsStatus('Stream error — try another source in the dropdown.', true);
+  playerVideo.onerror = () => {
+    const next = pickNextSource(currentTvSources, attempted);
+    if (next) return playTvSource(next.hash, season, episode, attempted);
+    setYtsStatus(
+      `No reachable source for S${season}E${episode} after ${attempted.length} tries. The index lists seeds it cannot actually connect to — try an embed source for this one.`,
+      true
+    );
+  };
   playerVideo.load();
   playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
   startYtsStatusPolling(hash);

@@ -15,15 +15,17 @@
 // `npm start`.
 
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
 import { fetchYtsMovie } from './yts-api.mjs';
 import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle } from './subtitles.js';
-import { fetchTvSources, pickEpisodeFile } from './tv-api.mjs';
+import { fetchTvSources, isRemuxableTvFile, pickEpisodeFile } from './tv-api.mjs';
 import { pieceWindow } from './stream-window.mjs';
 import { helperRequestAllowed } from './helper-auth.js';
+import { clampReadyTimeout } from './tv-fallback.js';
 
 const PORT = process.env.PORT || 3000;
 // Access key for the API endpoints. Empty = open (local npm start). Set it when
@@ -95,13 +97,33 @@ function pickVideoFile(torrent) {
   return vids.find((f) => isPlayableName(f.name)) || vids[0] || null;
 }
 
-function getTorrent(hash, name) {
+function getTorrent(hash, name, readyTimeoutMs = READY_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const existing = torrents.get(hash);
     if (existing) {
       if (existing.ready) return resolve(existing);
-      existing.once('ready', () => resolve(existing));
-      existing.once('error', reject);
+      // A torrent already in the map but not yet ready is one an earlier request
+      // added and that never found peers. Without the same timeout as a fresh
+      // add, every retry of a dead hash waits forever — which is exactly what a
+      // user sees as "Connecting to peers…" that never ends or fails.
+      let done = false;
+      const waitTimer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        reject(new Error('timed out finding peers'));
+      }, readyTimeoutMs);
+      existing.once('ready', () => {
+        if (done) return;
+        done = true;
+        clearTimeout(waitTimer);
+        resolve(existing);
+      });
+      existing.once('error', (err) => {
+        if (done) return;
+        done = true;
+        clearTimeout(waitTimer);
+        reject(err);
+      });
       return;
     }
     const t = client.add(magnetFromHash(hash, name));
@@ -111,7 +133,7 @@ function getTorrent(hash, name) {
       if (settled) return;
       settled = true;
       reject(new Error('timed out finding peers'));
-    }, READY_TIMEOUT_MS);
+    }, readyTimeoutMs);
     t.once('ready', () => {
       // Sequential streaming: turn OFF the default rarest-first whole-file
       // download. Otherwise all peer bandwidth is scattered across pieces far
@@ -174,28 +196,32 @@ async function handleYts(res, url) {
   }
 }
 
-// GET /tv-torrents?imdb=..&season=..&episode=..  -> playable sources for one episode.
-// YTS is movies-only, so shows get their torrents from torrentio instead (EZTV's
-// own CDN 451s UK traffic and apibay's search is dead). Almost everything on offer
-// is .mkv/x265 which a browser cannot play, so tv-api does the filtering and
-// ranking and this returns only what will actually stream.
+// GET /tv-torrents?imdb=..&season=..&episode=..  -> streamable sources for one episode.
+// YTS is movies-only, so shows use Stremio-compatible torrent indexes. Native MP4
+// is returned directly; H.264 MKV is remuxed locally to fragmented MP4.
 async function handleTvTorrents(res, url) {
   const imdb = (url.searchParams.get('imdb') || '').trim();
   const season = Number.parseInt(url.searchParams.get('season') || '', 10);
   const episode = Number.parseInt(url.searchParams.get('episode') || '', 10);
+  const year = Number.parseInt(url.searchParams.get('year') || '', 10);
+  const country = (url.searchParams.get('country') || '').trim();
   if (!/^tt\d+$/.test(imdb) || !Number.isFinite(season) || !Number.isFinite(episode)) {
     res.writeHead(400, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ error: 'need imdb=tt.., season=, episode=' }));
   }
   try {
-    const sources = await fetchTvSources(imdb, season, episode);
-    console.log(`[tv] ${imdb} S${season}E${episode} -> ${sources.length} playable source(s)`);
+    const sources = await fetchTvSources(imdb, season, episode, {
+      year: Number.isFinite(year) ? year : undefined,
+      country,
+    });
+    const provider = sources[0]?.provider ? ` via ${sources[0].provider}` : '';
+    console.log(`[tv] ${imdb} S${season}E${episode} -> ${sources.length} streamable source(s)${provider}`);
     res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
     res.end(JSON.stringify({ sources }));
   } catch (err) {
     console.error(`[tv] lookup failed for ${imdb} S${season}E${episode}: ${err.message}`);
     res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-    res.end(JSON.stringify({ error: 'torrentio_unreachable', detail: err.message }));
+    res.end(JSON.stringify({ error: 'tv_index_unreachable', detail: err.message }));
   }
 }
 
@@ -291,6 +317,93 @@ async function handleSubtitleFile(res, url) {
   }
 }
 
+function prioritizeTorrentFile(torrent, file, start = 0) {
+  torrent.files.forEach((f) => (f === file ? f.select() : f.deselect()));
+  try {
+    const w = pieceWindow({ file, pieceLength: torrent.pieceLength || 1, start });
+    torrent.deselect(w.fileStart, w.fileEnd);
+    torrent.select(w.window.from, w.window.to, 1);
+    torrent.select(w.tail.from, w.tail.to, 1);
+    torrent.critical(w.critical.from, w.critical.to);
+  } catch { /* ignore */ }
+}
+
+// Chrome cannot parse Matroska. Compatible TV releases are remuxed to a
+// fragmented MP4 stream: H.264 video is copied unchanged and audio is converted
+// to AAC, keeping CPU use low while producing a browser-native container.
+function streamRemuxedMkv(req, res, file) {
+  const headers = {
+    'content-type': 'video/mp4',
+    'accept-ranges': 'none',
+    'access-control-allow-origin': '*',
+    'cache-control': 'no-store',
+  };
+  if (req.method === 'HEAD') {
+    res.writeHead(200, headers);
+    return res.end();
+  }
+
+  const ffmpeg = spawn('ffmpeg', [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-i', 'pipe:0',
+    '-map', '0:v:0',
+    '-map', '0:a:0?',
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-sn',
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-f', 'mp4',
+    'pipe:1',
+  ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  let input = null;
+  let stderr = '';
+  ffmpeg.stderr.on('data', (chunk) => {
+    stderr = (stderr + chunk.toString()).slice(-4000);
+  });
+  ffmpeg.stdin.on('error', () => { /* browser disconnect / torrent teardown */ });
+  ffmpeg.stdout.on('error', () => { /* browser disconnect */ });
+
+  ffmpeg.once('spawn', () => {
+    if (res.destroyed) {
+      ffmpeg.kill('SIGKILL');
+      return;
+    }
+    res.writeHead(200, headers);
+    input = file.createReadStream();
+    input.once('error', (err) => {
+      ffmpeg.stdin.destroy(err);
+      if (!res.destroyed) res.destroy(err);
+    });
+    ffmpeg.stdout.pipe(res);
+    input.pipe(ffmpeg.stdin);
+  });
+
+  ffmpeg.once('error', (err) => {
+    console.error(`[remux] could not start ffmpeg: ${err.message}`);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('ffmpeg is required to play this H.264 MKV torrent');
+    } else if (!res.destroyed) {
+      res.destroy(err);
+    }
+  });
+
+  ffmpeg.once('close', (code) => {
+    if (code && !res.destroyed) {
+      console.error(`[remux] ffmpeg exited ${code}: ${stderr.trim() || 'no details'}`);
+    }
+    if (!res.writableEnded && !res.destroyed) res.end();
+  });
+
+  res.once('close', () => {
+    input?.destroy();
+    if (!ffmpeg.killed && ffmpeg.exitCode === null) ffmpeg.kill('SIGKILL');
+  });
+}
+
 async function handleStream(req, res, url) {
   const hash = (url.searchParams.get('hash') || '').toLowerCase().trim();
   const name = url.searchParams.get('title') || '';
@@ -299,9 +412,12 @@ async function handleStream(req, res, url) {
     return res.end('invalid or missing hash');
   }
 
+  // ?ready= lets the TV path fail a peerless source fast and move to the next one
+  // instead of holding the browser on a dead swarm for the full default.
+  const readyMs = clampReadyTimeout(url.searchParams.get('ready'), READY_TIMEOUT_MS);
   let torrent;
   try {
-    torrent = await getTorrent(hash, name);
+    torrent = await getTorrent(hash, name, readyMs);
   } catch (err) {
     res.writeHead(504);
     return res.end('torrent unavailable: ' + err.message);
@@ -312,7 +428,11 @@ async function handleStream(req, res, url) {
   const s = Number.parseInt(url.searchParams.get('s') || '', 10);
   const e = Number.parseInt(url.searchParams.get('e') || '', 10);
   const wantsEpisode = Number.isFinite(s) && Number.isFinite(e);
-  const file = wantsEpisode ? pickEpisodeFile(torrent.files, s, e) : pickVideoFile(torrent);
+  // The release title carries the codec that a per-episode filename inside a
+  // season pack usually omits. The app forwards it as ?ctx=; the torrent's own
+  // name is the fallback when an older client does not send it.
+  const releaseContext = `${url.searchParams.get('ctx') || ''} ${torrent.name || ''}`.trim();
+  const file = wantsEpisode ? pickEpisodeFile(torrent.files, s, e, releaseContext) : pickVideoFile(torrent);
   if (!file) {
     res.writeHead(404);
     return res.end(wantsEpisode
@@ -321,8 +441,10 @@ async function handleStream(req, res, url) {
   }
   console.log(`[stream] ${file.name} (${(file.length / 1e9).toFixed(2)} GB) peers=${torrent.numPeers} range=${req.headers.range || 'none'}`);
 
-  // Prioritise this file's pieces; deselect everything else.
-  torrent.files.forEach((f) => (f === file ? f.select() : f.deselect()));
+  if (isRemuxableTvFile(file.path || file.name, releaseContext)) {
+    if (req.method !== 'HEAD') prioritizeTorrentFile(torrent, file);
+    return streamRemuxedMkv(req, res, file);
+  }
 
   const total = file.length;
   const type = VIDEO_MIME[extname(file.name).toLowerCase()] || 'video/mp4';
@@ -361,19 +483,9 @@ async function handleStream(req, res, url) {
 
   if (req.method === 'HEAD') return res.end();
 
-  // Prioritise a sequential run from the playhead so there are enough in-flight
-  // pieces to saturate many peers, plus the TAIL of the file. The tail matters
-  // because a non-faststart MP4 keeps its moov index at the end: Chrome then asks
-  // for bytes=0- AND bytes=<near EOF>-, and decodes nothing until the tail lands.
-  // Selecting only one window per request made those two requests overwrite each
-  // other's priorities and neither finished (see stream-window.mjs).
-  try {
-    const w = pieceWindow({ file, pieceLength: torrent.pieceLength || 1, start });
-    torrent.deselect(w.fileStart, w.fileEnd);
-    torrent.select(w.window.from, w.window.to, 1);
-    torrent.select(w.tail.from, w.tail.to, 1);
-    torrent.critical(w.critical.from, w.critical.to);
-  } catch { /* ignore */ }
+  // Prioritise a sequential run from the playhead plus the tail for MP4 files
+  // whose moov index is not at the front.
+  prioritizeTorrentFile(torrent, file, start);
 
   const stream = file.createReadStream({ start, end });
   stream.pipe(res);
@@ -422,7 +534,8 @@ function handleStreamStatus(res, url) {
     if (file) {
       body.name = file.name;
       body.length = file.length;
-      body.playable = isPlayableName(file.name);
+      body.remux = isRemuxableTvFile(file.path || file.name);
+      body.playable = isPlayableName(file.name) || body.remux;
     }
   }
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
@@ -433,6 +546,12 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (!helperRequestAllowed({ pathname: url.pathname, searchParams: url.searchParams, requiredKey: HELPER_KEY })) {
+      // Log WHICH key was refused (prefix only). Rotating HELPER_KEY leaves the old
+      // key in every browser's localStorage, and without this line a stale-key 401
+      // is indistinguishable from a no-key one, which are different user fixes.
+      const given = url.searchParams.get('key') || '';
+      const shown = given ? `${given.slice(0, 4)}…(${given.length} chars)` : 'none';
+      console.log(`[401] ${url.pathname} key=${shown} ua=${(req.headers['user-agent'] || '').slice(0, 60)}`);
       res.writeHead(401, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
       return res.end(JSON.stringify({ error: 'access key required' }));
     }
