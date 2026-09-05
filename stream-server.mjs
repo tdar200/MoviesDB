@@ -34,9 +34,19 @@ const HELPER_KEY = process.env.HELPER_KEY || '';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const READY_TIMEOUT_MS = 60_000;
 
+// Seeding is unlimited by default, and it competes for the SAME uplink this
+// helper uses to serve video to other devices. On this line that uplink is
+// 16.2 Mbit total, so an unthrottled swarm can starve the stream it is feeding.
+// Cap it well below the line and leave the rest for playback. Bytes per second;
+// set TORRENT_UPLOAD_LIMIT=-1 to restore unlimited seeding.
+const UPLOAD_LIMIT = Number.parseInt(process.env.TORRENT_UPLOAD_LIMIT ?? '262144', 10);
+
 // maxConns: allow more simultaneous peers per torrent (default 55) so the
 // sequential playhead can pull from many seeders at once.
-const client = new WebTorrent({ maxConns: 150 });
+const client = new WebTorrent({
+  maxConns: 150,
+  uploadLimit: Number.isFinite(UPLOAD_LIMIT) ? UPLOAD_LIMIT : 262144,
+});
 const torrents = new Map(); // infoHash(lowercase) -> torrent
 
 // Public BitTorrent trackers, folded into the magnet so the swarm is
