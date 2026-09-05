@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { srtToVtt, decodeSubtitle, subtitleLabel, isSubtitleFile, dedupeTrackLabels } from './subtitles.js';
+import { srtToVtt, decodeSubtitle, subtitleLabel, isSubtitleFile, dedupeTrackLabels, shiftVtt } from './subtitles.js';
 
 // ---- srtToVtt ----
 
@@ -177,4 +177,30 @@ test('index is preserved - it is the track identity, not the label', () => {
 
 test('an empty list is handled', () => {
   assert.deepEqual(dedupeTrackLabels([]), []);
+});
+
+// shiftVtt — realigning captions after a seek-restart resets the video clock.
+test('shiftVtt subtracts the offset from every timestamp', () => {
+  const vtt = 'WEBVTT\n\n00:30:22.000 --> 00:30:24.000\nhello\n';
+  const out = shiftVtt(vtt, 1800);   // seek to 30:00
+  assert.match(out, /00:00:22\.000 --> 00:00:24\.000/);
+  assert.match(out, /hello/);
+});
+
+test('shiftVtt drops cues that end before the seek point, with their text', () => {
+  const vtt = 'WEBVTT\n\n00:00:17.000 --> 00:00:19.000\n(footsteps)\n\n00:31:00.000 --> 00:31:02.000\nkept\n';
+  const out = shiftVtt(vtt, 1800);
+  assert.doesNotMatch(out, /footsteps/);       // 17s cue is long gone by 30:00
+  assert.match(out, /kept/);
+  assert.match(out, /00:01:00\.000 --> 00:01:02\.000/);
+});
+
+test('shiftVtt with zero offset returns the input unchanged', () => {
+  const vtt = 'WEBVTT\n\n00:00:17.000 --> 00:00:19.000\nx\n';
+  assert.equal(shiftVtt(vtt, 0), vtt);
+});
+
+test('shiftVtt handles mm:ss.mmm (no hours) timestamps', () => {
+  const out = shiftVtt('WEBVTT\n\n34:34.313 --> 34:35.937\nend\n', 600);
+  assert.match(out, /00:24:34\.313 --> 00:24:35\.937/);
 });

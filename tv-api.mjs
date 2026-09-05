@@ -136,6 +136,21 @@ export function pickEpisodeFile(files, season, episode, context = '') {
   return null;
 }
 
+// The episode's video file for PROBING (duration, embedded subtitles), chosen
+// without the codec/remux filter pickEpisodeFile applies. Probing only reads
+// metadata, so an x265 pack that could not be played back should still have its
+// duration and subtitle tracks read. Matches the episode by name among video
+// containers; falls back to the single video in a one-episode torrent.
+const VIDEO_CONTAINER = /\.(mkv|mp4|m4v|webm|avi|mov|ts)$/i;
+export function pickEpisodeVideoFile(files, season, episode) {
+  const vids = (Array.isArray(files) ? files : []).filter((f) => VIDEO_CONTAINER.test(f.path || f.name));
+  if (!vids.length) return null;
+  const matched = vids.filter((f) => matchesEpisode(f.path || f.name, season, episode));
+  if (matched.length) return matched.sort((a, b) => (b.length || 0) - (a.length || 0))[0];
+  if (vids.length === 1) return vids[0];
+  return vids.sort((a, b) => (b.length || 0) - (a.length || 0))[0];
+}
+
 // Stremio torrent indexes report seeds inside human-readable text, e.g. "👤 123".
 function parseSeeds(text) {
   const m = String(text || '').match(/👤\s*(\d+)/);

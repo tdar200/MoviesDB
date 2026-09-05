@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   matchesEpisode, isPlayableTvFile, isRemuxableTvFile, rankTvSources,
-  pickEpisodeFile, fetchTvSources, clearTvCache,
+  pickEpisodeFile, pickEpisodeVideoFile, fetchTvSources, clearTvCache,
 } from './tv-api.mjs';
 
 // ---- matchesEpisode ----
@@ -439,4 +439,29 @@ test('pickEpisodeFile still refuses an HEVC pack, context or not', () => {
 test('pickEpisodeFile without context keeps working for self-describing names', () => {
   const files = [{ path: 'Show.S01E01.1080p.x264-GRP.mkv', length: 1e9 }];
   assert.equal(pickEpisodeFile(files, 1, 1)?.path, files[0].path);
+});
+
+// pickEpisodeVideoFile is the probe-time picker: it must find the episode's video
+// even when pickEpisodeFile would reject it for codec reasons, because probing
+// only reads metadata (duration, embedded subs). Real case: a season pack whose
+// per-episode filenames name no codec — pickEpisodeFile returned null without the
+// release title as context, so /subtitles found no file to probe and showed none.
+test('pickEpisodeVideoFile finds the episode file with no codec in the name', () => {
+  const files = [
+    { path: 'Chernobyl S01/Chernobyl - S01E01 - 1.23.45.mkv', length: 1.2e9 },
+    { path: 'Chernobyl S01/Chernobyl - S01E02 - Please Remain Calm.mkv', length: 1.1e9 },
+  ];
+  assert.equal(pickEpisodeVideoFile(files, 1, 1)?.path, files[0].path);
+  assert.equal(pickEpisodeVideoFile(files, 1, 2)?.path, files[1].path);
+});
+
+test('pickEpisodeVideoFile ignores non-video files and falls back sensibly', () => {
+  const files = [
+    { path: 'Show/readme.txt', length: 100 },
+    { path: 'Show/Show.S01E01.mkv', length: 5e8 },
+  ];
+  assert.equal(pickEpisodeVideoFile(files, 1, 1)?.path, 'Show/Show.S01E01.mkv');
+  // No episode match, single video -> that video.
+  assert.equal(pickEpisodeVideoFile([{ path: 'Movie.mkv', length: 1e9 }], 9, 9)?.path, 'Movie.mkv');
+  assert.equal(pickEpisodeVideoFile([], 1, 1), null);
 });

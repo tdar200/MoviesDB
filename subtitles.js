@@ -128,3 +128,46 @@ export function dedupeTrackLabels(tracks) {
     return { ...t, label: `${t.label} (${kb} KB)` };
   });
 }
+
+// Shift every WebVTT timestamp by -offsetSeconds, dropping cues that would end
+// before zero. The remuxed torrent player seeks by restarting the stream at a
+// timestamp, which resets the <video> clock to 0; the embedded subtitle track
+// still carries absolute times, so without this shift the captions run ahead of
+// the picture by exactly the seek offset. offsetSeconds 0 returns the input.
+export function shiftVtt(vtt, offsetSeconds) {
+  const off = Number(offsetSeconds) || 0;
+  if (!off) return String(vtt || '');
+  const toMs = (t) => {
+    const m = /(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})/.exec(t);
+    if (!m) return null;
+    return ((Number(m[1] || 0) * 3600) + (Number(m[2]) * 60) + Number(m[3])) * 1000 + Number(m[4]);
+  };
+  const fromMs = (ms) => {
+    const x = Math.max(0, ms);
+    const h = Math.floor(x / 3600000);
+    const mn = Math.floor((x % 3600000) / 60000);
+    const s = Math.floor((x % 60000) / 1000);
+    const mms = Math.floor(x % 1000);
+    const p = (n, w = 2) => String(n).padStart(w, '0');
+    return `${p(h)}:${p(mn)}:${p(s)}.${p(mms, 3)}`;
+  };
+  const lines = String(vtt || '').split(/\r?\n/);
+  const out = [];
+  let drop = false;
+  for (const line of lines) {
+    const cue = /^\s*((?:\d+:)?\d{2}:\d{2}[.,]\d{3})\s*-->\s*((?:\d+:)?\d{2}:\d{2}[.,]\d{3})(.*)$/.exec(line);
+    if (cue) {
+      const start = toMs(cue[1]) - off * 1000;
+      const end = toMs(cue[2]) - off * 1000;
+      if (end <= 0) { drop = true; continue; }       // whole cue is before the seek point
+      drop = false;
+      out.push(`${fromMs(start)} --> ${fromMs(end)}${cue[3] || ''}`);
+    } else if (drop && line.trim() !== '') {
+      continue;                                        // text belonging to a dropped cue
+    } else {
+      drop = false;
+      out.push(line);
+    }
+  }
+  return out.join('\n');
+}
