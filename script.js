@@ -1337,7 +1337,7 @@ function defaultSubtitleSlot(tracks) {
 }
 
 // Attach the subtitle tracks for one torrent and build the picker.
-async function loadSubtitlesFor(hash, season, episode) {
+async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
   if (!playerVideo || !subtitleSelect) return;
   clearSubtitleTracks();
 
@@ -1352,10 +1352,21 @@ async function loadSubtitlesFor(hash, season, episode) {
     const body = await r.json();
     tracks = dedupeTrackLabels(body.tracks || []);
     if (body.duration && currentTorrentHash === hash) setTorrentDuration(body.duration);
-  } catch { return; }                       // helper gone; the film still plays
+  } catch {
+    // Transient fetch failure (webOS drops fetches under the initial request
+    // storm). Retry rather than leaving the film without subtitles for good.
+    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+    return;
+  }
 
   if (currentTorrentHash !== hash) return;  // user switched quality/movie mid-fetch
-  if (!tracks.length) return;
+  if (!tracks.length) {
+    // Embedded subtitles live inside the .mkv and are unreadable until enough of
+    // the header has downloaded. On a fresh stream that lags playback, so retry a
+    // few times before giving up rather than showing no subtitles for the session.
+    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+    return;
+  }
 
   subtitleSlots = tracks;
   for (const t of tracks) {
