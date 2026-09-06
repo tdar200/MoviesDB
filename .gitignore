@@ -9,3 +9,6 @@
 
 # webOS build artifact
 *.ipk
+
+# generated TV bundle (rebuild: npm run build:tv); served by the helper
+/tv-bundle.js

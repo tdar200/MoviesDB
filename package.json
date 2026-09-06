@@ -11,7 +11,8 @@
     "check-links": "node check-links.mjs",
     "check-playback": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_PLAYBACK=1 node --test check-playback.test.js",
     "check-fullscreen": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_FULLSCREEN=1 node --test fullscreen.test.js",
-    "check-popups": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_POPUPS=1 node --test check-popups.test.js"
+    "check-popups": "xvfb-run -a --server-args=\"-screen 0 1280x720x24\" env CHECK_POPUPS=1 node --test check-popups.test.js",
+    "build:tv": "esbuild tv-entry.js --bundle --format=iife --target=es2019 --outfile=tv-bundle.js"
   },
   "keywords": [
     "movies",
