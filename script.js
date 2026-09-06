@@ -91,6 +91,19 @@ const PREFERRED_SOURCE = (() => {
   } catch { return CONFIG.DEFAULT_SOURCE || ''; }
 })();
 
+// TV mode: a webOS TV (or ?tv=1). Its webview drops fetches under load, so the
+// per-card enrichment storm (OMDb + providers + credits x hundreds of cards) is
+// skipped — it also starved the subtitle/stream fetches. Cards still render from
+// TMDB data; only the extra badges are omitted.
+const TV_MODE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('tv');
+    if (q !== null) { if (q === '1') localStorage.setItem('tvMode', '1'); else localStorage.removeItem('tvMode'); }
+    if (localStorage.getItem('tvMode') === '1') return true;
+  } catch { /* ignore */ }
+  return /web0?os|smarttv|netcast/i.test(navigator.userAgent || '');
+})();
+
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
 // The YTS torrent source needs the stream helper (stream-server.mjs). It can't run
@@ -1075,6 +1088,7 @@ async function fetchOmdbData(title, year, type) {
 
 // Fetch RT ratings and watch providers for a batch of movies
 async function enrichMoviesWithRatings(movies) {
+  if (TV_MODE) return movies;   // no per-card fetch storm on webOS
   const promises = movies.map(async (movie) => {
     const title = movie.title || movie.name;
     const year = (movie.release_date || movie.first_air_date || '').split('-')[0];

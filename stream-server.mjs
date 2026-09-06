@@ -475,6 +475,11 @@ function streamRemuxedMkv(req, res, file, { startSec = 0, diskPath = '' } = {}) 
     '-map', '0:v:0', '-map', '0:a:0?',
     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-sn',
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    // Emit a fragment at least every second. Without this, ffmpeg only fragments
+    // at video keyframes (~5-10s apart), and webOS's older video element loads
+    // the first couple of big fragments then stalls (~21s) instead of continuing
+    // to pull the chunked stream. Frequent small fragments keep it consuming.
+    '-frag_duration', '1000000',
     '-f', 'mp4', 'pipe:1',
   );
   const ffmpeg = spawn('ffmpeg', args, { stdio: [seeking ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
