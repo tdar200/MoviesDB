@@ -6,3 +6,6 @@
 
 # downloaded subtitle files (not part of the app)
 /subs
+
+# webOS build artifact
+*.ipk

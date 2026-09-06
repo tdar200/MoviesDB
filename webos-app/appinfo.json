@@ -1,0 +1,14 @@
+{
+  "id": "com.moviesdb.tv",
+  "version": "1.0.0",
+  "vendor": "MoviesDB",
+  "type": "web",
+  "main": "index.html",
+  "title": "Movies",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#1e1e2a",
+  "bgColor": "#0d0d12",
+  "disableBackHistoryAPI": true,
+  "supportPortraitMode": false
+}

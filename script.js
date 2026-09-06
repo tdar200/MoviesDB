@@ -80,6 +80,17 @@ import { buildHelperUrl, resolveHelperKey } from './helper-url.js';
 import { pickNextSource, describeSourceAttempt, TV_SOURCE_ATTEMPT_CAP } from './tv-fallback.js';
 import { absolutePosition, seekTarget, seekToFraction, formatTime } from './torrent-seek.js';
 let currentSourceIndex = 0;
+// Preferred default source for the player. The TV app opens with ?source=<name>
+// (e.g. 111Movies) and it is remembered; falls back to CONFIG.DEFAULT_SOURCE, then
+// to the first inline-loadable source. Empty on the web unless configured.
+const PREFERRED_SOURCE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('source');
+    if (q !== null) { if (q) localStorage.setItem('preferredSource', q); else localStorage.removeItem('preferredSource'); }
+    return localStorage.getItem('preferredSource') || (CONFIG.DEFAULT_SOURCE || '');
+  } catch { return CONFIG.DEFAULT_SOURCE || ''; }
+})();
+
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
 // The YTS torrent source needs the stream helper (stream-server.mjs). It can't run
@@ -587,6 +598,13 @@ function populateSourceSelector() {
     if (firstUsableIndex === null && !isNewTab) firstUsableIndex = index;
   });
 
+  // Honour the preferred source when it exists in the list for this title and
+  // loads inline (not a new-tab-only provider).
+  if (PREFERRED_SOURCE) {
+    const pi = EMBED_SOURCES.findIndex((sc) => sc && sc.name === PREFERRED_SOURCE);
+    const opt = pi >= 0 ? sourceSelect.querySelector(`option[value="${pi}"]`) : null;
+    if (pi >= 0 && opt && opt.dataset.newTab !== 'true') firstUsableIndex = pi;
+  }
   if (firstUsableIndex !== null) currentSourceIndex = firstUsableIndex;
   sourceSelect.value = currentSourceIndex;
 }

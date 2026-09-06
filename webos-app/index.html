@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Movies</title>
+  <style>html,body{margin:0;height:100%;background:#0d0d12;color:#e6e6ea;font-family:sans-serif}
+  .msg{position:absolute;top:50%;left:0;right:0;text-align:center;transform:translateY(-50%);opacity:.7}</style>
+</head>
+<body>
+  <div class="msg">Loading Movies…</div>
+  <script>
+    // Thin webOS shell: load the live app from the stream-helper's own origin so
+    // the Torrent source is same-origin (no CORS / local-network prompts) and the
+    // app is always the latest version. ?source=111Movies sets the default player.
+    var URL_ = 'https://dell-g15.taild19ce1.ts.net/?helperkey=popcorn42&source=111Movies';
+    location.replace(URL_);
+  </script>
+</body>
+</html>
