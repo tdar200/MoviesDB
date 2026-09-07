@@ -8,8 +8,21 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-mode .app-tab.active { background: transparent; color: white; font-weight: bold; border-bottom: 3px solid #e50914; }
 .tv-mode .app-tab[data-tab="test"], .tv-mode #top250-btn { display: none !important; }
 .tv-mode:not(.tv-controls-open) header > .filters, .tv-mode:not(.tv-controls-open) header > form { display: none !important; }
-.tv-mode .filters { margin-top: 24px; gap: 14px; }
-.tv-mode input, .tv-mode select, .tv-mode .filter-select { font-size: 20px; min-height: 48px; }
+/* Open filter panel: a solid, self-contained bar (no hero bleed-through), with big
+   remote-friendly controls that show their current value and a clear focus ring. */
+.tv-mode.tv-controls-open header { background: #1a1a1a; box-shadow: 0 12px 30px rgba(0,0,0,.6); padding-bottom: 28px; }
+.tv-mode.tv-controls-open #tv-browse-controls { color: #fff; background: rgba(255,255,255,.14); }
+.tv-mode .filters { margin-top: 22px; gap: 14px 16px; align-items: stretch; }
+.tv-mode .filter-group { display: flex; }
+.tv-mode input, .tv-mode select, .tv-mode .filter-select { font-size: 20px; min-height: 54px; }
+.tv-mode .filter-select, .tv-mode .filter-input, .tv-mode .search { background: #2b2b2b; color: #fff; border: 1px solid #3d3d3d; border-radius: 8px; padding: 0 18px; min-width: 190px; }
+.tv-mode .filter-select:focus, .tv-mode .filter-input:focus, .tv-mode .search:focus, .tv-mode .exclude-btn:focus { border-color: #fff; }
+.tv-mode .exclude-btn { background: #2b2b2b; color: #fff; border: 1px solid #3d3d3d; border-radius: 8px; min-height: 54px; }
+/* When the filter panel is open, drop the hero so the controls + results lead. */
+.tv-mode.tv-controls-open .tv-hero { display: none; }
+/* Clear-filters affordance in the panel. */
+.tv-mode #tv-clear-filters { min-height: 54px; padding: 0 22px; background: #e50914; color: #fff; border: 0; border-radius: 8px; font-size: 20px; font-weight: bold; }
+.tv-mode #tv-clear-filters[hidden] { display: none; }
 .tv-mode #main { display: flex; flex-wrap: wrap; gap: 24px; padding: 0 4vw 36px; max-width: none; margin: 0; }
 .tv-hero { width: calc(100% + 8vw); margin: 0 -4vw 8px; flex: 0 0 calc(100% + 8vw); min-height: 460px; height: 49vh; background-position: center 25%; background-size: cover; position: relative; display: flex; align-items: center; }
 .tv-hero::before { content: ''; position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: linear-gradient(90deg, #141414 3%, rgba(20,20,20,.88) 30%, rgba(20,20,20,.1) 85%), linear-gradient(0deg, #141414, transparent 45%); }

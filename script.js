@@ -1785,8 +1785,23 @@ async function loadTvStream(movie, season, episode, startSec = 0) {
     if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
 
     currentTvSources = attempt.data.sources || [];
-    // Match the TV movie preference: start lighter streams before higher resolutions.
-    if (TV_MODE) currentTvSources = [...currentTvSources].sort((a, b) => Number(b.quality === DEFAULT_YTS_QUALITY) - Number(a.quality === DEFAULT_YTS_QUALITY));
+    // TV source order (best first-try wins; the cascade covers the rest). A direct-play
+    // MP4 avoids the fragile MKV->HLS remux that HEVC WEB-DL rips fail on ("stopped
+    // producing playable video", e.g. recent South Park) — but only jumps the queue if
+    // it is well-seeded enough to actually stream. Otherwise a well-seeded remux wins,
+    // and near-dead sources sink to the bottom.
+    const TV_DIRECT_MIN_SEEDS = 30; // a direct MP4 must be this seeded to lead
+    const TV_VIABLE_SEEDS = 8;      // below this, streaming rarely sustains
+    const tvRank = (x) => {
+      const seeds = x.seeds || 0;
+      if (!x.remux && seeds >= TV_DIRECT_MIN_SEEDS) return 0; // well-seeded direct MP4
+      if (seeds >= TV_VIABLE_SEEDS) return 1;                 // anything streamable
+      return 2;                                               // near-dead, last resort
+    };
+    if (TV_MODE) currentTvSources = [...currentTvSources].sort((a, b) =>
+      (tvRank(a) - tvRank(b)) ||
+      ((b.seeds || 0) - (a.seeds || 0)) ||
+      (Number(b.quality === DEFAULT_YTS_QUALITY) - Number(a.quality === DEFAULT_YTS_QUALITY)));
     if (!currentTvSources.length) {
       setYtsStatus(`No active MP4 or H.264 MKV torrent for S${season}E${episode}. Try another source or episode.`, true);
       return;

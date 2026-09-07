@@ -51,6 +51,28 @@ export function installTvRemote() {
   new MutationObserver(syncSearchNotice).observe(document.getElementById('main'), { childList: true });
   window.addEventListener('popstate', syncSearchNotice);
   syncSearchNotice();
+
+  // Clear-filters button inside the filter panel: one press resets to the home view.
+  // Shown only while a filter/search is actually active.
+  const FILTER_PARAMS = ['type', 'genre', 'rating', 'votes', 'year', 'lang', 'sort', 'provider', 'theme', 'exclude', 'q', 'actor'];
+  const clearFilters = document.createElement('button');
+  clearFilters.id = 'tv-clear-filters';
+  clearFilters.type = 'button';
+  clearFilters.textContent = 'Clear filters';
+  document.getElementById('movie-filters')?.append(clearFilters);
+  const syncClearFilters = () => {
+    const q = new URLSearchParams(location.search);
+    clearFilters.hidden = !FILTER_PARAMS.some(p => q.has(p));
+  };
+  clearFilters.onclick = () => {
+    const url = new URL(location.href);
+    FILTER_PARAMS.forEach(p => url.searchParams.delete(p));
+    location.href = url.href;
+  };
+  new MutationObserver(syncClearFilters).observe(document.getElementById('main'), { childList: true });
+  window.addEventListener('popstate', syncClearFilters);
+  syncClearFilters();
+
   const hint = document.createElement('div');
   hint.className = 'tv-remote-hint';
   hint.textContent = '↑ ↓ ← →  Browse     OK  Select     Back  Return';
