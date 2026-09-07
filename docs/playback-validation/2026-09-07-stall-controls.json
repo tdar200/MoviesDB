@@ -1,0 +1,40 @@
+{
+  "pause": true,
+  "resume": true,
+  "forward": true,
+  "forwardReadySeconds": 5,
+  "forwardAdvances": true,
+  "forwardState": {
+    "time": 9.593,
+    "position": 3499,
+    "paused": false,
+    "ready": 4,
+    "clock": "58:19 / 136:18",
+    "width": 1920,
+    "height": 1080,
+    "error": null
+  },
+  "backward": true,
+  "backwardReadySeconds": 4,
+  "backwardAdvances": true,
+  "backwardState": {
+    "time": 9.413,
+    "position": 3499,
+    "paused": false,
+    "ready": 4,
+    "clock": "58:19 / 136:18",
+    "width": 1920,
+    "height": 1080,
+    "error": null
+  },
+  "final": {
+    "time": 9.413,
+    "position": 3499,
+    "paused": false,
+    "ready": 4,
+    "clock": "58:19 / 136:18",
+    "width": 1920,
+    "height": 1080,
+    "error": null
+  }
+}

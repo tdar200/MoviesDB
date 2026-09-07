@@ -5,9 +5,9 @@ import { helperRequestAllowed, isHelperApiPath, HELPER_API_PATHS } from './helpe
 const sp = (q) => new URLSearchParams(q);
 
 test('every torrent/file endpoint is an API path; the app files are not', () => {
-  for (const p of ['/yts', '/tv-torrents', '/subtitles', '/subtitle', '/stream', '/stream-status', '/stream-stop']) assert.ok(isHelperApiPath(p), p);
+  for (const p of ['/yts', '/movie-torrents', '/tv-torrents', '/subtitles', '/subtitle', '/stream', '/stream-status', '/stream-stop']) assert.ok(isHelperApiPath(p), p);
   for (const p of ['/', '/index.html', '/script.js', '/config.js', '/stream.js', '/yts-status.js']) assert.ok(!isHelperApiPath(p), p);
-  assert.equal(HELPER_API_PATHS.length, 7);
+  assert.equal(HELPER_API_PATHS.length, 8);
 });
 
 test('no key configured: everything is allowed (local npm start)', () => {

@@ -132,7 +132,7 @@ export function pickEpisodeFile(files, season, episode, context = '') {
   if (matched.length) return matched.sort((a, b) => (b.length || 0) - (a.length || 0))[0];
 
   // No episode marker anywhere: a single playable video is unambiguous.
-  if (playable.length === 1) return playable[0];
+  if (playable.length === 1 && !/s\d{1,2}e\d{1,3}|\d{1,2}x\d{1,3}/i.test(playable[0].path || playable[0].name)) return playable[0];
   return null;
 }
 
@@ -204,6 +204,26 @@ function normalizeCountry(country) {
   return c === 'GB' ? 'UK' : c;
 }
 
+// A broad index can return a spin-off under the parent show's IMDb lookup.
+// Compare the release's series prefix, not just its S/E marker (e.g. reject
+// "Rick and Morty: The Anime" when the selected series is "Rick and Morty").
+export function matchesSeriesTitle(source, titles = []) {
+  const normalize = text => String(text || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|and)\b/g, ' ').trim().replace(/\s+/g, ' ');
+  const wanted = titles.map(normalize).filter(Boolean);
+  if (!wanted.length) return true;
+  const name = String(source.filename || source.title || '').split('\n')[0].replace(/\[[^\]]*\]/g, '');
+  const marker = /(?:^|[ ._-])(?:s\d{1,2}(?:e\d{1,3})?|\d{1,2}x\d{1,3}|season[ ._-]*\d)/i.exec(name);
+  if (!marker) return true; // index identity is the only usable information
+  const prefix = normalize(name.slice(0, marker.index));
+  if (!prefix) return true;
+  return wanted.some(title => {
+    if (prefix === title) return true;
+    if (!prefix.startsWith(title + ' ')) return false;
+    const suffix = prefix.slice(title.length).trim();
+    return /^(?:(?:19|20)\d{2}|us|usa|uk|au|complete)(?: (?:(?:19|20)\d{2}|us|usa|uk|au|complete))*$/.test(suffix);
+  });
+}
+
 // Some broad indexes search a title as well as its IMDb id. Reject an explicitly
 // conflicting year/country while retaining releases that simply omit those tags.
 function matchesSeriesHints(source, { year, country } = {}) {
@@ -227,7 +247,7 @@ function matchesSeriesHints(source, { year, country } = {}) {
 
 // Look up playable sources for one episode. Returns a ranked (possibly empty)
 // array; throws only when every configured index could not be reached.
-export async function fetchTvSources(imdb, season, episode, {
+async function fetchIndexedSources(imdb, season, episode, {
   fetchImpl = resolvingFetch,
   timeoutMs = 15000,
   ttlMs = TV_CACHE_TTL_MS,
@@ -237,8 +257,11 @@ export async function fetchTvSources(imdb, season, episode, {
   indexUrls = configuredIndexes(),
   year,
   country,
+  title,
+  originalTitle,
+  mediaType = 'series',
 } = {}) {
-  const key = `${imdb}:${season}:${episode}:${year || ''}:${normalizeCountry(country)}`;
+  const key = `${mediaType}:${imdb}:${season}:${episode}:${year || ''}:${normalizeCountry(country)}:${title || ''}:${originalTitle || ''}`;
   const hit = cache.get(key);
   if (hit && now() - hit.at < ttlMs) return hit.sources;
 
@@ -250,7 +273,8 @@ export async function fetchTvSources(imdb, season, episode, {
   const collected = [];
 
   for (const index of normalizeIndexes(indexUrls)) {
-    const url = `${index.url.replace(/\/$/, '')}/stream/series/${encodeURIComponent(imdb)}:${season}:${episode}.json`;
+    const item = mediaType === 'movie' ? encodeURIComponent(imdb) : `${encodeURIComponent(imdb)}:${season}:${episode}`;
+    const url = `${index.url.replace(/\/$/, '')}/stream/${mediaType}/${item}.json`;
     let lastErr = null;
 
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -268,6 +292,8 @@ export async function fetchTvSources(imdb, season, episode, {
             .map((st) => normalizeStream(st, index.name))
             .filter((source) => /^[a-f0-9]{40}$/.test(source.hash))
             .filter((source) => matchesSeriesHints(source, { year, country }))
+            .filter((source) => matchesSeriesTitle(source, [title, originalTitle]))
+            .filter((source) => mediaType === 'movie' || !/s\d{1,2}e\d{1,3}|\d{1,2}x\d{1,3}/i.test(source.filename) || matchesEpisode(source.filename, season, episode))
         );
         lastErr = null;
         break;
@@ -299,4 +325,11 @@ export async function fetchTvSources(imdb, season, episode, {
   const err = new Error(`TV torrent indexes failed for ${imdb}:${season}:${episode}: ${errors.join(' | ') || 'no indexes configured'}`);
   err.hostErrors = errors;
   throw err;
+}
+
+export function fetchTvSources(imdb, season, episode, options = {}) {
+  return fetchIndexedSources(imdb, season, episode, options);
+}
+export function fetchMovieSources(imdb, options = {}) {
+  return fetchIndexedSources(imdb, 0, 0, { ...options, mediaType: 'movie' });
 }

@@ -1,0 +1,591 @@
+[
+  {
+    "name": "The Shawshank Redemption",
+    "id": 278,
+    "type": "movie",
+    "started": "2026-09-07T10:07:23.796Z",
+    "provider111": {
+      "frames": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "after": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "playing": false
+    },
+    "native": {
+      "source": "YTS (Torrent)",
+      "started": true,
+      "samples": [
+        {
+          "time": 4.778,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:04 / 142:32",
+          "status": "",
+          "error": null,
+          "title": "The Shawshank Redemption"
+        },
+        {
+          "time": 9.995,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:09 / 142:32",
+          "status": "",
+          "error": null,
+          "title": "The Shawshank Redemption"
+        },
+        {
+          "time": 15.009,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:15 / 142:32",
+          "status": "",
+          "error": null,
+          "title": "The Shawshank Redemption"
+        },
+        {
+          "time": 20.021,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:20 / 142:32",
+          "status": "",
+          "error": null,
+          "title": "The Shawshank Redemption"
+        },
+        {
+          "time": 25.235,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:25 / 142:32",
+          "status": "",
+          "error": null,
+          "title": "The Shawshank Redemption"
+        },
+        {
+          "time": 30.251,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:30 / 142:32",
+          "status": "",
+          "error": null,
+          "title": "The Shawshank Redemption"
+        },
+        {
+          "time": 35.866,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:35 / 142:32",
+          "status": "",
+          "error": null,
+          "title": "The Shawshank Redemption"
+        }
+      ],
+      "pause": true,
+      "resume": false,
+      "forward": false,
+      "forwardState": {
+        "time": 0,
+        "ready": 0,
+        "paused": true,
+        "src": "HLS",
+        "clock": "0:00 / Loading duration\u2026",
+        "status": "",
+        "error": null,
+        "title": "The Shawshank Redemption"
+      },
+      "back": true,
+      "restoredFocus": true,
+      "advancing": true,
+      "continuous": true
+    }
+  },
+  {
+    "name": "The Matrix",
+    "id": 603,
+    "type": "movie",
+    "started": "2026-09-07T10:11:08.351Z",
+    "provider111": {
+      "frames": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "after": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "playing": false
+    },
+    "native": {
+      "source": "YTS (Torrent)",
+      "started": true,
+      "samples": [
+        {
+          "time": 3.966,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:03 / 136:18",
+          "status": "",
+          "error": null,
+          "title": "The Matrix"
+        },
+        {
+          "time": 9.18,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:08 / 136:18",
+          "status": "",
+          "error": null,
+          "title": "The Matrix"
+        },
+        {
+          "time": 14.394,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:14 / 136:18",
+          "status": "",
+          "error": null,
+          "title": "The Matrix"
+        },
+        {
+          "time": 19.812,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:19 / 136:18",
+          "status": "",
+          "error": null,
+          "title": "The Matrix"
+        },
+        {
+          "time": 25.032,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:24 / 136:18",
+          "status": "",
+          "error": null,
+          "title": "The Matrix"
+        },
+        {
+          "time": 30.047,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:30 / 136:18",
+          "status": "",
+          "error": null,
+          "title": "The Matrix"
+        },
+        {
+          "time": 30.248,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:30 / 136:18",
+          "status": "Buffering\u2026 If this continues, choose another quality or source.",
+          "error": null,
+          "title": "The Matrix"
+        }
+      ],
+      "pause": true,
+      "resume": true,
+      "forward": true,
+      "forwardState": {
+        "time": 2.472,
+        "ready": 4,
+        "paused": false,
+        "src": "HLS",
+        "clock": "1:38 / 136:18",
+        "status": "",
+        "error": null,
+        "title": "The Matrix"
+      },
+      "backward": true,
+      "backwardState": {
+        "time": 1.583,
+        "ready": 4,
+        "paused": false,
+        "src": "HLS",
+        "clock": "1:09 / 136:18",
+        "status": "",
+        "error": null,
+        "title": "The Matrix"
+      },
+      "back": true,
+      "restoredFocus": true,
+      "advancing": true,
+      "continuous": false
+    }
+  },
+  {
+    "name": "Rick and Morty",
+    "id": 60625,
+    "type": "tv",
+    "started": "2026-09-07T10:13:31.044Z",
+    "provider111": {
+      "frames": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "after": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "playing": false
+    },
+    "native": {
+      "source": "TV (Torrent)",
+      "started": true,
+      "samples": [
+        {
+          "time": 3.931,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:03 / 22:01",
+          "status": "",
+          "error": null,
+          "title": "Rick and Morty - S1E1"
+        },
+        {
+          "time": 8.948,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:08 / 22:01",
+          "status": "",
+          "error": null,
+          "title": "Rick and Morty - S1E1"
+        },
+        {
+          "time": 13.963,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:13 / 22:01",
+          "status": "",
+          "error": null,
+          "title": "Rick and Morty - S1E1"
+        },
+        {
+          "time": 14.966,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:14 / 22:01",
+          "status": "Buffering\u2026 8 peers \u00b7 1% \u00b7 561 KB/s",
+          "error": null,
+          "title": "Rick and Morty - S1E1"
+        },
+        {
+          "time": 14.966,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:14 / 22:01",
+          "status": "Buffering\u2026 8 peers \u00b7 1% \u00b7 328 KB/s",
+          "error": null,
+          "title": "Rick and Morty - S1E1"
+        },
+        {
+          "time": 14.966,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:14 / 22:01",
+          "status": "Buffering\u2026 9 peers \u00b7 1% \u00b7 390 KB/s",
+          "error": null,
+          "title": "Rick and Morty - S1E1"
+        },
+        {
+          "time": 16.812,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:16 / 22:01",
+          "status": "",
+          "error": null,
+          "title": "Rick and Morty - S1E1"
+        }
+      ],
+      "pause": true,
+      "resume": true,
+      "forward": true,
+      "forwardState": {
+        "time": 3.446,
+        "ready": 4,
+        "paused": false,
+        "src": "HLS",
+        "clock": "1:23 / 22:01",
+        "status": "",
+        "error": null,
+        "title": "Rick and Morty - S1E1"
+      },
+      "backward": true,
+      "backwardState": {
+        "time": 1.702,
+        "ready": 4,
+        "paused": false,
+        "src": "HLS",
+        "clock": "0:54 / 22:01",
+        "status": "",
+        "error": null,
+        "title": "Rick and Morty - S1E1"
+      },
+      "nextEpisode": true,
+      "nextState": {
+        "time": 4.224,
+        "ready": 4,
+        "paused": false,
+        "src": "HLS",
+        "clock": "0:04 / 21:58",
+        "status": "",
+        "error": null,
+        "title": "Rick and Morty - S1E2"
+      },
+      "nextAdvances": true,
+      "back": true,
+      "restoredFocus": true,
+      "advancing": false,
+      "continuous": false
+    }
+  },
+  {
+    "name": "Breaking Bad",
+    "id": 1396,
+    "type": "tv",
+    "started": "2026-09-07T10:17:53.507Z",
+    "provider111": {
+      "frames": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "after": [
+        {
+          "host": "player.vidlove.cc",
+          "text": "Something went wrong loading the player.\nReload",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "\u00d7\nConfirm you're not a robot\nScan the qr-code with your phone",
+          "videos": []
+        },
+        {
+          "host": "",
+          "text": "",
+          "videos": []
+        }
+      ],
+      "playing": false
+    },
+    "native": {
+      "source": "TV (Torrent)",
+      "started": true,
+      "samples": [
+        {
+          "time": 5.109,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:04 / 58:06",
+          "status": "",
+          "error": null,
+          "title": "Breaking Bad - S1E1"
+        },
+        {
+          "time": 8.119,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:08 / 58:06",
+          "status": "Buffering\u2026 10 peers \u00b7 1% \u00b7 2.3 MB/s",
+          "error": null,
+          "title": "Breaking Bad - S1E1"
+        },
+        {
+          "time": 8.119,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:08 / 58:06",
+          "status": "Buffering\u2026 9 peers \u00b7 1% \u00b7 1.9 MB/s",
+          "error": null,
+          "title": "Breaking Bad - S1E1"
+        },
+        {
+          "time": 8.119,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:08 / 58:06",
+          "status": "Buffering\u2026 9 peers \u00b7 1% \u00b7 2.4 MB/s",
+          "error": null,
+          "title": "Breaking Bad - S1E1"
+        },
+        {
+          "time": 8.119,
+          "ready": 2,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:08 / 58:06",
+          "status": "Buffering\u2026 9 peers \u00b7 2% \u00b7 3.1 MB/s",
+          "error": null,
+          "title": "Breaking Bad - S1E1"
+        },
+        {
+          "time": 8.511,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:08 / 58:06",
+          "status": "",
+          "error": null,
+          "title": "Breaking Bad - S1E1"
+        },
+        {
+          "time": 13.526,
+          "ready": 4,
+          "paused": false,
+          "src": "HLS",
+          "clock": "0:13 / 58:06",
+          "status": "",
+          "error": null,
+          "title": "Breaking Bad - S1E1"
+        }
+      ],
+      "pause": true,
+      "resume": false,
+      "forward": false,
+      "forwardState": {
+        "time": 0,
+        "ready": 0,
+        "paused": true,
+        "src": "HLS",
+        "clock": "1:13 / Loading duration\u2026",
+        "status": "Preparing your selected position\u2026",
+        "error": null,
+        "title": "Breaking Bad - S1E1"
+      },
+      "nextEpisode": false,
+      "nextState": {
+        "time": 0,
+        "ready": 0,
+        "paused": true,
+        "src": "HLS",
+        "clock": "0:00 / Loading duration\u2026",
+        "status": "No source could sustain playback. Choose another quality or try this episode again.",
+        "error": null,
+        "title": "Breaking Bad - S1E2"
+      },
+      "back": true,
+      "restoredFocus": true,
+      "advancing": false,
+      "continuous": false
+    }
+  }
+]

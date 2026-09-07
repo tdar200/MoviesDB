@@ -1,0 +1,214 @@
+[
+  {
+    "name": "The Shawshank Redemption",
+    "id": 278,
+    "started": true,
+    "samples": [
+      {
+        "text": "Tap to unmute\nThe Shawshank Redemption\non Barbarian King 2.0\n19:15 / 2:22:33",
+        "time": 1155.28,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nThe Shawshank Redemption\non Barbarian King 2.0\n19:20 / 2:22:33",
+        "time": 1160.28,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nThe Shawshank Redemption\non Barbarian King 2.0\n19:25 / 2:22:33",
+        "time": 1165.32,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nThe Shawshank Redemption\non Barbarian King 2.0\n19:30 / 2:22:33",
+        "time": 1170.28,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      }
+    ],
+    "continuous": true,
+    "unmuted": true,
+    "pause": true,
+    "resume": true,
+    "forward": true,
+    "backward": true,
+    "afterSeekAdvances": true,
+    "back": true,
+    "focus": true
+  },
+  {
+    "name": "The Matrix",
+    "id": 603,
+    "started": true,
+    "samples": [
+      {
+        "text": "Tap to unmute\nThe Matrix\non Archer Queen\n0:02 / 2:16:17",
+        "time": 2.752744,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nThe Matrix\non Archer Queen\n0:07 / 2:16:17",
+        "time": 7.757744,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nThe Matrix\non Archer Queen\n0:12 / 2:16:17",
+        "time": 12.804455,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nThe Matrix\non Archer Queen\n0:17 / 2:16:17",
+        "time": 17.851166,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      }
+    ],
+    "continuous": true,
+    "unmuted": true,
+    "pause": true,
+    "resume": true,
+    "forward": true,
+    "backward": true,
+    "afterSeekAdvances": true,
+    "back": true,
+    "focus": true
+  },
+  {
+    "name": "Rick and Morty",
+    "id": 60625,
+    "tv": true,
+    "started": true,
+    "samples": [
+      {
+        "text": "Tap to unmute\nRick and Morty\nS1 · E1\non Barbarian King 2.0\n0:07 / 22:07",
+        "time": 7.215541,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nRick and Morty\nS1 · E1\non Barbarian King 2.0\n0:12 / 22:07",
+        "time": 12.220541,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nRick and Morty\nS1 · E1\non Barbarian King 2.0\n0:17 / 22:07",
+        "time": 17.26725,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nRick and Morty\nS1 · E1\non Barbarian King 2.0\n0:22 / 22:07",
+        "time": 22.27225,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      }
+    ],
+    "continuous": true,
+    "unmuted": true,
+    "pause": true,
+    "resume": true,
+    "forward": true,
+    "backward": true,
+    "afterSeekAdvances": true,
+    "nextEpisode": true,
+    "nextState": {
+      "text": "Tap to unmute\nRick and Morty\nS1 · E2\non Barbarian King 2.0\n0:02 / 22:05",
+      "time": 2.877875,
+      "ready": 4,
+      "paused": false,
+      "muted": true,
+      "error": null
+    },
+    "back": true,
+    "focus": true
+  },
+  {
+    "name": "Breaking Bad",
+    "id": 1396,
+    "tv": true,
+    "started": true,
+    "samples": [
+      {
+        "text": "Tap to unmute\nBreaking Bad\nS1 · E1\non Barbarian King 2.0\n0:02 / 58:20",
+        "time": 2.2,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nBreaking Bad\nS1 · E1\non Barbarian King 2.0\n0:07 / 58:20",
+        "time": 7.2,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nBreaking Bad\nS1 · E1\non Barbarian King 2.0\n0:12 / 58:20",
+        "time": 12.24,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      },
+      {
+        "text": "Tap to unmute\nBreaking Bad\nS1 · E1\non Barbarian King 2.0\n0:17 / 58:20",
+        "time": 17.24,
+        "ready": 4,
+        "paused": false,
+        "muted": true,
+        "error": null
+      }
+    ],
+    "continuous": true,
+    "unmuted": true,
+    "pause": true,
+    "resume": true,
+    "forward": true,
+    "backward": true,
+    "afterSeekAdvances": true,
+    "nextEpisode": true,
+    "nextState": {
+      "text": "Tap to unmute\nBreaking Bad\nS1 · E2\non Barbarian King 2.0\n0:03 / 48:22",
+      "time": 3.72,
+      "ready": 4,
+      "paused": false,
+      "muted": true,
+      "error": null
+    },
+    "back": true,
+    "focus": true
+  }
+]

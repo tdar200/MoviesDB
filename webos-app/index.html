@@ -4,17 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Movies</title>
-  <style>html,body{margin:0;height:100%;background:#0d0d12;color:#e6e6ea;font-family:sans-serif}
+  <style>html,body{margin:0;height:100%;background:#141414;color:#e6e6ea;font-family:sans-serif}
   .msg{position:absolute;top:50%;left:0;right:0;text-align:center;transform:translateY(-50%);opacity:.7}</style>
 </head>
 <body>
   <div class="msg">Loading Movies…</div>
   <script>
-    // Thin webOS shell: load the live app from the stream-helper's own origin so
-    // the Torrent source is same-origin (no CORS / local-network prompts) and the
-    // app is always the latest version. ?source=111Movies sets the default player.
-    var URL_ = 'https://dell-g15.taild19ce1.ts.net/tv.html?helperkey=popcorn42&source=111Movies&tv=1';
-    location.replace(URL_);
+    // Thin webOS shell: load the live app from its production host (Vercel) so the
+    // UI is always available even when the stream helper is off. Streaming still
+    // goes to the helper via CONFIG.STREAM_HELPER_BASE + the helperkey below; the
+    // helper sends Access-Control-Allow-Origin: * so the cross-origin calls work.
+    var URL_ = 'https://moviesdb-tv.vercel.app/tv.html?helperkey=popcorn42&tv=1';
+    // Keep setup reachable when the host is offline, instead of a blank error page.
+    var statusEl = document.querySelector('.msg');
+    statusEl.innerHTML = '<h1>Movies</h1><p id="status">Connecting to your library…</p><button id="retry" style="font-size:24px;padding:16px 32px">Retry connection</button>';
+    var retry = document.getElementById('retry');
+    function connect() {
+      document.getElementById('status').textContent = 'Connecting to your library…';
+      var probe = new Image();
+      var finished = false;
+      var timer = setTimeout(failed, 12000);
+      probe.onload = function () {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        location.replace(URL_);
+      };
+      probe.onerror = failed;
+      function failed() {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        document.getElementById('status').textContent = 'Cannot reach your library. Check the TV connection and make sure the Movies server is running.';
+        retry.focus();
+      }
+      probe.src = URL_.split('/tv.html')[0] + '/webos-app/icon.png?check=' + Date.now();
+    }
+    retry.onclick = connect;
+    retry.focus();
+    connect();
   </script>
 </body>
 </html>

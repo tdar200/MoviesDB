@@ -12,3 +12,9 @@
 
 # generated TV bundle (rebuild: npm run build:tv); served by the helper
 /tv-bundle.js
+
+# TV package output
+/dist/
+
+# Vercel prebuilt static output (rebuild: npm run build:web)
+/public/

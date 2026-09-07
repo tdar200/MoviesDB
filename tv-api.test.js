@@ -465,3 +465,24 @@ test('pickEpisodeVideoFile ignores non-video files and falls back sensibly', () 
   assert.equal(pickEpisodeVideoFile([{ path: 'Movie.mkv', length: 1e9 }], 9, 9)?.path, 'Movie.mkv');
   assert.equal(pickEpisodeVideoFile([], 1, 1), null);
 });
+
+test('rejects a spin-off returned under the parent series lookup', async () => {
+ const { matchesSeriesTitle } = await import('./tv-api.mjs');
+ assert.equal(matchesSeriesTitle({filename:'Rick.and.Morty.The.Anime.S01E01.1080p.x264.mkv'},['Rick and Morty']),false);
+ assert.equal(matchesSeriesTitle({filename:'Rick.and.Morty.S01E01.1080p.x264.mkv'},['Rick and Morty']),true);
+ assert.equal(matchesSeriesTitle({filename:'The.Office.US.S01E01.1080p.x264.mkv'},['The Office']),true);
+ assert.equal(matchesSeriesTitle({filename:'[Group] Rick.&.Morty.S01E01.mkv'},['Rick and Morty']),true);
+ assert.equal(matchesSeriesTitle({filename:'S01E01.mkv'},['Rick and Morty']),true);
+});
+test('a single file explicitly naming a different episode is not a fallback', () => {
+ assert.equal(pickEpisodeFile([{name:'Show.S01E02.mp4',length:100}],1,1),null);
+});
+
+test('movie fallback uses the movie endpoint and keeps playable alternatives', async () => {
+ const {fetchMovieSources}=await import('./tv-api.mjs');
+ clearTvCache();let requested='';
+ const sources=await fetchMovieSources('tt1234567',{indexUrls:['https://index.test'],retries:0,fetchImpl:async url=>{requested=url;return {ok:true,json:async()=>({streams:[{infoHash:'a'.repeat(40),title:'Film.2024.1080p.x264.mkv\n👤 30',behaviorHints:{filename:'Film.2024.1080p.x264.mkv'}}]})};},year:2024});
+ assert.match(requested,/\/stream\/movie\/tt1234567\.json$/);
+ assert.equal(sources.length,1);
+ assert.equal(sources[0].remux,true);
+});

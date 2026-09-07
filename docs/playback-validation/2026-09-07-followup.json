@@ -1,0 +1,317 @@
+[
+  {
+    "name": "The Shawshank Redemption",
+    "id": 278,
+    "source": "YTS (Torrent)",
+    "start": true,
+    "samples": [
+      {
+        "time": 2.497,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:02 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 7.508,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:07 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 12.522,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:12 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 18.134,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:17 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 23.149,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:23 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 28.167,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:27 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 33.183,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:33 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 38.198,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:37 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 43.214,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:43 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 48.629,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:48 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 53.643,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:53 / 142:32",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 58.658,
+        "ready": 4,
+        "paused": false,
+        "title": "The Shawshank Redemption",
+        "source": "YTS (Torrent)",
+        "clock": "0:58 / 142:32",
+        "status": "",
+        "captionLength": 0
+      }
+    ],
+    "continuous": true,
+    "captions": false,
+    "pause": true,
+    "resume": true,
+    "forward": true,
+    "forwardState": {
+      "time": 3.176,
+      "ready": 4,
+      "paused": false,
+      "title": "The Shawshank Redemption",
+      "source": "YTS (Torrent)",
+      "clock": "2:09 / 142:32",
+      "status": "",
+      "captionLength": 0
+    },
+    "forwardAdvances": true,
+    "backward": true,
+    "backwardState": {
+      "time": 1.468,
+      "ready": 4,
+      "paused": false,
+      "title": "The Shawshank Redemption",
+      "source": "YTS (Torrent)",
+      "clock": "1:47 / 142:32",
+      "status": "",
+      "captionLength": 0
+    },
+    "backwardAdvances": true,
+    "back": true
+  },
+  {
+    "name": "Rick and Morty",
+    "id": 60625,
+    "source": "TV (Torrent)",
+    "quality": "720p",
+    "start": true,
+    "samples": [
+      {
+        "time": 3.741,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:03 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 9.16,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:09 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 14.176,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:14 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 19.191,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:19 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 24.207,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:24 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 29.223,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:29 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 34.235,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:34 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 39.45,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:39 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 44.467,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:44 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 49.484,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:49 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 54.7,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:54 / 22:01",
+        "status": "",
+        "captionLength": 0
+      },
+      {
+        "time": 59.713,
+        "ready": 4,
+        "paused": false,
+        "title": "Rick and Morty - S1E1",
+        "source": "TV (Torrent)",
+        "clock": "0:59 / 22:01",
+        "status": "",
+        "captionLength": 0
+      }
+    ],
+    "continuous": true,
+    "captions": false,
+    "pause": true,
+    "resume": true,
+    "forward": true,
+    "forwardState": {
+      "time": 1.826,
+      "ready": 4,
+      "paused": false,
+      "title": "Rick and Morty - S1E1",
+      "source": "TV (Torrent)",
+      "clock": "2:09 / 22:01",
+      "status": "",
+      "captionLength": 0
+    },
+    "forwardAdvances": true,
+    "backward": true,
+    "backwardState": {
+      "time": 3.943,
+      "ready": 4,
+      "paused": false,
+      "title": "Rick and Morty - S1E1",
+      "source": "TV (Torrent)",
+      "clock": "1:50 / 22:01",
+      "status": "",
+      "captionLength": 0
+    },
+    "backwardAdvances": true,
+    "back": true
+  }
+]

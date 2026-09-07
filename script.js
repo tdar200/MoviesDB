@@ -3,6 +3,10 @@ import { initYouTube, activateYouTube } from './youtube.js';
 import { getRecommendations, getRecommendationRows, clearRecommendationCache } from './recommendations.js';
 import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
+import { playbackHealth } from './playback-health.js';
+import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow } from './tv-ui.js';
+import { createTvDetails } from './tv-details.js';
+import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows } from './tv-rows.mjs';
 import { fetchTmdbJson } from './tmdb-queue.js';
 import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
 import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentFailure } from './yts-status.js';
@@ -97,12 +101,15 @@ const PREFERRED_SOURCE = (() => {
 // TMDB data; only the extra badges are omitted.
 const TV_MODE = (() => {
   try {
+    if (location.pathname.endsWith('/tv.html')) return true;
     const q = new URLSearchParams(location.search).get('tv');
     if (q !== null) { if (q === '1') localStorage.setItem('tvMode', '1'); else localStorage.removeItem('tvMode'); }
     if (localStorage.getItem('tvMode') === '1') return true;
   } catch { /* ignore */ }
   return /web0?os|smarttv|netcast/i.test(navigator.userAgent || '');
 })();
+
+let tvSourceChosenManually = new URLSearchParams(location.search).has('source');
 
 const YOUTUBE_EMBED_URL = 'https://www.youtube.com/embed';
 
@@ -581,7 +588,10 @@ function populateSourceSelector() {
 
   let firstUsableIndex = null;
 
-  EMBED_SOURCES.forEach((source, index) => {
+  const orderedSources = EMBED_SOURCES.map((source, index) => ({ source, index }));
+  // Torrent sources first on TV: they are the reliable default (no provider bot-checks).
+  if (TV_MODE) orderedSources.sort((a, b) => Number(!!b.source.torrent) - Number(!!a.source.torrent));
+  orderedSources.forEach(({ source, index }) => {
     // Skip completely blocked/dead providers.
     if (BLOCKED_PROVIDERS.includes(source.name)) return;
 
@@ -611,12 +621,18 @@ function populateSourceSelector() {
     if (firstUsableIndex === null && !isNewTab) firstUsableIndex = index;
   });
 
+  // Keep the current TV source when rebuilding options.
+  if (TV_MODE && currentPlayingMovie && sourceSelect.querySelector(`option[value="${currentSourceIndex}"]`)) {
+    sourceSelect.value = currentSourceIndex;
+    return;
+  }
+
   // Honour the preferred source when it exists in the list for this title and
   // loads inline (not a new-tab-only provider).
-  if (PREFERRED_SOURCE) {
+  if (PREFERRED_SOURCE && (!TV_MODE || tvSourceChosenManually)) {
     const pi = EMBED_SOURCES.findIndex((sc) => sc && sc.name === PREFERRED_SOURCE);
     const opt = pi >= 0 ? sourceSelect.querySelector(`option[value="${pi}"]`) : null;
-    if (pi >= 0 && opt && opt.dataset.newTab !== 'true') firstUsableIndex = pi;
+    if (pi >= 0 && ((opt && opt.dataset.newTab !== 'true') || (TV_MODE && !currentPlayingMovie && HELPER_AVAILABLE && EMBED_SOURCES[pi].tvOnly))) firstUsableIndex = pi;
   }
   if (firstUsableIndex !== null) currentSourceIndex = firstUsableIndex;
   sourceSelect.value = currentSourceIndex;
@@ -1202,6 +1218,10 @@ function loadIframeSrc(url) {
   showPlayerVideo(false);
   stopYtsStream();
   const source = EMBED_SOURCES[currentSourceIndex];
+  playerIframe.removeAttribute('srcdoc');
+  playerIframe.removeAttribute('data-provider-origin');
+  playerIframe.removeAttribute('sandbox');
+  if (TV_MODE && HELPER_AVAILABLE && source.name === '111Movies') playerIframe.dataset.providerOrigin = 'https://player.vidlove.cc';
   if (IFRAME_BLOCKED_PROVIDERS.includes(source.name)) {
     window.open(url, '_blank');
     playerIframe.srcdoc = `
@@ -1221,6 +1241,63 @@ function loadIframeSrc(url) {
 }
 
 // ---- YTS torrent source (native <video> via local helper) ----
+
+let playbackGeneration = 0;
+let hlsSessionId = null;
+let hlsController = null;
+let playbackHealthTimer = null;
+const TV_HLS = TV_MODE && !!playerVideo?.canPlayType('application/vnd.apple.mpegurl');
+
+function clearPlaybackHealth() {
+  clearInterval(playbackHealthTimer);
+  playbackHealthTimer = null;
+}
+function stopHlsSession() {
+  hlsController?.abort();
+  hlsController = null;
+  if (hlsSessionId) {
+    const id = hlsSessionId;
+    hlsSessionId = null;
+    fetch(helperUrl(`/hls/stop?id=${id}`), { keepalive: true }).catch(() => {});
+  }
+}
+function watchPlaybackHealth(recover) {
+  clearPlaybackHealth();
+  let health = null;
+  let started = false;
+  playbackHealthTimer = setInterval(() => {
+    if (!currentTorrentHash || !playerModalOpen) return;
+    if (playerVideo.currentTime > 0.25) started = true;
+    health = playbackHealth(health, { now: Date.now(), time: playerVideo.currentTime, paused: playerVideo.paused, started });
+    if (health.stalled) { clearPlaybackHealth(); recover(); }
+  }, 1000);
+}
+async function prepareTvHls(hash, season, episode, src, startSec, recover) {
+  stopHlsSession();
+  clearPlaybackHealth();
+  const controller = hlsController = new AbortController();
+  const generation = playbackGeneration;
+  const streamUrl = new URL(buildTvStreamUrl(hash, season, episode, src, startSec, 20000), location.href);
+  streamUrl.pathname = '/hls/start';
+  setYtsStatus(startSec > 0 ? 'Preparing your selected position…' : 'Preparing playback…');
+  try {
+    const response = await fetch(streamUrl.href, { signal: controller.signal });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Source unavailable');
+    if (controller.signal.aborted || generation !== playbackGeneration || currentTorrentHash !== hash) {
+      fetch(helperUrl(`/hls/stop?id=${result.id}`)).catch(() => {});
+      return;
+    }
+    hlsSessionId = result.id;
+    playerVideo.src = helperUrl(`/hls/${result.id}/index.m3u8`);
+    playerVideo.load();
+    playerVideo.play().catch(() => { clearPlaybackHealth(); setYtsStatus('Press OK on Play to start.'); });
+    watchPlaybackHealth(recover);
+  } catch (error) {
+    if (controller.signal.aborted || generation !== playbackGeneration) return;
+    recover();
+  }
+}
 
 let currentTorrentHash = null;   // infohash being streamed, for teardown
 let currentYtsTorrents = [];     // available qualities for the current movie
@@ -1274,6 +1351,14 @@ function beaconStop(hash) {
 
 // Full teardown: used when leaving the YTS source / closing the player.
 function stopYtsStream() {
+  playbackGeneration++;
+  clearPlaybackHealth();
+  stopHlsSession();
+  tvPlayCtx = null;
+  torrentSeekBase = 0;
+  torrentDuration = 0;
+  suppressSourceWalk = false;
+  if (playerVideo) { playerVideo.onplaying = null; playerVideo.onerror = null; playerVideo.onloadedmetadata = null; }
   clearYtsPoll();
   if (playerVideo) {
     try { playerVideo.pause(); } catch { /* ignore */ }
@@ -1310,6 +1395,7 @@ function setSubtitlePref(value) {
 // Remove every <track> from the player. Detaching the elements is not enough on
 // its own — a stale track left showing would caption the *next* movie.
 function clearSubtitleTracks() {
+  if (TV_MODE) document.dispatchEvent(new CustomEvent('tv-subtitle-track', { detail: { url: '' } }));
   subtitleSlots = [];
   if (playerVideo) {
     for (const t of [...playerVideo.querySelectorAll('track')]) t.remove();
@@ -1328,7 +1414,11 @@ function showSubtitleTrack(slot) {
   const tracks = playerVideo.textTracks || [];
   const want = slot === '' || slot == null ? -1 : Number(slot);
   for (let i = 0; i < tracks.length; i++) {
-    tracks[i].mode = i === want ? 'showing' : 'disabled';
+    tracks[i].mode = !TV_MODE && i === want ? 'showing' : 'disabled';
+  }
+  if (TV_MODE) {
+    const track = playerVideo.querySelectorAll('track')[want];
+    document.dispatchEvent(new CustomEvent('tv-subtitle-track', { detail: { url: track?.src || '' } }));
   }
   const chosen = want >= 0 ? subtitleSlots[want] : null;
   setSubtitlePref(chosen ? chosen.label : 'off');
@@ -1351,8 +1441,11 @@ function defaultSubtitleSlot(tracks) {
 }
 
 // Attach the subtitle tracks for one torrent and build the picker.
+let subtitleLoadRequest = 0;
 async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
   if (!playerVideo || !subtitleSelect) return;
+  const generation = playbackGeneration;
+  const request = ++subtitleLoadRequest;
   clearSubtitleTracks();
 
   let tracks = [];
@@ -1364,21 +1457,25 @@ async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
     const r = await fetch(helperUrl(`/subtitles?hash=${hash}${ep}&streaming=1`));
     if (!r.ok) return;                      // no subtitles is not an error worth shouting about
     const body = await r.json();
+    if (request !== subtitleLoadRequest) return;
     tracks = dedupeTrackLabels(body.tracks || []);
-    if (body.duration && currentTorrentHash === hash) setTorrentDuration(body.duration);
+    if (body.duration && currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) setTorrentDuration(body.duration);
+    else if (TV_HLS && attempt < 6) {
+      setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+    }
   } catch {
     // Transient fetch failure (webOS drops fetches under the initial request
     // storm). Retry rather than leaving the film without subtitles for good.
-    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
     return;
   }
 
-  if (currentTorrentHash !== hash) return;  // user switched quality/movie mid-fetch
+  if (currentTorrentHash !== hash || generation !== playbackGeneration || request !== subtitleLoadRequest) return;  // user switched quality/movie mid-fetch
   if (!tracks.length) {
     // Embedded subtitles live inside the .mkv and are unreadable until enough of
     // the header has downloaded. On a fresh stream that lags playback, so retry a
     // few times before giving up rather than showing no subtitles for the session.
-    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
     return;
   }
 
@@ -1390,7 +1487,7 @@ async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
     el.srclang = t.lang || 'en';
     // t.id is the stable track id (file "f3" or embedded "e1:2"); older helpers
     // sent t.index, kept as a fallback.
-    el.src = helperUrl(`/subtitle?hash=${hash}&id=${t.id || ('f' + t.index)}&streaming=1`);
+    el.src = helperUrl(`/subtitle?hash=${hash}&id=${t.id || ('f' + t.index)}&streaming=1${torrentSeekBase ? '&t=' + Math.floor(torrentSeekBase) : ''}`);
     playerVideo.appendChild(el);
   }
 
@@ -1409,7 +1506,7 @@ async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
   const slot = defaultSubtitleSlot(tracks);
   subtitleSelect.value = slot >= 0 ? String(slot) : '';
   // textTracks appear as the <track> elements are parsed; apply once they exist.
-  setTimeout(() => { if (currentTorrentHash === hash) showSubtitleTrack(slot >= 0 ? String(slot) : ''); }, 0);
+  setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) showSubtitleTrack(slot >= 0 ? String(slot) : ''); }, 0);
 }
 
 function populateQualitySelect(torrents, selectedHash) {
@@ -1476,7 +1573,7 @@ function startYtsStatusPolling(hash) {
 }
 
 // Stream a specific quality (by infohash) into the <video>.
-function playYtsQuality(hash) {
+function playYtsQuality(hash, startSec = 0) {
   if (!hash) return;
   // Tear down a previously-selected quality's torrent.
   if (currentTorrentHash && currentTorrentHash !== hash) beaconStop(currentTorrentHash);
@@ -1489,17 +1586,53 @@ function playYtsQuality(hash) {
   const title = currentYtsData?.title || currentPlayingMovie?.title || currentPlayingMovie?.name || '';
   setYtsStatus(`Connecting to peers… (${t?.quality || ''})\nFirst frames can take a moment.`);
 
+  if (TV_HLS) {
+    currentTvSources = currentYtsTorrents.filter(item => (item.video_codec || 'x264').toLowerCase() !== 'x265').map(item => ({
+      hash: item.hash.toLowerCase(), quality: item.quality, seeds: item.seeds,
+      filename: `${title}.${item.quality}.x264.mp4`, title, provider: 'YTS', remux: false,
+    }));
+    playTvSource(hash, undefined, undefined, [], startSec);
+    return;
+  }
   playerVideo.src = helperUrl(`/stream?hash=${hash}&title=${encodeURIComponent(title)}`);
   playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
-  playerVideo.onerror = () => setYtsStatus('Stream error — try a different quality or movie.', true);
+  const recover = () => {
+    clearPlaybackHealth();
+    const next = currentYtsTorrents.find(t => !ytsTriedHashes.has((t.hash || '').toLowerCase()) && (t.video_codec || 'x264').toLowerCase() !== 'x265');
+    if (next) return playYtsQuality(next.hash.toLowerCase(), playerVideo.currentTime || startSec);
+    clearYtsPoll();
+    setYtsStatus('No source could sustain playback. Choose another quality or retry this movie.', true);
+  };
+  playerVideo.onerror = recover;
+  playerVideo.onloadedmetadata = () => { if (startSec > 0 && Number.isFinite(playerVideo.duration)) playerVideo.currentTime = Math.min(startSec, playerVideo.duration); };
+  if (TV_MODE) watchPlaybackHealth(recover);
   playerVideo.load();
   playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
   startYtsStatusPolling(hash);
   loadSubtitlesFor(hash);
 }
 
+async function loadAlternateMovieStream(movie, imdbId, generation, startSec = 0) {
+  setYtsStatus('Finding another movie source…');
+  try {
+    const query = new URLSearchParams({ imdb: imdbId, title: movie.title || '', year: String(movie.release_date || '').slice(0, 4) });
+    const response = await fetch(helperUrl(`/movie-torrents?${query}`));
+    const body = await response.json();
+    if (generation !== playbackGeneration || currentPlayingMovie?.id !== movie.id) return;
+    if (!response.ok || !body.sources?.length) {
+      setYtsStatus('No playable source is available for this movie right now. Retry playback to check again.', true);
+      return;
+    }
+    currentTvSources = body.sources;
+    populateTvQualitySelect(currentTvSources);
+    playTvSource(currentTvSources[0].hash, undefined, undefined, [], startSec);
+  } catch {
+    if (generation === playbackGeneration) setYtsStatus('Could not reach movie sources. Retry playback to try again.', true);
+  }
+}
+
 // Load a movie from YTS via the local helper into the native <video>.
-async function loadYtsStream(movie) {
+async function loadYtsStream(movie, startSec = 0) {
   stopYtsStream();
   playerIframe.src = '';
   playerIframe.removeAttribute('srcdoc');
@@ -1507,6 +1640,7 @@ async function loadYtsStream(movie) {
   setYtsStatus('Finding a torrent…');
 
   const reqId = movie.id;
+  const generation = playbackGeneration;
   try {
     // TMDB id -> IMDb id (YTS is indexed by IMDb id). A failed REQUEST here is
     // transient (TMDB rate-limits hard) and says nothing about whether the title
@@ -1516,12 +1650,12 @@ async function loadYtsStream(movie) {
     if (extFailed) {
       extFailed = false;
       await new Promise((r) => setTimeout(r, 1200));
-      if (currentPlayingMovie?.id !== reqId) return; // user switched away mid-retry
+      if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return; // user switched away mid-retry
       ext = await fetchTmdbJson(ENDPOINTS.externalIds('movie', movie.id)).catch(() => { extFailed = true; return null; });
     }
     const imdbId = ext && ext.imdb_id;
     if (!imdbId) { setYtsStatus(describeImdbLookupFailure({ requestFailed: extFailed }), true); return; }
-    if (currentPlayingMovie?.id !== reqId) return; // user switched away
+    if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return; // user switched away
 
     // The lookup fails in two completely different ways and they need different
     // messages: the helper not being there at all (fetch throws) vs the helper
@@ -1540,17 +1674,22 @@ async function loadYtsStream(movie) {
     if (attempt.status >= 500) {
       setYtsStatus("Couldn't reach YTS's API — retrying…");
       await new Promise((r) => setTimeout(r, 1500));
-      if (currentPlayingMovie?.id !== reqId) return; // user switched away mid-retry
+      if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return; // user switched away mid-retry
       attempt = await lookupYts();
     }
     const data = attempt.data;
+    if (generation !== playbackGeneration) return;
+    if (!data && TV_MODE) return loadAlternateMovieStream(movie, imdbId, generation, startSec);
     if (!data) {
       setYtsStatus(describeYtsLookupFailure({ ...attempt, remoteBase: STREAM_HELPER_BASE }), true);
       return;
     }
     const torrents = (data.torrents || []).filter((t) => t.hash);
-    if (!torrents.length) { setYtsStatus('No YTS torrent found for this movie.', true); return; }
-    if (currentPlayingMovie?.id !== reqId) return;
+    if (!torrents.length) {
+      if (TV_MODE) return loadAlternateMovieStream(movie, imdbId, generation, startSec);
+      setYtsStatus('No YTS torrent found for this movie.', true); return;
+    }
+    if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
 
     currentYtsData = data;
     currentYtsTorrents = torrents;
@@ -1565,7 +1704,7 @@ async function loadYtsStream(movie) {
     const base = playablePool.length ? playablePool : torrents;
     const seeded = base.filter((t) => (Number(t.seeds) || 0) > 0);
     const pool = seeded.length ? seeded : base;
-    const defRank = (q) => (q === '1080p' ? 0 : q === '720p' ? 1 : q === '2160p' ? 2 : 3);
+    const defRank = (q) => (q === (TV_MODE ? DEFAULT_YTS_QUALITY : '1080p') ? 0 : q === (TV_MODE ? '1080p' : '720p') ? 1 : q === '2160p' ? 2 : 3);
     const def = [...pool].sort((a, b) => {
       const r = defRank(a.quality) - defRank(b.quality);
       return r !== 0 ? r : (Number(b.seeds) || 0) - (Number(a.seeds) || 0);
@@ -1573,8 +1712,9 @@ async function loadYtsStream(movie) {
     const defHash = (def.hash || '').toLowerCase();
 
     populateQualitySelect(torrents, defHash);
-    playYtsQuality(defHash);
+    playYtsQuality(defHash, startSec);
   } catch (err) {
+    if (generation !== playbackGeneration) return;
     console.error('YTS stream error:', err);
     setYtsStatus('Failed to start the torrent stream.', true);
   }
@@ -1587,7 +1727,7 @@ async function loadYtsStream(movie) {
 
 let currentTvSources = [];   // ranked streamable sources for the episode on screen
 
-async function loadTvStream(movie, season, episode) {
+async function loadTvStream(movie, season, episode, startSec = 0) {
   stopYtsStream();
   playerIframe.src = '';
   playerIframe.removeAttribute('srcdoc');
@@ -1595,6 +1735,7 @@ async function loadTvStream(movie, season, episode) {
   setYtsStatus('Finding a source…');
 
   const reqId = movie.id;
+  const generation = playbackGeneration;
   try {
     // TV torrent indexes use IMDb ids. Retry the TMDB external-id lookup once: a
     // failed request says nothing about whether the show has an id.
@@ -1603,16 +1744,18 @@ async function loadTvStream(movie, season, episode) {
     if (extFailed) {
       extFailed = false;
       await new Promise((r) => setTimeout(r, 1200));
-      if (currentPlayingMovie?.id !== reqId) return;
+      if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
       ext = await fetchTmdbJson(ENDPOINTS.externalIds('tv', movie.id)).catch(() => { extFailed = true; return null; });
     }
     const imdbId = ext && ext.imdb_id;
     if (!imdbId) { setYtsStatus(describeImdbLookupFailure({ requestFailed: extFailed }), true); return; }
-    if (currentPlayingMovie?.id !== reqId) return;
+    if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
 
     const series = currentTvData || movie;
     const params = new URLSearchParams({
       imdb: imdbId,
+      title: movie.name || movie.title || '',
+      originalTitle: movie.original_name || '',
       season: String(season),
       episode: String(episode),
     });
@@ -1627,6 +1770,7 @@ async function loadTvStream(movie, season, episode) {
       attempt = r.ok ? { data: await r.json() } : { status: r.status };
     } catch { attempt = { networkError: true }; }
 
+    if (generation !== playbackGeneration) return;
     if (!attempt.data) {
       setYtsStatus(
         describeTvTorrentFailure({
@@ -1638,17 +1782,20 @@ async function loadTvStream(movie, season, episode) {
       );
       return;
     }
-    if (currentPlayingMovie?.id !== reqId) return;
+    if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
 
     currentTvSources = attempt.data.sources || [];
+    // Match the TV movie preference: start lighter streams before higher resolutions.
+    if (TV_MODE) currentTvSources = [...currentTvSources].sort((a, b) => Number(b.quality === DEFAULT_YTS_QUALITY) - Number(a.quality === DEFAULT_YTS_QUALITY));
     if (!currentTvSources.length) {
       setYtsStatus(`No active MP4 or H.264 MKV torrent for S${season}E${episode}. Try another source or episode.`, true);
       return;
     }
 
     populateTvQualitySelect(currentTvSources);
-    playTvSource(currentTvSources[0].hash, season, episode);
+    playTvSource(currentTvSources[0].hash, season, episode, [], startSec);
   } catch (err) {
+    if (generation !== playbackGeneration) return;
     console.error('TV torrent error:', err);
     setYtsStatus('Failed to start the torrent stream.', true);
   }
@@ -1734,6 +1881,10 @@ function reloadSubtitlesAtOffset(offset) {
 function torrentSeekTo(t) {
   if (!tvPlayCtx) return;
   torrentSeekBase = seekTarget(0, t, torrentDuration);   // clamp into the episode
+  if (TV_HLS) {
+    playTvSource(tvPlayCtx.hash, tvPlayCtx.season, tvPlayCtx.episode, [], torrentSeekBase);
+    return;
+  }
   suppressSourceWalk = true;
   setYtsStatus('Seeking…');
   playerVideo.src = buildTvStreamUrl(tvPlayCtx.hash, tvPlayCtx.season, tvPlayCtx.episode, tvPlayCtx.src, torrentSeekBase, 20000);
@@ -1746,8 +1897,15 @@ function torrentSeekBy(delta) {
   torrentSeekTo(seekTarget(absolutePosition(torrentSeekBase, playerVideo.currentTime), delta, torrentDuration));
 }
 
-function playTvSource(hash, season, episode, tried = []) {
+function playTvSource(hash, season, episode, tried = [], startSec = 0) {
   if (!hash) return;
+  stopHlsSession();
+  clearPlaybackHealth();
+  playerVideo.onerror = null;
+  playerVideo.onloadedmetadata = null;
+  playerVideo.pause();
+  playerVideo.removeAttribute('src');
+  playerVideo.load();
   if (currentTorrentHash && currentTorrentHash !== hash) beaconStop(currentTorrentHash);
   clearYtsPoll();
   currentTorrentHash = hash;
@@ -1761,26 +1919,33 @@ function playTvSource(hash, season, episode, tried = []) {
   // returns it. The seek bar only helps for remuxed MKV; native <video> controls
   // already seek a direct MP4.
   tvPlayCtx = { hash, season, episode, src };
-  torrentSeekBase = 0;
+  torrentSeekBase = startSec;
   torrentDuration = 0;
-  showTorrentSeek(Boolean(src?.remux));
+  showTorrentSeek(TV_HLS || Boolean(src?.remux));
   renderTorrentTime();
 
   // Ask the helper to give up on a peerless swarm quickly: the index's seed
   // counts include private trackers we cannot reach, so a dead top source is
   // routine and the useful move is the next source, not a longer wait.
-  const ready = attempted.length >= TV_SOURCE_ATTEMPT_CAP ? 60000 : 20000;
-  playerVideo.src = buildTvStreamUrl(hash, season, episode, src, 0, ready);
-  playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
-  playerVideo.onerror = () => {
-    if (suppressSourceWalk) { suppressSourceWalk = false; return; }   // a seek reload, not a dead source
+  const recover = () => {
+    const resumeAt = torrentSeekBase + (Number(playerVideo.currentTime) || 0);
+    stopHlsSession();
+    clearPlaybackHealth();
     const next = pickNextSource(currentTvSources, attempted);
-    if (next) return playTvSource(next.hash, season, episode, attempted);
-    setYtsStatus(
-      `No reachable source for S${season}E${episode} after ${attempted.length} tries. The index lists seeds it cannot actually connect to — try an embed source for this one.`,
-      true
-    );
+    if (next) return playTvSource(next.hash, season, episode, attempted, resumeAt);
+    clearYtsPoll();
+    setYtsStatus('No source could sustain playback. Choose another quality or try this episode again.', true);
   };
+  playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
+  playerVideo.onerror = recover;
+  if (TV_HLS) {
+    prepareTvHls(hash, season, episode, src, startSec, recover);
+    loadSubtitlesFor(hash, season, episode);
+    return;
+  }
+  const ready = attempted.length >= TV_SOURCE_ATTEMPT_CAP ? 60000 : 20000;
+  playerVideo.src = buildTvStreamUrl(hash, season, episode, src, startSec, ready);
+  watchPlaybackHealth(recover);
   playerVideo.load();
   playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
   startYtsStatusPolling(hash);
@@ -1995,7 +2160,7 @@ function handleEpisodeChange(episodeNum) {
   playEpisode(currentSeason, parseInt(episodeNum, 10));
 }
 
-async function openPlayer(movie) {
+async function openPlayer(movie, target = null) {
   // Begin engagement capture for this title. Watched status is NOT set on open — it is
   // committed later by flushDwell() once enough active watch-tab time has accrued.
   flushDwell(); // flush any prior session that didn't close cleanly (may mark it watched)
@@ -2053,9 +2218,22 @@ async function openPlayer(movie) {
 
   // If the previously selected source isn't valid for this title (e.g. a
   // movies-only torrent source while opening a TV show), fall back to the first.
+  if (TV_MODE && !tvSourceChosenManually) {
+    // Default to the native torrent source: the embed providers (111Movies et al.)
+    // now gate the webOS embed behind an anti-bot CAPTCHA that cannot be automated,
+    // whereas torrents stream through the helper with no such challenge. Fall back
+    // to the 111Movies embed only when no helper is reachable (torrents need it).
+    const torrentDefault = HELPER_AVAILABLE
+      ? EMBED_SOURCES.findIndex(s => s.torrent && (type === 'tv' ? s.tvOnly : s.movieOnly))
+      : -1;
+    currentSourceIndex = torrentDefault >= 0
+      ? torrentDefault
+      : EMBED_SOURCES.findIndex(source => source.name === '111Movies');
+  }
   const sel = EMBED_SOURCES[currentSourceIndex];
   if (sel && sel.torrent && ((sel.movieOnly && type === 'tv') || (sel.tvOnly && type !== 'tv'))) {
-    currentSourceIndex = 0;
+    currentSourceIndex = TV_MODE && HELPER_AVAILABLE
+      ? EMBED_SOURCES.findIndex(source => source.torrent && (type === 'tv' ? source.tvOnly : source.movieOnly)) : 0;
   }
 
   // Rebuild the source list for this title (shows/hides the YTS torrent source).
@@ -2090,6 +2268,12 @@ async function openPlayer(movie) {
         currentEpisode = 1;
       }
 
+      // An explicit target from the details screen's episode list wins over both.
+      if (target && Number.isFinite(target.season) && Number.isFinite(target.episode)) {
+        currentSeason = target.season;
+        currentEpisode = target.episode;
+      }
+
       seasonSelect.value = currentSeason;
 
       // Fetch episodes for the season
@@ -2122,6 +2306,8 @@ async function openPlayer(movie) {
             </body>
           </html>
         `;
+      } else if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) {
+        loadTvStream(movie, currentSeason, currentEpisode);
       } else {
         const embedUrl = getEmbedUrl(type, movie.id, currentSeason, currentEpisode);
         loadIframeSrc(embedUrl);
@@ -2131,8 +2317,11 @@ async function openPlayer(movie) {
       updateNavButtons();
     } else {
       // Fallback if no season data
-      const embedUrl = getEmbedUrl(type, movie.id);
-      loadIframeSrc(embedUrl);
+      if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) loadTvStream(movie, 1, 1);
+      else {
+        const embedUrl = getEmbedUrl(type, movie.id);
+        loadIframeSrc(embedUrl);
+      }
       playerTitle.textContent = title;
       episodeControls.style.display = 'none';
     }
@@ -2618,7 +2807,11 @@ async function processAndDisplayMovies(movies, isSearch = false) {
     return;
   }
 
+  // TV home: curated, distinct rows instead of one trending page sliced up.
+  if (tvHomeIsCurrent()) { renderTvHome(filteredMovies); return; }
+
   loadMoreMovies();
+  if (TV_MODE) return;
 
   // Enrich the provisional top 100 (per the active sort), not the first 100 in fetch
   // order: fetch order is trending/popularity, so rank contenders outside it would
@@ -3189,8 +3382,81 @@ function createDownvoteButton(movie) {
   return btn;
 }
 
+// ---- TV details screen + Netflix-style home (distinct rows) ----
+// Created at module eval so the overlay is in the DOM before the remote installs.
+// Top-billed cast names for the details screen. fetchCredits returns only the
+// director string, so read the raw credits endpoint here for the cast list.
+async function fetchCast(type, id) {
+  try {
+    const data = await fetchTmdbJson(ENDPOINTS.credits(type, id));
+    return Array.isArray(data && data.cast) ? data.cast : [];
+  } catch (e) { return []; }
+}
+const tvDetails = TV_MODE ? createTvDetails({
+  fetchCast, fetchTvDetails, fetchSeasonDetails,
+  onPlay: (movie, target) => { tvDetails.close(); openPlayer(movie, target); },
+  isStarred, toggleStar, isDownvoted, toggleDownvote, onSignalChanged,
+}) : null;
+
+// A card opens details first; the hero's Play button still plays immediately.
+function openDetails(movie) {
+  if (tvDetails) tvDetails.open(movie);
+  else openPlayer(movie);
+}
+if (TV_MODE) document.addEventListener('tv-close-details', () => { if (tvDetails) tvDetails.close(); });
+
+// A non-default filter or a search means the user wants specific results, not the
+// curated home. Everything else on the Movies tab is the home.
+function tvFiltersActive() {
+  const f = currentFilters;
+  return f.mediaType !== 'all' || Number(f.genre) !== 0 || Number(f.minRating) !== 0
+    || Number(f.minVotes) !== 0 || f.yearFilter !== 'all' || f.language !== ''
+    || (f.excludeGenres && f.excludeGenres.length) || Number(f.provider) !== 0
+    || Number(f.actorId) !== 0 || Number(f.theme) !== 0 || (f.sortBy && f.sortBy !== 'weighted');
+}
+function tvHomeIsCurrent() {
+  return TV_MODE && browseGridOwnsMain() && !isSearchMode && !tvFiltersActive();
+}
+
+// Render the TV home from genuinely distinct TMDB feeds, deduped across rows, with
+// Continue Watching + My List first. Rows paint as each feed arrives so the screen
+// fills top-down rather than waiting on eight requests. `seed` reuses the trending
+// page loadTrending already fetched, so that request is not repeated.
+let tvHomeToken = 0;
+async function renderTvHome(seed) {
+  const token = ++tvHomeToken;
+  const onSelect = openDetails;
+  const onPlay = (movie) => openPlayer(movie);
+  const personal = signalRows({ continueWatching: getWatchedHistory(), myList: getStarredList() });
+  const featured = (seed && seed.length && seed[0]) || (personal[0] && personal[0].items[0]) || null;
+
+  renderTvRows(main, personal, { onSelect, onPlay, featured });
+
+  const seen = new Set();
+  dedupeAcrossRows(personal).forEach(r => r.items.forEach(it => seen.add(titleKey(it))));
+
+  const defs = catalogRowDefs(CONFIG.API_KEY, CONFIG.BASE_URL);
+  for (const def of defs) {
+    if (token !== tvHomeToken || !tvHomeIsCurrent()) return; // user navigated away
+    let items = [];
+    if (def.key === 'trending' && seed && seed.length) {
+      items = seed.slice(0, 40);
+    } else {
+      try {
+        const data = await fetchTmdbJson(def.url);
+        items = (data && data.results) || [];
+      } catch (e) { items = []; }
+    }
+    // Movie/tv-only endpoints omit media_type; stamp it so playback picks the right path.
+    if (def.mediaType) items = items.map(it => (it.media_type ? it : { ...it, media_type: def.mediaType }));
+    if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
+    appendTvRow(main, { key: def.key, title: def.title, items: dedupeItems(items, seen) }, onSelect);
+  }
+}
+
 // Create movie card element
 function createMovieCard(movie, index) {
+  if (TV_MODE) return createTvCard(movie, openDetails);
   const {
     title,
     name,
@@ -3389,6 +3655,43 @@ function getClassByRate(vote) {
 
 // Load more movies (for infinite scroll)
 async function loadMoreMovies() {
+  if (TV_MODE) {
+    // The curated home renders its own distinct rows; infinite-scroll must not
+    // clobber it with a flat results rail. It only paginates search/filtered views.
+    if (tvHomeIsCurrent()) return;
+    if (displayedCount >= filteredMovies.length) return;
+    renderTvBrowse(main, filteredMovies, { onSelect: openDetails, onPlay: openPlayer });
+    displayedCount = filteredMovies.length;
+    document.getElementById('load-more-indicator')?.remove();
+    if (hasMorePages && !isSearchMode) {
+      const more = document.createElement('button');
+      more.className = 'tv-more';
+      more.textContent = 'Load more titles';
+      more.onclick = async () => {
+        if (isLoadingMore) return;
+        isLoadingMore = true;
+        more.disabled = true;
+        more.textContent = 'Loading…';
+        const token = gridLoadToken;
+        try {
+          await fetchMoreTrending(3);
+          if (token !== gridLoadToken || !browseGridOwnsMain()) return;
+          const filtered = applyFilters(allMovies);
+          filteredMovies = sortMovies(filtered, calculateStats(filtered));
+          displayedCount = 0;
+          await loadMoreMovies();
+          (main.querySelector('.tv-more') || main.querySelector('.tv-play'))?.focus();
+        } catch {
+          more.textContent = 'Could not load titles — try again';
+        } finally {
+          isLoadingMore = false;
+          more.disabled = false;
+        }
+      };
+      main.appendChild(more);
+    }
+    return;
+  }
   if (isLoadingMore) return;
 
   // If we've shown all filtered movies, try to fetch more from API
@@ -3532,6 +3835,9 @@ async function loadTrending() {
     if (loadToken === gridLoadToken && browseGridOwnsMain()) {
       await processAndDisplayMovies(allMovies);
     }
+
+    // TV loads further pages on demand; thousands of background cards exhaust its webview.
+    if (TV_MODE) return;
 
     (async () => {
       if (pagesToFetch > firstWave) await fetchMoreTrending(pagesToFetch - firstWave, loadToken);
@@ -3821,8 +4127,24 @@ tabTrailer.addEventListener('click', () => {
   }
 });
 
+// Provider failure must not strand the TV in an unresponsive cross-origin player.
+document.addEventListener('tv-provider-fallback', event => {
+  if (!TV_MODE || !HELPER_AVAILABLE || !currentPlayingMovie || EMBED_SOURCES[currentSourceIndex]?.name !== '111Movies') return;
+  const tv = currentPlayingMovie.media_type === 'tv';
+  const index = EMBED_SOURCES.findIndex(source => source.torrent && !!source.tvOnly === tv);
+  if (index < 0) return;
+  const position = Number(event.detail?.position);
+  const startSec = Number.isFinite(position) ? Math.max(0, Math.min(position, 86400)) : 0;
+  currentSourceIndex = index;
+  sourceSelect.value = index;
+  playerIframe.removeAttribute('data-provider-origin');
+  if (tv) loadTvStream(currentPlayingMovie, currentSeason, currentEpisode, startSec);
+  else loadYtsStream(currentPlayingMovie, startSec);
+});
+
 // Source selector change
 sourceSelect.addEventListener('change', (e) => {
+  tvSourceChosenManually = true;
   changeSource(parseInt(e.target.value, 10));
 });
 
@@ -3831,7 +4153,7 @@ if (qualitySelect) {
   qualitySelect.addEventListener('change', (e) => {
     const hash = (e.target.value || '').toLowerCase();
     // For TV the dropdown lists whole torrents, not qualities of one movie.
-    if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) playTvSource(hash, currentSeason, currentEpisode);
+    if (tvPlayCtx && currentTvSources.some(source => source.hash === hash)) playTvSource(hash, tvPlayCtx.season, tvPlayCtx.episode);
     else playYtsQuality(hash);
   });
 }
@@ -3898,6 +4220,11 @@ document.addEventListener('keydown', (e) => {
 // Torrent seek-bar wiring: keep the readout live and turn clicks/buttons into
 // restart-at-timestamp seeks.
 if (playerVideo) {
+  playerVideo.addEventListener('waiting', () => {
+    if (!TV_MODE || !currentTorrentHash || !playerModalOpen || playerVideo.paused) return;
+    setYtsStatus('Buffering… If this continues, choose another quality or source.');
+    startYtsStatusPolling(currentTorrentHash);
+  });
   playerVideo.addEventListener('timeupdate', renderTorrentTime);
   playerVideo.addEventListener('progress', renderTorrentTime);
 }
@@ -4222,3 +4549,29 @@ tabRecommended?.addEventListener('click', switchToRecommended);
 // tab so the result is visible. (Must run after the tab elements above are bound —
 // switchToFavorites uses them.)
 if (importedTitleCount !== null) switchToFavorites();
+
+document.addEventListener('tv-seek', event => {
+  const delta = Number(event.detail) || 0;
+  if (tvPlayCtx && (TV_HLS || tvPlayCtx.src?.remux)) torrentSeekBy(delta);
+  else if (Number.isFinite(playerVideo.duration)) playerVideo.currentTime = Math.max(0, Math.min(playerVideo.duration, playerVideo.currentTime + delta));
+});
+document.addEventListener('tv-seek-to', event => {
+  const fraction = Math.max(0, Math.min(1, Number(event.detail) || 0));
+  if (tvPlayCtx && (TV_HLS || tvPlayCtx.src?.remux)) torrentSeekTo(fraction * torrentDuration);
+  else if (Number.isFinite(playerVideo.duration)) playerVideo.currentTime = fraction * playerVideo.duration;
+});
+function publishTvPlaybackTime() {
+  if (!TV_MODE || !playerVideo) return;
+  document.dispatchEvent(new CustomEvent('tv-playback-time', { detail: {
+    position: torrentSeekBase + (playerVideo.currentTime || 0),
+    duration: torrentDuration || (Number.isFinite(playerVideo.duration) ? playerVideo.duration : 0),
+  } }));
+}
+playerVideo?.addEventListener('timeupdate', publishTvPlaybackTime);
+playerVideo?.addEventListener('durationchange', publishTvPlaybackTime);
+
+document.addEventListener('tv-retry-playback', () => {
+  if (!currentPlayingMovie) return;
+  if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) loadTvStream(currentPlayingMovie, currentSeason, currentEpisode);
+  else if (EMBED_SOURCES[currentSourceIndex]?.torrent) loadYtsStream(currentPlayingMovie);
+});

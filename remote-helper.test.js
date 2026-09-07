@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { CONFIG } from './config.js';
 
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
-const server = readFileSync(new URL('./stream-server.mjs', import.meta.url), 'utf8');
+const server = readFileSync(new URL('./stream-server.mjs', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('./catalog-handlers.mjs', import.meta.url), 'utf8');
 
 test('STREAM_HELPER_BASE is empty (same origin) or a bare https origin', () => {
   const base = CONFIG.STREAM_HELPER_BASE;

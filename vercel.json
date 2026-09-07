@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "echo prebuilt-static",
+  "installCommand": "echo skip-install",
+  "outputDirectory": "public",
+  "github": { "silent": true }
+}

@@ -1,0 +1,13 @@
+node_modules
+dist
+subs
+docs
+.git
+*.test.js
+*.mjs
+!stream-server.mjs
+provider-results*.json
+com.moviesdb.tv_*.ipk
+videasy-test.png
+vidfast-*.png
+iframe-test.png

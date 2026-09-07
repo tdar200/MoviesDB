@@ -15,14 +15,19 @@
 // `npm start`.
 
 import http from 'node:http';
+import { startTvProviderCompat } from './tv-provider-compat.mjs';
+import { CONFIG } from './config.js';
+import { parseByteRange } from './http-range.js';
+import { HlsSessions } from './hls-session.mjs';
 import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
+import { createYtsHandler } from './catalog-handlers.mjs';
 import { fetchYtsMovie } from './yts-api.mjs';
 import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle, shiftVtt } from './subtitles.js';
-import { fetchTvSources, isRemuxableTvFile, pickEpisodeFile, pickEpisodeVideoFile } from './tv-api.mjs';
+import { fetchMovieSources, fetchTvSources, isRemuxableTvFile, pickEpisodeFile, pickEpisodeVideoFile } from './tv-api.mjs';
 import { pieceWindow } from './stream-window.mjs';
 import { helperRequestAllowed } from './helper-auth.js';
 import { clampReadyTimeout } from './tv-fallback.js';
@@ -37,6 +42,7 @@ const PORT = process.env.PORT || 3000;
 const HELPER_KEY = process.env.HELPER_KEY || '';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const READY_TIMEOUT_MS = 60_000;
+const handleYts = createYtsHandler(fetchYtsMovie);
 
 // Seeding is unlimited by default, and it competes for the SAME uplink this
 // helper uses to serve video to other devices. On this line that uplink is
@@ -51,6 +57,13 @@ const client = new WebTorrent({
   maxConns: 150,
   uploadLimit: Number.isFinite(UPLOAD_LIMIT) ? UPLOAD_LIMIT : 262144,
 });
+const hlsSessions = new HlsSessions();
+// The app can be served from a different origin than the stream helper (e.g. the UI
+// hosted on Vercel while streams still come from this machine). The provider bridge
+// must match the app's actual origin, so it is configurable and defaults to the
+// helper's own origin for the classic same-origin setup.
+const TV_APP_ORIGIN = process.env.TV_APP_ORIGIN || CONFIG.STREAM_HELPER_BASE;
+const stopTvProviderCompat = process.env.TV_PROVIDER_BRIDGE === '0' ? () => {} : startTvProviderCompat({ device: process.env.TV_DEVICE || 'lgtv', appOrigin: TV_APP_ORIGIN });
 const torrents = new Map(); // infoHash(lowercase) -> torrent
 
 // Public BitTorrent trackers, folded into the magnet so the swarm is
@@ -171,9 +184,11 @@ function getTorrent(hash, name, readyTimeoutMs = READY_TIMEOUT_MS) {
 }
 
 function destroyTorrent(hash) {
+  void hlsSessions.stopHash(hash);
   const t = torrents.get(hash);
   if (!t) return;
   torrents.delete(hash);
+  for (const key of embeddedVttCache.keys()) if (key.startsWith(hash + ':')) embeddedVttCache.delete(key);
   try {
     t.destroy({ destroyStore: true });
   } catch {
@@ -217,9 +232,9 @@ function probeVideo(diskPath) {
 // ffmpeg pass runs once. Works on a partially-downloaded file: it yields cues for
 // whatever contiguous prefix is on disk, which grows as the episode downloads.
 const embeddedVttCache = new Map(); // `${hash}:${streamIndex}` -> vtt string
-function extractEmbeddedVtt(diskPath, streamIndex, cacheKey) {
+function extractEmbeddedVtt(diskPath, streamIndex, cacheKey, downloaded = 0) {
   const hit = embeddedVttCache.get(cacheKey);
-  if (hit) return Promise.resolve(hit);
+  if (hit && hit.downloaded === downloaded) return Promise.resolve(hit.vtt);
   return new Promise((resolve, reject) => {
     const p = spawn('ffmpeg', ['-v', 'error', '-i', diskPath, '-map', `0:${streamIndex}`, '-f', 'webvtt', 'pipe:1']);
     let out = '';
@@ -230,39 +245,10 @@ function extractEmbeddedVtt(diskPath, streamIndex, cacheKey) {
     p.on('close', () => {
       // ffmpeg logs "File ended prematurely" on a partial file but still emits
       // valid VTT for the downloaded prefix, so trust the output, not the code.
-      if (out.includes('-->')) { embeddedVttCache.set(cacheKey, out); resolve(out); }
+      if (out.includes('-->')) { embeddedVttCache.set(cacheKey, { vtt: out, downloaded }); resolve(out); }
       else reject(new Error(err || 'no cues extracted'));
     });
   });
-}
-
-async function handleYts(res, url) {
-  const imdb = url.searchParams.get('imdb');
-  if (!imdb) {
-    res.writeHead(400, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'missing imdb param' }));
-  }
-  try {
-    const movie = await fetchYtsMovie(imdb);
-    res.writeHead(200, {
-      'content-type': 'application/json',
-      'access-control-allow-origin': '*',
-      'cache-control': 'public, max-age=3600',
-    });
-    res.end(
-      JSON.stringify({
-        title: movie?.title || null,
-        year: movie?.year || null,
-        torrents: movie?.torrents || [],
-      })
-    );
-  } catch (err) {
-    // Every YTS host was unreachable. Say so precisely: the helper is plainly
-    // running (it is answering this request), so the app must not blame itself.
-    console.error(`[yts] lookup failed for ${imdb}: ${(err.hostErrors || [String(err)]).join(' | ')}`);
-    res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-    res.end(JSON.stringify({ error: 'yts_unreachable', detail: err.hostErrors || [String(err)] }));
-  }
 }
 
 // GET /tv-torrents?imdb=..&season=..&episode=..  -> streamable sources for one episode.
@@ -282,6 +268,8 @@ async function handleTvTorrents(res, url) {
     const sources = await fetchTvSources(imdb, season, episode, {
       year: Number.isFinite(year) ? year : undefined,
       country,
+      title: url.searchParams.get('title'),
+      originalTitle: url.searchParams.get('originalTitle'),
     });
     const provider = sources[0]?.provider ? ` via ${sources[0].provider}` : '';
     console.log(`[tv] ${imdb} S${season}E${episode} -> ${sources.length} streamable source(s)${provider}`);
@@ -392,7 +380,7 @@ async function handleSubtitleFile(res, url) {
     res.writeHead(200, {
       'content-type': 'text/vtt; charset=utf-8',
       'access-control-allow-origin': '*',
-      'cache-control': 'public, max-age=3600',
+      'cache-control': track.kind === 'embedded' ? 'no-store' : 'public, max-age=3600',
     });
     res.end(subShift ? shiftVtt(vtt, subShift) : vtt);
   };
@@ -403,7 +391,7 @@ async function handleSubtitleFile(res, url) {
     if (!file) { res.writeHead(404); return res.end('no video file at that index'); }
     try { file.select(); } catch { /* keep it downloading so more cues become available */ }
     try {
-      const vtt = await extractEmbeddedVtt(diskPathOf(torrent, file), track.streamIndex, `${hash}:${track.streamIndex}`);
+      const vtt = await extractEmbeddedVtt(diskPathOf(torrent, file), track.streamIndex, `${hash}:${track.fileIndex}:${track.streamIndex}`, file.downloaded);
       console.log(`[subs] embedded ${file.name} stream ${track.streamIndex} -> ${vtt.length} bytes of VTT`);
       return sendVtt(vtt);
     } catch (err) {
@@ -570,7 +558,7 @@ async function handleStream(req, res, url) {
   }
   console.log(`[stream] ${file.name} (${(file.length / 1e9).toFixed(2)} GB) peers=${torrent.numPeers} range=${req.headers.range || 'none'}`);
 
-  if (isRemuxableTvFile(file.path || file.name, releaseContext)) {
+  if (isRemuxableTvFile(file.path || file.name, releaseContext) && url.searchParams.get('raw') !== '1') {
     // ?t=<seconds> restarts the remux at a timestamp (the player's seek). A
     // backward seek reads bytes already on disk; a forward seek needs them
     // downloaded, so keep prioritising this file either way.
@@ -586,15 +574,12 @@ async function handleStream(req, res, url) {
   let start = 0;
   let end = total - 1;
   if (range) {
-    const m = /bytes=(\d*)-(\d*)/.exec(range);
-    if (m) {
-      if (m[1]) start = parseInt(m[1], 10);
-      if (m[2]) end = parseInt(m[2], 10);
-    }
-    if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= total) {
+    const parsed = parseByteRange(range, total);
+    if (!parsed) {
       res.writeHead(416, { 'content-range': `bytes */${total}`, 'access-control-allow-origin': '*' });
       return res.end();
     }
+    ({ start, end } = parsed);
     // CORS on the media responses too: the deployed page reaches this helper
     // cross-origin and its <video> is in CORS mode (crossorigin="anonymous") so
     // subtitle tracks load — without this header the video itself would fail.
@@ -624,7 +609,7 @@ async function handleStream(req, res, url) {
   stream.pipe(res);
   const cleanup = () => stream.destroy();
   stream.on('error', cleanup);
-  req.on('close', cleanup);
+  res.on('close', cleanup);
 }
 
 async function serveStatic(req, res, url) {
@@ -688,7 +673,51 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(401, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
       return res.end(JSON.stringify({ error: 'access key required' }));
     }
+    if (url.pathname === '/hls/start') {
+      const hash = (url.searchParams.get('hash') || '').toLowerCase();
+      if (!/^[a-f0-9]{40}$/.test(hash)) { res.writeHead(400); return res.end('invalid hash'); }
+      const startSec = Math.max(0, Math.min(86400, Number(url.searchParams.get('t')) || 0));
+      const input = new URL('/stream', `http://127.0.0.1:${server.address().port}`);
+      input.search = url.search;
+      input.searchParams.set('raw', '1');
+      input.searchParams.delete('t');
+      const controller = new AbortController();
+      res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+      try {
+        const session = await hlsSessions.start({ inputUrl: input.href, hash, startSec, signal: controller.signal });
+        if (res.destroyed) { await hlsSessions.stop(session.id); return; }
+        res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+        return res.end(JSON.stringify(session));
+      } catch (error) {
+        if (res.destroyed) return;
+        res.writeHead(504, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+        return res.end(JSON.stringify({ error: error.message }));
+      }
+    }
+    if (url.pathname === '/hls/stop') {
+      await hlsSessions.stop(url.searchParams.get('id'));
+      res.writeHead(204, { 'access-control-allow-origin': '*' }); return res.end();
+    }
+    if (url.pathname.startsWith('/hls/')) {
+      const match = /^\/hls\/([a-f0-9-]{36})\/(index\.m3u8|segment\d{6}\.ts)$/.exec(url.pathname);
+      const asset = match && await hlsSessions.read(match[1], match[2], url.searchParams.get('key') || '');
+      if (!asset) { res.writeHead(404); return res.end('segment unavailable'); }
+      res.writeHead(200, { 'content-type': asset.type, 'content-length': asset.body.length, 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+      return res.end(req.method === 'HEAD' ? undefined : asset.body);
+    }
     if (url.pathname === '/yts') return await handleYts(res, url);
+    if (url.pathname === '/movie-torrents') {
+      const imdb = url.searchParams.get('imdb') || '';
+      if (!/^tt\d+$/.test(imdb)) { res.writeHead(400); return res.end('invalid IMDb ID'); }
+      try {
+        const sources = await fetchMovieSources(imdb, { year: Number(url.searchParams.get('year')) || undefined, title: url.searchParams.get('title') });
+        res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+        return res.end(JSON.stringify({ sources }));
+      } catch {
+        res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+        return res.end(JSON.stringify({ error: 'Movie sources are unavailable right now.' }));
+      }
+    }
     if (url.pathname === '/tv-torrents') return await handleTvTorrents(res, url);
     if (url.pathname === '/subtitles') return await handleSubtitleList(res, url);
     if (url.pathname === '/subtitle') return await handleSubtitleFile(res, url);
@@ -740,7 +769,8 @@ server.listen(currentPort);
 // Tidy up peer connections on exit.
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
-    client.destroy(() => process.exit(0));
+    stopTvProviderCompat();
+    hlsSessions.close().finally(() => client.destroy(() => process.exit(0)));
     setTimeout(() => process.exit(0), 2000);
   });
 }
