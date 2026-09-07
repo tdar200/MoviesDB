@@ -19,7 +19,7 @@ function el(tag, className, text) {
 
 export function createTvDetails(deps) {
   const {
-    fetchCast, fetchTvDetails, fetchSeasonDetails,
+    fetchCast, fetchTrailer, fetchTvDetails, fetchSeasonDetails,
     onPlay,
     isStarred, toggleStar, isDownvoted, toggleDownvote, onSignalChanged,
   } = deps;
@@ -29,10 +29,13 @@ export function createTvDetails(deps) {
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
   const backdrop = el('div', 'tv-details-backdrop');
+  const trailerHost = el('div', 'tv-details-trailer'); // muted trailer plays over the backdrop
   const scrim = el('div', 'tv-details-scrim');
   const body = el('div', 'tv-details-body');
-  overlay.append(backdrop, scrim, body);
+  overlay.append(backdrop, trailerHost, scrim, body);
   document.body.append(overlay);
+
+  function stopTrailer() { trailerHost.textContent = ''; }
 
   let current = null;
   let openToken = 0;
@@ -43,6 +46,7 @@ export function createTvDetails(deps) {
     overlay.hidden = true;
     current = null;
     openToken++; // cancel any in-flight enrichment
+    stopTrailer();
   };
 
   const open = movie => {
@@ -51,7 +55,26 @@ export function createTvDetails(deps) {
     const type = isSeries(movie) ? 'tv' : 'movie';
     overlay.hidden = false;
     overlay.scrollTop = 0;
+    stopTrailer();
     backdrop.style.backgroundImage = movie.backdrop_path ? `url("${art}w1280${movie.backdrop_path}")` : 'none';
+
+    // Netflix-style: the backdrop shows immediately, then the trailer fades in and
+    // autoplays muted. Muted autoplay is allowed; if there is no trailer (or it
+    // fails on the TV's old browser), the backdrop simply stays.
+    if (fetchTrailer) {
+      Promise.resolve(fetchTrailer(type, movie.id)).then(key => {
+        if (!key || token !== openToken) return;
+        setTimeout(() => {
+          if (token !== openToken) return;
+          const iframe = document.createElement('iframe');
+          iframe.setAttribute('allow', 'autoplay; encrypted-media');
+          iframe.setAttribute('frameborder', '0');
+          iframe.src = `https://www.youtube.com/embed/${key}?autoplay=1&mute=0&controls=0&rel=0&playsinline=1&loop=1&playlist=${key}&modestbranding=1&iv_load_policy=3`;
+          trailerHost.append(iframe);
+          trailerHost.classList.add('playing');
+        }, 1200);
+      }).catch(() => {});
+    }
 
     body.textContent = '';
     body.append(el('h1', 'tv-details-title', titleOf(movie)));

@@ -25,9 +25,10 @@ export function createTvCard(movie, onSelect) {
   card.append(image);
   if (movie.vote_average) card.append(element('span', 'tv-card-badge', '★ ' + movie.vote_average.toFixed(1)));
   const caption = element('div', 'tv-card-caption');
+  const rating = movie.vote_average ? '★ ' + movie.vote_average.toFixed(1) : '';
   caption.append(
     element('span', 'tv-card-title', titleOf(movie)),
-    element('span', 'tv-card-meta', [yearOf(movie), kindOf(movie)].filter(Boolean).join('  ·  ')),
+    element('span', 'tv-card-meta', [yearOf(movie), kindOf(movie), rating].filter(Boolean).join('  ·  ')),
   );
   card.append(caption);
   card.addEventListener('click', () => onSelect(movie));

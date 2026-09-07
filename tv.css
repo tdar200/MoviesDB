@@ -26,14 +26,14 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
    clips horizontally instead, and the track is glided by transform (see tv-remote). */
 .tv-rail { overflow: visible; padding: 22px 0 26px; margin: 0; }
 .tv-rail-track { display: flex; gap: 14px; transition: transform .28s ease; }
-.tv-card { flex: 0 0 calc((92vw - 56px) / 5); width: calc((92vw - 56px) / 5); min-width: 200px; padding: 0; border: 0; border-radius: 6px; background: #242424; color: white; text-align: left; overflow: hidden; cursor: pointer; position: relative; box-shadow: 0 2px 6px rgba(0,0,0,.45); transition: transform .18s ease, box-shadow .18s ease; }
-.tv-card-art { display: block; width: 100%; height: 10vw; min-height: 112px; object-fit: cover; background: #303030; }
+/* Bigger cards (4 per row) with a title/meta block always visible under the art. */
+.tv-card { flex: 0 0 calc((92vw - 42px) / 4); width: calc((92vw - 42px) / 4); min-width: 240px; padding: 0; border: 0; border-radius: 8px; background: #1c1c1c; color: white; text-align: left; overflow: hidden; cursor: pointer; position: relative; box-shadow: 0 2px 6px rgba(0,0,0,.45); transition: transform .18s ease, box-shadow .18s ease; }
+.tv-card-art { display: block; width: 100%; height: 13vw; min-height: 150px; object-fit: cover; background: #303030; }
 .tv-card-noart { background: #303030; }
-.tv-card-badge { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.72); color: #fff; font-size: 14px; font-weight: bold; padding: 3px 8px; border-radius: 4px; }
-.tv-card-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 12px 10px; background: linear-gradient(transparent, rgba(0,0,0,.9)); opacity: 0; transition: opacity .18s ease; }
-.tv-card:focus .tv-card-caption { opacity: 1; }
-.tv-card-title { display: block; font-size: 18px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tv-card-meta { display: block; color: #cfcfcf; font-size: 14px; margin-top: 2px; }
+.tv-card-badge { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,.78); color: #fff; font-size: 16px; font-weight: bold; padding: 4px 10px; border-radius: 5px; }
+.tv-card-caption { display: block; padding: 12px 14px 14px; }
+.tv-card-title { display: block; font-size: 20px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-card-meta { display: block; color: #b9b9b9; font-size: 16px; margin-top: 4px; }
 /* webOS 79 has no :focus-visible, so key off :focus. Controls get a clean bright ring;
    cards get the Netflix lift (scale + white edge) instead of a boxy outline. */
 .tv-mode :focus { outline: none; }
@@ -115,9 +115,15 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 /* ---- Details screen (shown before playback) ---- */
 .tv-details { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 150; background: #141414; overflow-y: auto; overflow-x: hidden; }
 .tv-details[hidden] { display: none; }
-.tv-details-backdrop { position: absolute; top: 0; left: 0; right: 0; height: 72vh; background-size: cover; background-position: center 18%; background-repeat: no-repeat; }
-.tv-details-scrim { position: absolute; top: 0; left: 0; right: 0; height: 72vh; background: linear-gradient(90deg, #141414 4%, rgba(20,20,20,.55) 45%, rgba(20,20,20,.15) 100%), linear-gradient(0deg, #141414 6%, transparent 62%); }
-.tv-details-body { position: relative; max-width: 62%; padding: 13vh 4vw 7vh; }
+/* Full-screen backdrop; the trailer plays over it, both filling the viewport. */
+.tv-details-backdrop { position: absolute; top: 0; left: 0; right: 0; height: 100vh; background-size: cover; background-position: center 18%; background-repeat: no-repeat; }
+.tv-details-trailer { position: absolute; top: 0; left: 0; right: 0; height: 100vh; overflow: hidden; opacity: 0; transition: opacity .6s ease; background: #000; }
+.tv-details-trailer.playing { opacity: 1; }
+.tv-details-trailer iframe { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 100%; height: 56.25vw; min-height: 100vh; min-width: 177.78vh; border: 0; pointer-events: none; }
+/* Scrim: darkens the left (for the copy) and the very bottom (so nothing looks cut
+   off), leaving the trailer visible through the middle/right. */
+.tv-details-scrim { position: absolute; top: 0; left: 0; right: 0; height: 100vh; background: linear-gradient(90deg, rgba(20,20,20,.92) 0%, rgba(20,20,20,.5) 40%, rgba(20,20,20,.05) 68%, transparent 100%), linear-gradient(0deg, #141414 0%, rgba(20,20,20,.5) 18%, transparent 42%); }
+.tv-details-body { position: relative; max-width: 55%; min-height: 100vh; box-sizing: border-box; padding: 46vh 4vw 6vh; }
 .tv-mode .tv-details-title { color: #fff; font-size: clamp(38px, 4.2vw, 72px); line-height: 1.04; letter-spacing: -1px; margin: 0 0 18px; }
 .tv-details-meta { color: #ddd; font-size: 20px; margin: 0 0 22px; }
 .tv-details-synopsis { font-size: 22px; line-height: 1.5; color: #eee; margin: 0 0 26px; max-width: 900px; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }

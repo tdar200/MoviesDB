@@ -101,6 +101,28 @@ export const ENDPOINTS = {
   // never chart on popularity/trending still enter the browse pool.
   discoverMoviesByRating: (page, providerId, keywordId, excludeGenres, language, minVotes, dateGte) => `${CONFIG.BASE_URL}/discover/movie?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=vote_average.desc&watch_region=US&vote_count.gte=${Math.max(minVotes || 0, 300)}${dateGte ? `&primary_release_date.gte=${dateGte}` : ''}${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}`,
   discoverTvByRating: (page, providerId, keywordId, excludeGenres, language, minVotes, dateGte) => `${CONFIG.BASE_URL}/discover/tv?api_key=${CONFIG.API_KEY}&page=${page}&sort_by=vote_average.desc&watch_region=US&vote_count.gte=${Math.max(minVotes || 0, 300)}${dateGte ? `&first_air_date.gte=${dateGte}` : ''}${providerId ? `&with_watch_providers=${providerId}` : ''}${keywordId ? `&with_keywords=${keywordId}` : ''}${excludeGenres ? `&without_genres=${excludeGenres}` : ''}${language ? `&with_original_language=${language}` : ''}`,
+  // Full discover query for the TV filter view: genre + rating + year + sort + the
+  // rest, so filtering hits TMDB directly instead of client-filtering a small pool.
+  // `type` is 'movie' or 'tv'; `f` carries the resolved filter values.
+  discoverFull: (type, page, f = {}) => {
+    const dateField = type === 'tv' ? 'first_air_date' : 'primary_release_date';
+    const p = new URLSearchParams();
+    p.set('api_key', CONFIG.API_KEY);
+    p.set('page', String(page));
+    p.set('watch_region', 'US');
+    p.set('sort_by', f.sortBy || 'popularity.desc');
+    if (f.genreId) p.set('with_genres', String(f.genreId));
+    if (f.keywordId) p.set('with_keywords', String(f.keywordId));
+    if (f.excludeGenres) p.set('without_genres', String(f.excludeGenres));
+    if (f.language) p.set('with_original_language', String(f.language));
+    let minVotes = f.minVotes || 0;
+    // A rating floor with no vote floor surfaces obscure 10/10-from-3-votes titles.
+    if (f.minRating) { p.set('vote_average.gte', String(f.minRating)); minVotes = Math.max(minVotes, 200); }
+    if (minVotes) p.set('vote_count.gte', String(minVotes));
+    if (f.yearGte) p.set(`${dateField}.gte`, `${f.yearGte}-01-01`);
+    if (f.providerId) p.set('with_watch_providers', String(f.providerId));
+    return `${CONFIG.BASE_URL}/discover/${type}?${p.toString()}`;
+  },
   // Keywords for a title. NOTE: /movie/{id}/keywords returns { keywords: [...] };
   // /tv/{id}/keywords returns { results: [...] }. Caller normalizes both.
   keywords: (type, id) => `${CONFIG.BASE_URL}/${type}/${id}/keywords?api_key=${CONFIG.API_KEY}`,

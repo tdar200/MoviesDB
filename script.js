@@ -2617,6 +2617,19 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Map the app's sort options to TMDB discover sort_by values (TV filter view).
+function tmdbSortBy(sortBy, type) {
+  const dateField = type === 'tv' ? 'first_air_date' : 'primary_release_date';
+  switch (sortBy) {
+    case 'rating': return 'vote_average.desc';
+    case 'votes': return 'vote_count.desc';
+    case 'year-new': return `${dateField}.desc`;
+    case 'year-old': return `${dateField}.asc`;
+    case 'title': return type === 'tv' ? 'popularity.desc' : 'original_title.asc';
+    default: return 'popularity.desc'; // weighted / newest-weighted / unset
+  }
+}
+
 async function fetchMoreTrending(pagesToFetch = 5, abortToken) {
   if (!hasMorePages) return [];
 
@@ -2633,8 +2646,15 @@ async function fetchMoreTrending(pagesToFetch = 5, abortToken) {
     keywordId = themeId > 0 ? `${themeId},${currentFilters.genre}` : currentFilters.genre;
   }
 
+  // On TV, standard genre/rating/year/sort also go through discover so filtering
+  // returns the full catalogue, not a client-filter of the small trending pool.
+  const genreId = TV_MODE && !currentFilters.genreIsKeyword && currentFilters.genre > 0 ? currentFilters.genre : null;
+  const minRating = TV_MODE ? (currentFilters.minRating || null) : null;
+  const yearGte = TV_MODE && /^\d{4}$/.test(String(currentFilters.yearFilter)) ? currentFilters.yearFilter : null;
+  const tvSort = TV_MODE && currentFilters.sortBy && currentFilters.sortBy !== 'weighted' && currentFilters.sortBy !== 'newest-weighted';
+
   // Use discover API if any filter is active
-  const useDiscoverApi = providerId > 0 || keywordId || excludeGenres || language || minVotes;
+  const useDiscoverApi = providerId > 0 || keywordId || excludeGenres || language || minVotes || genreId || minRating || yearGte || tvSort;
 
   // Fetch in batches to avoid TMDB rate limiting (40 req/10s)
   const BATCH_SIZE = 10; // Requests per batch
@@ -2653,14 +2673,21 @@ async function fetchMoreTrending(pagesToFetch = 5, abortToken) {
       if (page > 500 || page > totalPagesAvailable) break; // TMDB max pages or no more data
 
       if (useDiscoverApi) {
+        // TV routes through discoverFull (genre/rating/year/sort aware); desktop keeps
+        // its existing discover calls so its behaviour is unchanged.
+        const disc = (t) => TV_MODE
+          ? ENDPOINTS.discoverFull(t, page, { genreId, keywordId, excludeGenres, language, minVotes, minRating, yearGte, sortBy: tmdbSortBy(currentFilters.sortBy, t), providerId })
+          : (t === 'movie'
+              ? ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)
+              : ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes));
         if (mediaType === 'movie') {
-          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+          promises.push(fetchWithErrorHandling(disc('movie')).catch(() => null));
         } else if (mediaType === 'tv') {
-          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+          promises.push(fetchWithErrorHandling(disc('tv')).catch(() => null));
         } else {
           // For 'all', fetch both movies and TV
-          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverMovies(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
-          promises.push(fetchWithErrorHandling(ENDPOINTS.discoverTv(page, providerId, keywordId, excludeGenres, language, minVotes)).catch(() => null));
+          promises.push(fetchWithErrorHandling(disc('movie')).catch(() => null));
+          promises.push(fetchWithErrorHandling(disc('tv')).catch(() => null));
         }
       } else {
         promises.push(fetchWithErrorHandling(ENDPOINTS.trending(page)).catch(() => null));
@@ -3393,7 +3420,7 @@ async function fetchCast(type, id) {
   } catch (e) { return []; }
 }
 const tvDetails = TV_MODE ? createTvDetails({
-  fetchCast, fetchTvDetails, fetchSeasonDetails,
+  fetchCast, fetchTrailer: fetchTrailers, fetchTvDetails, fetchSeasonDetails,
   onPlay: (movie, target) => { tvDetails.close(); openPlayer(movie, target); },
   isStarred, toggleStar, isDownvoted, toggleDownvote, onSignalChanged,
 }) : null;
@@ -3862,6 +3889,12 @@ async function loadTrending() {
 // Handle filter changes
 async function handleFilterChange() {
   updateQueryParams();
+  // TV filters query TMDB directly (discover), so re-fetch rather than client-filter
+  // the small trending pool. With no filters active this reloads the curated home.
+  if (TV_MODE && !isSearchMode) {
+    loadTrending();
+    return;
+  }
   if (allMovies.length > 0) {
     setLoading(true);
     await processAndDisplayMovies(allMovies, isSearchMode);
