@@ -16,7 +16,7 @@
     "prestart": "npm run build:tv",
     "test:tv": "TV_E2E=1 node --test --test-concurrency=1 tv-e2e.test.js tv-player-e2e.test.js tv-provider-popup.test.js",
     "package:tv": "npm run build:tv && ares-package webos-app --outdir dist",
-    "build:web": "npm run build:tv && rm -rf public && mkdir -p public/webos-app && cp tv.html tv.css style.css tv-bundle.js public/ && cp webos-app/icon.png public/webos-app/icon.png"
+    "build:web": "npm run build:tv && rm -rf public && mkdir -p public/webos-app && cp tv.css style.css tv-bundle.js public/ && cp webos-app/icon.png public/webos-app/icon.png && node scripts/version-web.mjs"
   },
   "keywords": [
     "movies",

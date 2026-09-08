@@ -14,7 +14,9 @@
     // UI is always available even when the stream helper is off. Streaming still
     // goes to the helper via CONFIG.STREAM_HELPER_BASE + the helperkey below; the
     // helper sends Access-Control-Allow-Origin: * so the cross-origin calls work.
-    var URL_ = 'https://moviesdb-tv.vercel.app/tv.html?helperkey=popcorn42&tv=1';
+    // Cache-bust per launch: webOS Chromium 79 will otherwise serve a stale cached
+    // tv.html/tv-bundle.js and ignore revalidation, so a unique URL forces fresh code.
+    var URL_ = 'https://moviesdb-tv.vercel.app/tv.html?helperkey=popcorn42&tv=1&_=' + Date.now();
     // Keep setup reachable when the host is offline, instead of a blank error page.
     var statusEl = document.querySelector('.msg');
     statusEl.innerHTML = '<h1>Movies</h1><p id="status">Connecting to your library…</p><button id="retry" style="font-size:24px;padding:16px 32px">Retry connection</button>';
