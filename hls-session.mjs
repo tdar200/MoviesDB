@@ -91,5 +91,8 @@ export class HlsSessions {
     if (session.directory) await rm(session.directory, { recursive: true, force: true });
   }
   async stopHash(hash) { await Promise.all([...this.sessions.values()].filter(s => s.hash === hash).map(s => this.stop(s.id))); }
+  // A torrent with a live session is still serving segments (already remuxed to
+  // disk) even after ffmpeg stopped reading it — so it must not be swept.
+  hasHash(hash) { for (const s of this.sessions.values()) if (s.hash === hash) return true; return false; }
   async close() { clearInterval(this.sweep); await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); }
 }

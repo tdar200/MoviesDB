@@ -183,8 +183,31 @@ function getTorrent(hash, name, readyTimeoutMs = READY_TIMEOUT_MS) {
   });
 }
 
+// Per-torrent access tracking so idle torrents can be evicted. Torrents were only
+// ever freed on an explicit /stream-stop; without this the webtorrent client grows
+// unbounded over a session (measured at 6.5 GB), which starves the remux and turns
+// playback into 504 timeouts. Both direct streams and the HLS remux (which reads
+// through this same /stream endpoint) go through handleStream, so one refcount here
+// covers every active reader.
+const torrentReaders = new Map(); // hash -> active reader count
+const torrentAccess = new Map();  // hash -> last-access timestamp
+const TORRENT_IDLE_MS = 20 * 60000; // free a torrent idle this long with no reader/session
+const TORRENT_MAX = 6;              // hard cap; evict least-recently-used idle torrents beyond it
+const TORRENT_SWEEP_MS = 5 * 60000;
+function acquireTorrent(hash) {
+  torrentReaders.set(hash, (torrentReaders.get(hash) || 0) + 1);
+  torrentAccess.set(hash, Date.now());
+}
+function releaseTorrent(hash) {
+  const n = (torrentReaders.get(hash) || 1) - 1;
+  if (n <= 0) torrentReaders.delete(hash); else torrentReaders.set(hash, n);
+  torrentAccess.set(hash, Date.now());
+}
+
 function destroyTorrent(hash) {
   void hlsSessions.stopHash(hash);
+  torrentReaders.delete(hash);
+  torrentAccess.delete(hash);
   const t = torrents.get(hash);
   if (!t) return;
   torrents.delete(hash);
@@ -195,6 +218,27 @@ function destroyTorrent(hash) {
     /* ignore */
   }
 }
+
+// A torrent is safe to free only when nothing is reading it (no live /stream or
+// remux) AND no HLS session is still serving its already-remuxed segments.
+function evictIdleTorrents() {
+  const now = Date.now();
+  const idle = [];
+  for (const hash of [...torrents.keys()]) {
+    if ((torrentReaders.get(hash) || 0) > 0) continue;
+    if (hlsSessions.hasHash(hash)) continue;
+    const last = torrentAccess.get(hash) || 0;
+    if (now - last >= TORRENT_IDLE_MS) { destroyTorrent(hash); continue; }
+    idle.push([hash, last]);
+  }
+  // Hard cap: if still over the limit, drop the least-recently-used idle torrents.
+  let over = torrents.size - TORRENT_MAX;
+  if (over > 0) {
+    idle.sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < idle.length && over > 0; i++, over--) destroyTorrent(idle[i][0]);
+  }
+}
+setInterval(evictIdleTorrents, TORRENT_SWEEP_MS).unref();
 
 // The file webtorrent is writing to on disk. Embedded-subtitle extraction and
 // seek-by-timestamp both need a real seekable file, not the on-demand stream.
@@ -539,6 +583,10 @@ async function handleStream(req, res, url) {
     res.writeHead(504);
     return res.end('torrent unavailable: ' + err.message);
   }
+  // Mark this torrent as actively read for as long as the response is open, so the
+  // idle sweep never frees a torrent that a direct stream or the remux is using.
+  acquireTorrent(hash);
+  res.on('close', () => releaseTorrent(hash));
 
   // A TV request names an episode. Season packs hold every episode, so picking the
   // largest playable file (right for a movie) would serve a random one.
