@@ -3,5 +3,11 @@
   "buildCommand": "echo prebuilt-static",
   "installCommand": "echo skip-install",
   "outputDirectory": "public",
-  "github": { "silent": true }
+  "github": { "silent": true },
+  "headers": [
+    { "source": "/tv.html", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
+    { "source": "/tv-bundle.js", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
+    { "source": "/tv.css", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
+    { "source": "/style.css", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] }
+  ]
 }
