@@ -61,7 +61,7 @@ test('TV native player fills the screen, hides controls, seeks, pauses, and retu
  } finally {await browser.close();await rm(dir,{recursive:true,force:true});}
 });
 
-test('changing episode discards stale lookup and prefers 720p on TV', {skip:!process.env.TV_E2E,timeout:30000},async()=>{
+test('changing episode discards stale lookup and prefers 1080p on TV', {skip:!process.env.TV_E2E,timeout:30000},async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
  try{
   const page=await browser.newPage({viewport:{width:1920,height:1080}});
@@ -92,12 +92,12 @@ test('changing episode discards stale lookup and prefers 720p on TV', {skip:!pro
   await page.waitForFunction(()=>document.getElementById('player-title').textContent.includes('S1E2'));
   releaseFirst();
   await page.waitForTimeout(1200);
-  assert.equal(starts[0],'b'.repeat(40), '720p must be attempted before 1080p');
+  assert.equal(starts[0],'c'.repeat(40), '1080p (default) attempted before 720p');
   assert.ok(!starts.includes('a'.repeat(40)), 'the stale first episode must never start');
  }finally{await browser.close();}
 });
 
-test('native HLS televisions prepare movie playback through HLS at 720p', {skip:!process.env.TV_E2E,timeout:30000},async()=>{
+test('native HLS televisions prepare movie playback through HLS at 1080p', {skip:!process.env.TV_E2E,timeout:30000},async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
  try{
   const page=await browser.newPage({viewport:{width:1920,height:1080}});
@@ -113,7 +113,7 @@ test('native HLS televisions prepare movie playback through HLS at 720p', {skip:
   await page.goto(`${process.env.TV_TEST_URL||'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
   await page.waitForSelector('.tv-card');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await page.waitForFunction(()=>document.getElementById('player-video').src.includes('/hls/fixture/index.m3u8'));
-  assert.equal(starts[0],'b'.repeat(40), 'movie playback must begin with 720p before any fixture-error fallback');
+  assert.equal(starts[0],'a'.repeat(40), 'movie playback must begin with 1080p before any fixture-error fallback');
  }finally{await browser.close();}
 });
 

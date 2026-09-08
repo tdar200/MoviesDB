@@ -1305,7 +1305,7 @@ let currentYtsData = null;       // { title, year, torrents }
 let ytsPollTimer = null;         // interval polling /stream-status
 let ytsTriedHashes = new Set();  // qualities attempted (for mkv auto-fallback)
 
-const DEFAULT_YTS_QUALITY = '720p'; // user preference
+const DEFAULT_YTS_QUALITY = '1080p'; // user preference: default to 1080p
 
 // Toggle between the iframe player (embed sources) and the <video> (YTS).
 function showPlayerVideo(on) {
@@ -1704,7 +1704,8 @@ async function loadYtsStream(movie, startSec = 0) {
     const base = playablePool.length ? playablePool : torrents;
     const seeded = base.filter((t) => (Number(t.seeds) || 0) > 0);
     const pool = seeded.length ? seeded : base;
-    const defRank = (q) => (q === (TV_MODE ? DEFAULT_YTS_QUALITY : '1080p') ? 0 : q === (TV_MODE ? '1080p' : '720p') ? 1 : q === '2160p' ? 2 : 3);
+    // 1080p first (default), then 720p, then other/SD, with 4K last (usually HEVC/huge).
+    const defRank = (q) => (q === '1080p' ? 0 : q === '720p' ? 1 : q === '2160p' ? 3 : 2);
     const def = [...pool].sort((a, b) => {
       const r = defRank(a.quality) - defRank(b.quality);
       return r !== 0 ? r : (Number(b.seeds) || 0) - (Number(a.seeds) || 0);
@@ -1785,15 +1786,14 @@ async function loadTvStream(movie, season, episode, startSec = 0) {
     if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
 
     currentTvSources = attempt.data.sources || [];
-    // TV source order: highest seed count first (fastest to stream), then a direct-play
-    // MP4 as the tiebreak among equal seeds (it skips the MKV->HLS remux that HEVC
-    // WEB-DL rips fail on), then the lighter 720p. A source that fails the remux (e.g.
-    // an occasional HEVC top seed like recent South Park) is dropped to the next by the
-    // cascade in playTvSource.
+    // TV source order: 1080p first (the default quality), then the highest seed count
+    // (fastest to stream), then a direct-play MP4 as a final tiebreak (it skips the
+    // MKV->HLS remux that HEVC WEB-DL rips fail on). A source that fails the remux is
+    // dropped to the next by the cascade in playTvSource.
     if (TV_MODE) currentTvSources = [...currentTvSources].sort((a, b) =>
+      (Number(b.quality === '1080p') - Number(a.quality === '1080p')) ||
       ((b.seeds || 0) - (a.seeds || 0)) ||
-      (Number(!b.remux) - Number(!a.remux)) ||
-      (Number(b.quality === DEFAULT_YTS_QUALITY) - Number(a.quality === DEFAULT_YTS_QUALITY)));
+      (Number(!b.remux) - Number(!a.remux)));
     if (!currentTvSources.length) {
       setYtsStatus(`No active MP4 or H.264 MKV torrent for S${season}E${episode}. Try another source or episode.`, true);
       return;
