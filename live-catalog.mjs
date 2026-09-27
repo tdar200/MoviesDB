@@ -84,19 +84,36 @@ export function createCatalogFeed({ entries, probe, now = Date.now, ttlMs = 30 *
     return list.filter(e => alive.has(e.id)).map(e => ({ ...e, height: alive.get(e.id) || e.height }));
   }
 
+  // Country rows first (the owner's picks): Pakistan, India news, India. Those
+  // channels leave the generic rows, which ~90 Indian news channels would
+  // otherwise crowd. Within a country row: category order, language, height.
+  const COUNTRY_ROWS = [
+    { name: 'Pakistan', match: e => e.country === 'PK' },
+    { name: 'India · News', match: e => e.country === 'IN' && e.category === 'News' },
+    { name: 'India', match: e => e.country === 'IN' },
+  ];
   function categories() {
-    const groups = new Map();
+    const byQuality = (a, b) => langRank(a) - langRank(b) || (isUk(b) - isUk(a)) || b.height - a.height || String(a.name).localeCompare(String(b.name));
+    const rest = [];
+    const countryGroups = COUNTRY_ROWS.map(() => []);
     for (const e of current()) {
+      const i = COUNTRY_ROWS.findIndex(r => r.match(e));
+      if (i >= 0) countryGroups[i].push(e); else rest.push(e);
+    }
+    const out = [];
+    COUNTRY_ROWS.forEach((r, i) => {
+      if (!countryGroups[i].length) return;
+      out.push({ name: r.name, channels: countryGroups[i].sort((a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category) || byQuality(a, b)).slice(0, rowLimit) });
+    });
+    const groups = new Map();
+    for (const e of rest) {
       if (!groups.has(e.category)) groups.set(e.category, []);
       groups.get(e.category).push(e);
     }
-    return CATEGORY_ORDER.filter(c => groups.has(c)).map(name => ({
-      name,
-      channels: groups.get(name)
-        .sort((a, b) => langRank(a) - langRank(b) || (isUk(b) - isUk(a)) || b.height - a.height || String(a.name).localeCompare(String(b.name)))
-        .slice(0, rowLimit),
-    }));
+    for (const name of CATEGORY_ORDER) if (groups.has(name)) out.push({ name, channels: groups.get(name).sort(byQuality).slice(0, rowLimit) });
+    return out;
   }
+
 
   return {
     refresh,

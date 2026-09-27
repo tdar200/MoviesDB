@@ -231,3 +231,14 @@ body.tv-mode { background: #22254b; }
 .tv-live-nostream { color: #d3d5df; font-size: 20px; margin: 8px 0 14px; }
 .tv-live-loading { background: transparent; color: #d3d5df; border: 0; border-radius: 8px; padding: 10px 14px; margin: 8px 0 14px; font-size: 20px; }
 .tv-live-loading:focus { outline: 3px solid #8ab8ff; }
+
+/* Channel cards are compact: a logo needs little room, so six fit across and
+   roughly twice as many channel rows fit on screen as film rows. */
+.tv-card.tv-card-channel { flex: 0 0 calc((92vw - 70px) / 6); width: calc((92vw - 70px) / 6); min-width: 170px; }
+.tv-card-channel .tv-card-visual, .tv-card-channel .tv-card-art { height: 6.5vw; min-height: 90px; max-height: 130px; }
+.tv-card-channel .tv-card-logo { padding: 14px; }
+.tv-card-channel .tv-card-caption { min-height: 0; padding: 10px 12px 12px; }
+.tv-card-channel .tv-card-kicker { font-size: 12px; }
+.tv-card-channel .tv-card-title { font-size: 18px; margin-top: 3px; }
+.tv-card-channel .tv-card-overview { min-height: 0; -webkit-line-clamp: 1; font-size: 14px; margin-top: 4px; }
+.tv-card-channel .tv-card-footer { display: none; }

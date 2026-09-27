@@ -18,7 +18,8 @@ test('parseHighflyCatalog keeps matches (A vs B), drops 24/7 channel entries, sp
   const list = parseHighflyCatalog(catalog);
   assert.ok(!list.some(m => m.sourceId.startsWith('leaf:')), '24/7 channel entries are not matches');
   const dw = list.find(m => m.sourceId === 'streamed:denmark-vs-wales-2442761');
-  assert.deepEqual(dw, { sourceId: 'streamed:denmark-vs-wales-2442761', title: 'Denmark vs Wales', league: null, kickoff: null, home: 'Denmark', away: 'Wales', poster: null, status: 'in' });
+  assert.deepEqual(dw, { sourceId: 'streamed:denmark-vs-wales-2442761', title: 'Denmark vs Wales', league: null, kickoff: null, home: 'Denmark', away: 'Wales', poster: null, status: 'in', sport: 'football' });
+  assert.equal(parseHighflyCatalog({ metas: [{ id: 'streamed:ind-v-pak', name: 'India vs Pakistan', releaseInfo: 'LIVE' }] }, 'cricket')[0].sport, 'cricket');
   const ger = list.find(m => m.home === 'Germany');
   assert.equal(ger.kickoff, '2026-09-27T18:45:00Z');
   assert.equal(ger.status, null);
@@ -46,6 +47,7 @@ test('createHighflyAdapter lists matches (cached 60 s, stale on failure) and fet
     urls.push(url);
     if (fail) throw new TypeError('fetch failed');
     if (url.endsWith('/catalog/sport/sports_football.json')) return { ok: true, status: 200, json: async () => catalog };
+    if (url.endsWith('/catalog/sport/sports_cricket.json')) return { ok: true, status: 200, json: async () => ({ metas: [{ id: 'streamed:ind-v-pak', name: 'India vs Pakistan', releaseInfo: 'LIVE' }] }) };
     if (url.endsWith('/stream/sport/streamed%3Adenmark-vs-wales-2442761.json')) return { ok: true, status: 200, json: async () => streams };
     return { ok: false, status: 404, json: async () => ({}) };
   };
@@ -53,8 +55,11 @@ test('createHighflyAdapter lists matches (cached 60 s, stale on failure) and fet
   assert.equal(a.name, 'highfly');
   const m1 = await a.listMatches();
   assert.ok(m1.length > 5);
-  assert.equal(urls[0], 'https://sports.highfly.dev/catalog/sport/sports_football.json');
-  clock = 30_000; await a.listMatches(); assert.equal(urls.length, 1);
+  assert.ok(urls.includes('https://sports.highfly.dev/catalog/sport/sports_football.json'));
+  assert.ok(urls.includes('https://sports.highfly.dev/catalog/sport/sports_cricket.json'));
+  assert.equal(m1.find(m => m.home === 'India').sport, 'cricket');
+  assert.equal(m1.find(m => m.home === 'Denmark').sport, 'football');
+  clock = 30_000; await a.listMatches(); assert.equal(urls.length, 2);
   clock = 90_000; fail = true;
   assert.deepEqual(await a.listMatches(), m1);
   fail = false;

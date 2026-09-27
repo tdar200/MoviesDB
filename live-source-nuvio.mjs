@@ -12,6 +12,7 @@ import { withHostFailover } from './live-sources.mjs';
 import { CHROME_UA } from './live-fixtures.mjs';
 
 export const NUVIO_HOSTS = ['https://nuviosports.xyz'];
+const SPORTS = [{ sport: 'football', genre: 'Football' }, { sport: 'cricket', genre: 'Cricket' }];
 
 // Names and descriptions are decorated with emoji, flag "tag" characters
 // (U+E0000..U+E007F) and variation selectors. Strip all of it.
@@ -29,7 +30,7 @@ function splitTeams(title) {
   return m ? [m[1].trim(), m[2].trim()] : [title, ''];
 }
 
-export function parseNuvioCatalog(json) {
+export function parseNuvioCatalog(json, sport = 'football') {
   const metas = (json && json.metas) || [];
   return metas.map(meta => {
     const title = stripDecorations(meta.name).replace(/^LIVE:\s*/i, '');
@@ -48,6 +49,7 @@ export function parseNuvioCatalog(json) {
       away: a || '',
       poster: meta.poster || null,
       status: /LIVE NOW/i.test(desc) ? 'in' : null,
+      sport,
     };
   });
 }
@@ -117,7 +119,10 @@ export function createNuvioAdapter({ fetchImpl = fetch, hosts = NUVIO_HOSTS, now
   async function listMatches() {
     if (lastGood && now() - lastGood.at < CATALOG_TTL_MS) return lastGood.list;
     try {
-      const list = parseNuvioCatalog(await getJson('/catalog/tv/nuvio_sports_live/genre=Football.json', catalogTimeoutMs));
+      // Football and cricket; one failing sport does not hide the other.
+      const results = await Promise.allSettled(SPORTS.map(s => getJson(`/catalog/tv/nuvio_sports_live/genre=${s.genre}.json`, catalogTimeoutMs).then(j => parseNuvioCatalog(j, s.sport))));
+      if (results.every(r => r.status === 'rejected')) throw results[0].reason;
+      const list = results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
       lastGood = { at: now(), list };
       return list;
     } catch (err) {

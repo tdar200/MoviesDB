@@ -46,9 +46,10 @@ test('Live tab: rows, details, stream picker, hls.js playback, Back, focus survi
     for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator(':focus').getAttribute('data-kind'), 'live');
     await page.keyboard.press('Enter');
-    await page.waitForSelector('[data-tv-row="Live now"] .tv-card-live');
-    assert.deepEqual(await page.evaluate(() => Array.from(document.querySelectorAll('#main .tv-row')).map(s => s.dataset.tvRow)), ['Live now', 'Today', 'Channels']);
-    assert.equal(await page.locator('[data-tv-row="Today"] .tv-card-nostream').count(), 1);
+    await page.waitForSelector('[data-tv-row="Football · Live now"] .tv-card-live');
+    await page.waitForSelector('[data-tv-row="Sports channels"] .tv-card');
+    assert.deepEqual(await page.evaluate(() => Array.from(document.querySelectorAll('#main .tv-row')).map(s => s.dataset.tvRow)), ['Football · Live now', 'Football · Today', 'Sports channels']);
+    assert.equal(await page.locator('[data-tv-row="Football · Today"] .tv-card-nostream').count(), 1);
     await page.keyboard.press('ArrowDown');
     assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'espn:1');
     // Review Focus 5: a refresh while a card is focused keeps that card focused.
@@ -125,7 +126,7 @@ test('Live: after every stream fails, Retry is reachable with the arrows and res
     for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator(':focus').getAttribute('data-kind'), 'live');
     await page.keyboard.press('Enter');
-    await page.waitForSelector('[data-tv-row="Live now"] .tv-card-live');
+    await page.waitForSelector('[data-tv-row="Football · Live now"] .tv-card-live');
     await page.keyboard.press('ArrowDown');
     assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'espn:1');
     await page.keyboard.press('Enter');

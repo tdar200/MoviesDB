@@ -87,3 +87,22 @@ test('resolveTemplates fills channel ids and the Plex token, and drops templates
   assert.ok(withToken.every(e => !e.urlTemplate));
   assert.deepEqual(resolveTemplates(entries, {}).map(e => e.id), ['samsung:GBBD01', 'static'], 'no Plex token yet -> Plex entries wait');
 });
+
+test('Pakistani and Indian channels get their own rows at the top and leave the generic rows', async () => {
+  const entries = [
+    ch('pk-news', 'News', 720, { country: 'PK', language: 'ur' }),
+    ch('pk-rel', 'Religious', 720, { country: 'PK', language: 'ur' }),
+    ch('in-news', 'News', 1080, { country: 'IN', language: 'hi' }),
+    ch('in-music', 'Music', 1080, { country: 'IN', language: 'hi' }),
+    ch('gb-news', 'News', 1080, { country: 'GB' }),
+  ];
+  const feed = createCatalogFeed({ entries, probe: async e => ({ status: 'ok', height: e.height }) });
+  await feed.refresh();
+  const cats = feed.categories();
+  assert.deepEqual(cats.map(c => [c.name, c.channels.map(x => x.id)]), [
+    ['Pakistan', ['pk-news', 'pk-rel']],
+    ['India · News', ['in-news']],
+    ['India', ['in-music']],
+    ['News', ['gb-news']],
+  ]);
+});

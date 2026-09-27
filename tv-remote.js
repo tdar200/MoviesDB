@@ -209,16 +209,27 @@ export function installTvRemote() {
     node.focus({ preventScroll: true });
     if (node.classList && node.classList.contains('tv-card')) {
       const rect = anchorRail(node);
-      // The rail transform owns horizontal movement. Only invoke native scrolling
-      // when a card is actually outside the vertical viewport; scrollIntoView on
-      // every left/right press forces a second full layout on older webOS Chromium.
-      if (rect && (rect.top < 0 || rect.bottom > window.innerHeight)) {
-        node.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+      // The rail transform owns horizontal movement. Vertically, keep the whole
+      // row visible: its title must not end up above the viewport (or under a
+      // sticky header) and the card must not be cut off at the bottom. Only
+      // scroll when needed; a scroll on every left/right press forces a second
+      // full layout on older webOS Chromium.
+      if (rect) {
+        const section = node.closest('.tv-row');
+        const header = document.querySelector('header');
+        const hr = header ? header.getBoundingClientRect() : null;
+        const topLimit = hr && hr.bottom > 0 && getComputedStyle(header).position !== 'static' ? hr.bottom + 8 : 8;
+        const sectionTop = section ? section.getBoundingClientRect().top : rect.top;
+        if (sectionTop < topLimit) window.scrollBy(0, sectionTop - topLimit);
+        else if (rect.bottom > window.innerHeight - 16) window.scrollBy(0, rect.bottom - window.innerHeight + 24);
       }
     } else {
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
     }
   };
+  // Other modules (the Live home's focus restore) must go through this so the
+  // rail is re-anchored after a repaint.
+  window.__tvFocus = focus;
   let picker = null;
   let pickerSelect = null;
   const closePicker = () => {

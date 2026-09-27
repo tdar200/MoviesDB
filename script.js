@@ -4183,44 +4183,87 @@ let onLiveSelect = card => {
   else liveDetails.open(card.raw);
 };
 
-async function renderLiveHome() {
-  stopLiveHomeRefresh();
-  const token = ++tvHomeToken;
-  const channelsMode = tvMediaKind === 'channels';
-  if (liveHomeCurrent() && !liveHomeOwnsMain()) { main.textContent = ''; main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: channelsMode ? 'Loading channels…' : 'Loading live football…' })); }
-  let matchesRes = {}, channelsRes = {}, catalogRes = {};
-  if (channelsMode) {
-    catalogRes = await fetchLiveJson('/live/catalog', 20000).catch(error => ({ error }));
-  } else {
-    [matchesRes, channelsRes] = await Promise.all([
-      fetchLiveJson('/live/matches').catch(error => ({ error })),
-      // /live/channels can take ~20 s on a cold cache (it probes every stream).
-      fetchLiveJson('/live/channels', 40000).catch(error => ({ error })),
-    ]);
+// Which live kind's rows #main shows ('live' | 'channels' | null).
+let liveRenderedKind = null;
+const liveRowIds = section => Array.prototype.map.call(section.querySelectorAll('.tv-card'), c => c.dataset.movieId);
+// Paint live rows. When the rows and their cards are unchanged (a routine
+// 60 s refresh), update each card's contents in place: focus, the rail's
+// scroll position and the page scroll stay exactly where the viewer left them.
+// Otherwise rebuild, and put focus back on the same card through the remote's
+// focus routine so its rail is re-anchored.
+function paintLiveRows(rows, emptyText, statusText) {
+  const sections = Array.prototype.filter.call(main.children, el => el.classList && el.classList.contains('tv-row'));
+  const unchanged = sections.length === rows.length && rows.every((r, i) => {
+    if (sections[i].dataset.tvRow !== r.title) return false;
+    const ids = liveRowIds(sections[i]);
+    return ids.length === r.items.length && r.items.every((item, j) => String(item.id) === ids[j]);
+  });
+  main.querySelectorAll('.tv-live-empty, .tv-live-status').forEach(el => el.remove());
+  const note = (cls, text) => Object.assign(document.createElement('p'), { className: cls, textContent: text });
+  if (unchanged) {
+    rows.forEach((r, i) => {
+      const cards = sections[i].querySelectorAll('.tv-card');
+      r.items.forEach((item, j) => {
+        const fresh = createTvCard(item, card => onLiveSelect(card));
+        const old = cards[j];
+        old.className = fresh.className;
+        old.setAttribute('aria-label', fresh.getAttribute('aria-label') || '');
+        old.replaceChildren.apply(old, Array.prototype.slice.call(fresh.childNodes));
+      });
+    });
+    if (emptyText) main.insertBefore(note('tv-live-empty', emptyText), main.firstChild);
+    if (statusText) main.append(note('tv-live-status', statusText));
+    return;
   }
-  if (token !== tvHomeToken || !liveHomeCurrent()) return;
-  const now = Date.now();
-  // Channels tab: one row per category, sharpest first (the helper orders them).
-  const rows = channelsMode
-    ? (catalogRes.categories || []).map(c => ({ key: 'cat-' + c.name, title: c.name, items: (c.channels || []).map(channelToCard), noSort: true }))
-    : buildLiveRows(matchesRes.matches || [], channelsRes.channels || [], now);
-  // Read focus NOW, not before the fetch: the old rows stayed on screen for up to
-  // 25 s and the user may have moved (or left the rows for the kind nav).
+  // Read focus NOW (not before the fetch): the viewer may have moved meanwhile.
   const focusedCard = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.tv-card') : null;
   const focusedId = (focusedCard && focusedCard.dataset.movieId) || '';
   main.textContent = '';
-  if (channelsMode ? !rows.length : !rows.some(r => r.key === 'live-now' || r.key === 'today')) {
-    const failed = channelsMode ? catalogRes.error : matchesRes.error;
-    main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: failed ? 'Could not reach the stream helper.' : (channelsMode ? 'No channels are reachable right now.' : 'No football with a free stream right now.') }));
-  }
+  if (emptyText) main.append(note('tv-live-empty', emptyText));
   for (const row of rows) appendTvRow(main, row, card => onLiveSelect(card));
-  const status = channelsMode ? '' : liveStatusText(matchesRes, channelsRes);
-  if (status) main.append(Object.assign(document.createElement('p'), { className: 'tv-live-status', textContent: status }));
-  // Repaint, but never pull focus back to a card while the player or a details
-  // overlay (e.g. the live stream picker) sits on top and owns focus.
+  if (statusText) main.append(note('tv-live-status', statusText));
+  // Never pull focus back to a card while the player or a details overlay owns it.
   if (focusedId && !playerModalOpen && !document.querySelector('.tv-details:not([hidden])')) restoreFocusById(focusedId);
-  // Refresh tick: bail if the user left the Live home; while the player or a
-  // details panel is open on top, re-check later instead of repainting under it.
+}
+
+async function renderLiveHome() {
+  stopLiveHomeRefresh();
+  const token = ++tvHomeToken;
+  const kind = tvMediaKind;
+  const channelsMode = kind === 'channels';
+  const stillCurrent = () => token === tvHomeToken && liveHomeCurrent();
+  // Switching Live <-> Channels must never leave the other tab's rows on screen.
+  if (liveHomeCurrent() && (!liveHomeOwnsMain() || liveRenderedKind !== kind)) {
+    main.textContent = '';
+    main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: channelsMode ? 'Loading channels…' : 'Loading live sport…' }));
+    window.scrollTo(0, 0);
+  }
+  liveRenderedKind = kind;
+  if (channelsMode) {
+    const catalogRes = await fetchLiveJson('/live/catalog', 20000).catch(error => ({ error }));
+    if (!stillCurrent()) return;
+    const rows = (catalogRes.categories || []).map(c => ({ key: 'cat-' + c.name, title: c.name, items: (c.channels || []).map(channelToCard), noSort: true }));
+    paintLiveRows(rows, rows.length ? '' : (catalogRes.error ? 'Could not reach the stream helper.' : 'No channels are reachable right now.'), '');
+  } else {
+    // Matches paint as soon as they arrive; the sports channel list can take
+    // ~20 s on a cold cache, so it joins the page when it lands.
+    const channelsP = fetchLiveJson('/live/channels', 40000).catch(error => ({ error }));
+    const matchesRes = await fetchLiveJson('/live/matches').catch(error => ({ error }));
+    if (!stillCurrent()) return;
+    const paint = channelsRes => {
+      const rows = buildLiveRows(matchesRes.matches || [], (channelsRes && channelsRes.channels) || [], Date.now());
+      const hasMatches = rows.some(r => r.key.indexOf('live-') === 0 || r.key.indexOf('today-') === 0);
+      const hasCricket = rows.some(r => /-cricket$/.test(r.key));
+      const notes = [liveStatusText(matchesRes, channelsRes || {})];
+      if (!matchesRes.error && !hasCricket) notes.push('Cricket: nothing live or scheduled with a free stream right now.');
+      paintLiveRows(rows, hasMatches ? '' : (matchesRes.error ? 'Could not reach the stream helper.' : 'No live sport with a free stream right now.'), notes.filter(Boolean).join('   ·   '));
+    };
+    const early = await Promise.race([channelsP, Promise.resolve(null)]);
+    paint(early);
+    if (!early) channelsP.then(res => { if (stillCurrent()) paint(res); });
+  }
+  // Refresh tick: bail if the viewer left; while the player or a details panel
+  // is open on top, re-check later instead of repainting under it.
   const tick = () => {
     if (!liveHomeCurrent() || token !== tvHomeToken) return;
     if (playerModalOpen || document.querySelector('.tv-details:not([hidden])')) { liveHomeTimer = setTimeout(tick, LIVE_HOME_REFRESH_MS); return; }

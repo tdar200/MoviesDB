@@ -53,19 +53,22 @@ function worthListing(m) {
   return priority <= STREAMLESS_MAX_PRIORITY;
 }
 
+const SPORT_LABEL = { football: 'Football', cricket: 'Cricket' };
+
 export function buildLiveRows(matches, channels, nowMs) {
-  const live = [], today = [];
+  const live = { football: [], cricket: [] };
+  const today = { football: [], cricket: [] };
   for (const m of matches || []) {
     if (!worthListing(m)) continue;
-    if (m.state === 'in') live.push(matchToCard(m, nowMs));
-    else if (m.state === 'pre') today.push(matchToCard(m, nowMs));
-    else if (m.state === 'post' && nowMs - Date.parse(m.kickoff || '') < RECENT_POST_MS) today.push(matchToCard(m, nowMs));
+    const sport = m.sport === 'cricket' ? 'cricket' : 'football';
+    if (m.state === 'in') live[sport].push(matchToCard(m, nowMs));
+    else if (m.state === 'pre') today[sport].push(matchToCard(m, nowMs));
+    else if (m.state === 'post' && nowMs - Date.parse(m.kickoff || '') < RECENT_POST_MS) today[sport].push(matchToCard(m, nowMs));
   }
-  const rows = [
-    { key: 'live-now', title: 'Live now', items: live.slice(0, MATCH_ROW_CAP), noSort: true },
-    { key: 'today', title: 'Today', items: today.slice(0, MATCH_ROW_CAP), noSort: true },
-    { key: 'channels', title: 'Channels', items: (channels || []).map(channelToCard), noSort: true },
-  ];
+  const rows = [];
+  for (const sport of ['football', 'cricket']) rows.push({ key: `live-${sport}`, title: `${SPORT_LABEL[sport]} · Live now`, items: live[sport].slice(0, MATCH_ROW_CAP), noSort: true });
+  for (const sport of ['football', 'cricket']) rows.push({ key: `today-${sport}`, title: `${SPORT_LABEL[sport]} · Today`, items: today[sport].slice(0, MATCH_ROW_CAP), noSort: true });
+  rows.push({ key: 'channels', title: 'Sports channels', items: (channels || []).map(channelToCard), noSort: true });
   return rows.filter(r => r.items.length);
 }
 
@@ -76,7 +79,11 @@ export function restoreFocusById(id) {
   const safe = String(id).replace(/["\\]/g, '\\$&');
   const card = document.querySelector(`.tv-card[data-movie-id="${safe}"]`);
   if (!card) return false;
-  card.focus({ preventScroll: true });
+  // The TV remote's focus routine also re-anchors the card's rail; plain
+  // focus() would leave a rebuilt rail scrolled to its start.
+  const tvFocus = typeof window !== 'undefined' && window && window.__tvFocus;
+  if (typeof tvFocus === 'function') tvFocus(card);
+  else card.focus({ preventScroll: true });
   return true;
 }
 

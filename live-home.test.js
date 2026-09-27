@@ -57,9 +57,9 @@ test('buildLiveRows splits live / today / channels, keeps order, drops empty row
     match('d', 'post', '2026-09-27T08:00:00Z'),          // finished long ago -> dropped
   ], [{ id: 'x', name: 'X', logo: null, play: '/p' }], now);
   assert.deepEqual(rows.map(r => [r.key, r.title, r.items.map(i => i.id), r.noSort]), [
-    ['live-now', 'Live now', ['a'], true],
-    ['today', 'Today', ['b', 'c'], true],
-    ['channels', 'Channels', ['ch:x'], true],
+    ['live-football', 'Football · Live now', ['a'], true],
+    ['today-football', 'Football · Today', ['b', 'c'], true],
+    ['channels', 'Sports channels', ['ch:x'], true],
   ]);
   assert.deepEqual(buildLiveRows([], [], now), []);
 });
@@ -87,11 +87,11 @@ test('buildLiveRows keeps streamed matches, keeps stream-less ones only for top 
     match('streamed', 'pre', '2026-09-27T15:00:00Z', { hasStream: true, priority: 50 }),
     match('live-minor', 'in', '2026-09-27T13:00:00Z', { hasStream: false, priority: 40 }),
   ], [], now);
-  assert.deepEqual(rows.map(r => [r.key, r.items.map(i => i.id)]), [['today', ['top', 'streamed']]]);
+  assert.deepEqual(rows.map(r => [r.key, r.items.map(i => i.id)]), [['today-football', ['top', 'streamed']]]);
 
   const many = Array.from({ length: 70 }, (_, i) => match(`m${i}`, 'pre', '2026-09-27T15:00:00Z', { priority: 50 }));
   const [today] = buildLiveRows(many, [], now);
-  assert.equal(today.key, 'today');
+  assert.equal(today.key, 'today-football');
   assert.deepEqual(today.items.map(i => i.id), many.slice(0, 60).map(m => m.id));
 });
 
@@ -105,4 +105,34 @@ test('findCurrentMatch re-resolves a match after the source renames it', async (
   assert.equal(findCurrentMatch([srcNew], srcOld), srcNew, 'same title when a source-only match changes id');
   assert.equal(findCurrentMatch([{ id: 'espn:9', title: 'Other' }], old), old, 'gone from the list: keep the original');
   assert.equal(findCurrentMatch(null, old), old);
+});
+
+test('buildLiveRows gives cricket its own rows between football and the sports channels', () => {
+  const rows = buildLiveRows([
+    match('f1', 'in', '2026-09-27T13:00:00Z'),
+    match('c1', 'in', '2026-09-27T13:00:00Z', { sport: 'cricket', league: 'Cricket', priority: 50 }),
+    match('c2', 'pre', '2026-09-27T15:00:00Z', { sport: 'cricket', league: 'Cricket', priority: 50 }),
+    match('f2', 'pre', '2026-09-27T15:00:00Z'),
+  ], [{ id: 'x', name: 'X', logo: null, play: '/p' }], now);
+  assert.deepEqual(rows.map(r => [r.title, r.items.map(i => i.id)]), [
+    ['Football · Live now', ['f1']], ['Cricket · Live now', ['c1']],
+    ['Football · Today', ['f2']], ['Cricket · Today', ['c2']],
+    ['Sports channels', ['ch:x']],
+  ]);
+});
+
+test('restoreFocusById prefers the TV remote focus routine (it re-anchors the rail)', async () => {
+  const { restoreFocusById } = await import('./live-home.mjs');
+  const prevDoc = globalThis.document, prevWin = globalThis.window;
+  const card = { focus() { throw new Error('should use the remote focus'); } };
+  let via = null;
+  globalThis.document = { querySelector: () => card };
+  globalThis.window = { __tvFocus: node => { via = node; } };
+  try {
+    assert.equal(restoreFocusById('espn:1'), true);
+    assert.equal(via, card);
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+    if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
+  }
 });

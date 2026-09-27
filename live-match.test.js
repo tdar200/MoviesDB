@@ -141,3 +141,16 @@ test('joinFixtures joins a LIVE-only source to a fixture kicking off within 90 m
 test('normaliseTeam treats Republic of Ireland and Ireland as the same team', () => {
   assert.equal(normaliseTeam('Republic of Ireland'), normaliseTeam('Ireland'));
 });
+
+test('joinFixtures tags sports and never joins a cricket source to a football fixture', () => {
+  const now = Date.parse('2026-09-27T14:00:00Z');
+  const fx = fixture(1, 'India', 'Pakistan', '2026-09-27T14:00:00Z', { state: 'in' });
+  const cricket = { adapter: 'highfly', sourceId: 'c1', title: 'India vs Pakistan', league: null, kickoff: null, home: 'India', away: 'Pakistan', poster: null, status: 'in', sport: 'cricket' };
+  const out = joinFixtures([fx], [cricket], { now });
+  assert.equal(out.length, 2);
+  assert.equal(out.find(m => m.id === 'espn:1').sport, 'football');
+  assert.deepEqual(out.find(m => m.id === 'espn:1').sources, []);
+  assert.equal(out.find(m => m.id === 'src:highfly:c1').sport, 'cricket');
+  const legacy = source('n1', 'X', 'Y', '2026-09-27T15:00:00Z');
+  assert.equal(joinFixtures([], [legacy], { now })[0].sport, 'football', 'untagged sources are football');
+});

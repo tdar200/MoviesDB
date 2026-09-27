@@ -92,6 +92,8 @@ export function joinFixtures(fixtures, sourceMatches, { now = Date.now() } = {})
       // Also a fixture about to start: sources say LIVE once pre-match coverage begins.
       const soon = fx.state === 'pre' && Date.parse(fx.kickoff) - nowMs <= 90 * 60_000;
       const liveNoTime = !sm.kickoff && sm.status === 'in' && (fx.state === 'in' || soon);
+      // ESPN fixtures are football; a cricket India v Pakistan must not join one.
+      if ((sm.sport || 'football') !== 'football') continue;
       if (claimed.has(sm) || !sameTeams(fx, sm) || !(liveNoTime || closeKickoff(fx.kickoff, sm.kickoff))) continue;
       claimed.add(sm);
       sources.push({ adapter: sm.adapter, sourceId: sm.sourceId });
@@ -110,6 +112,7 @@ export function joinFixtures(fixtures, sourceMatches, { now = Date.now() } = {})
       hasStream: sources.length > 0,
       priority: leaguePriority(fx.league.name),
       poster: null,
+      sport: 'football',
     });
   }
   for (const sm of sourceMatches) {
@@ -128,6 +131,7 @@ export function joinFixtures(fixtures, sourceMatches, { now = Date.now() } = {})
       hasStream: true,
       priority: leaguePriority(sm.league),
       poster: sm.poster || null,
+      sport: sm.sport || 'football',
     });
   }
   return out;

@@ -27,7 +27,8 @@ test('parseNuvioCatalog maps metas to source matches with clean team names', () 
 
 test('parseNuvioCatalog tolerates metas without cast, description or released', () => {
   const list = parseNuvioCatalog({ metas: [{ id: 'x', name: 'A vs B' }] });
-  assert.deepEqual(list[0], { sourceId: 'x', title: 'A vs B', league: null, kickoff: null, home: 'A', away: 'B', poster: null, status: null });
+  assert.deepEqual(list[0], { sourceId: 'x', title: 'A vs B', league: null, kickoff: null, home: 'A', away: 'B', poster: null, status: null, sport: 'football' });
+  assert.equal(parseNuvioCatalog({ metas: [{ id: 'y', name: 'India vs Pakistan' }] }, 'cricket')[0].sport, 'cricket');
   assert.deepEqual(parseNuvioCatalog({}), []);
 });
 
@@ -74,11 +75,11 @@ test('createNuvioAdapter hits the football catalog and the per-id stream list, f
   assert.equal(adapter.name, 'nuvio');
   const matches = await adapter.listMatches();
   assert.ok(matches.length >= 2);
-  assert.equal(urls[0], 'https://dead.example/catalog/tv/nuvio_sports_live/genre=Football.json');
-  assert.equal(urls[1], 'https://nuviosports.xyz/catalog/tv/nuvio_sports_live/genre=Football.json');
+  assert.ok(urls.includes('https://dead.example/catalog/tv/nuvio_sports_live/genre=Football.json'), 'tried the dead host first');
+  assert.ok(urls.includes('https://nuviosports.xyz/catalog/tv/nuvio_sports_live/genre=Football.json'), 'then failed over');
   const list = await adapter.streamsFor('nuvio_sport_dlv_308_manchester-united-vs-west-ham-united');
   assert.ok(list.length >= 2);
-  assert.equal(urls[2], 'https://nuviosports.xyz/stream/tv/nuvio_sport_dlv_308_manchester-united-vs-west-ham-united.json');
+  assert.equal(urls[urls.length - 1], 'https://nuviosports.xyz/stream/tv/nuvio_sport_dlv_308_manchester-united-vs-west-ham-united.json');
   await assert.rejects(() => adapter.streamsFor('nope'), /Nuvio 404/);
   assert.deepEqual(NUVIO_HOSTS, ['https://nuviosports.xyz']);
 });
@@ -96,7 +97,7 @@ test('listMatches caches the catalog for 60 s and serves the last good list when
   const first = await adapter.listMatches();
   assert.ok(first.length >= 2);
   clock = 30_000; await adapter.listMatches();
-  assert.equal(calls, 1, 'served from cache inside 60 s');
+  assert.equal(calls, 2, 'football + cricket, then served from cache inside 60 s');
   clock = 61_000; mode = 'fail';
   assert.deepEqual(await adapter.listMatches(), first, 'network error -> last good list');
   mode = 'http'; clock = 130_000;

@@ -16,6 +16,7 @@ import { CHROME_UA } from './live-fixtures.mjs';
 import { stripDecorations } from './live-source-nuvio.mjs';
 
 export const HIGHFLY_HOSTS = ['https://sports.highfly.dev'];
+const SPORTS = ['football', 'cricket'];
 
 const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 
@@ -34,7 +35,7 @@ function cleanName(text) {
   return stripDecorations(String(text || '').replace(/[■-◿ᴀ-ᶿʰ-˿]/g, ''));
 }
 
-export function parseHighflyCatalog(json) {
+export function parseHighflyCatalog(json, sport = 'football') {
   const metas = (json && json.metas) || [];
   const out = [];
   for (const meta of metas) {
@@ -43,7 +44,7 @@ export function parseHighflyCatalog(json) {
     const m = /^(.*?)\s+vs\.?\s+(.*)$/i.exec(title);
     if (!m) continue;
     const { status, kickoff } = parseReleaseInfo(meta.releaseInfo);
-    out.push({ sourceId: meta.id, title, league: null, kickoff, home: m[1].trim(), away: m[2].trim(), poster: null, status });
+    out.push({ sourceId: meta.id, title, league: null, kickoff, home: m[1].trim(), away: m[2].trim(), poster: null, status, sport });
   }
   return out;
 }
@@ -91,7 +92,10 @@ export function createHighflyAdapter({ fetchImpl = fetch, hosts = HIGHFLY_HOSTS,
   async function listMatches() {
     if (lastGood && now() - lastGood.at < CATALOG_TTL_MS) return lastGood.list;
     try {
-      const list = parseHighflyCatalog(await getJson('/catalog/sport/sports_football.json', catalogTimeoutMs));
+      // Football and cricket; one failing sport does not hide the other.
+      const results = await Promise.allSettled(SPORTS.map(s => getJson(`/catalog/sport/sports_${s}.json`, catalogTimeoutMs).then(j => parseHighflyCatalog(j, s))));
+      if (results.every(r => r.status === 'rejected')) throw results[0].reason;
+      const list = results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
       lastGood = { at: now(), list };
       return list;
     } catch (err) {

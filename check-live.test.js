@@ -13,7 +13,7 @@ test('runLiveCheck reports per-source status from injected fetch', async () => {
   const lines = [];
   const r = await runLiveCheck({ fetchImpl, log: l => lines.push(l) });
   assert.equal(r.ok, true);
-  assert.deepEqual(r.sources.nuvio, { ok: true, matches: 1, streams: 1, error: null });
+  assert.deepEqual(r.sources.nuvio, { ok: true, matches: 2, streams: 1, error: null }, 'the fake serves one match per sport (football + cricket)');
   assert.deepEqual(r.channels, { ok: true, count: 1, error: null });
   assert.ok(lines.some(l => /nuvio/.test(l) && /ok/.test(l)));
 });
