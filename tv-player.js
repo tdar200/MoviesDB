@@ -67,7 +67,9 @@ export function createTvPlayer(modal, video, playButton) {
     rewind.style.display = s.showSeekButtons ? '' : 'none';
     forward.style.display = s.showSeekButtons ? '' : 'none';
     hud.querySelector('.tv-player-help').textContent = s.help;
-    if (s.timeText) hud.querySelector('.tv-player-time').textContent = s.timeText;
+    const time = hud.querySelector('.tv-player-time');
+    if (s.timeText) time.textContent = s.timeText;
+    else if (time.textContent === 'LIVE') time.textContent = '0:00 / 0:00'; // leaving live: do not keep the label on an embed
     modal.classList.toggle('tv-live', isLive());
   }
   const update = () => {

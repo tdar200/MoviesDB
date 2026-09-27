@@ -13,6 +13,7 @@ function fakeHlsClass(log) {
     static isSupported() { return true; }
     static Events = { MANIFEST_PARSED: 'mp', ERROR: 'err' };
     static ErrorTypes = { NETWORK_ERROR: 'networkError', MEDIA_ERROR: 'mediaError' };
+    static ErrorDetails = { FRAG_LOAD_ERROR: 'fragLoadError', FRAG_LOAD_TIMEOUT: 'fragLoadTimeOut' };
     constructor(config) { this.config = config; this.handlers = {}; log.push(['new']); FakeHls.last = this; }
     on(ev, fn) { this.handlers[ev] = fn; }
     loadSource(url) { log.push(['load', url]); }
@@ -41,6 +42,12 @@ test('LIVE_HLS_CONFIG keeps a small live buffer', () => {
   assert.equal(LIVE_HLS_CONFIG.maxBufferLength, 10);
   assert.equal(LIVE_HLS_CONFIG.liveSyncDurationCount, 3);
   assert.equal(LIVE_HLS_CONFIG.liveMaxLatencyDurationCount, 8);
+  const frag = LIVE_HLS_CONFIG.fragLoadPolicy.default;
+  assert.equal(frag.maxTimeToFirstByteMs, 8000);
+  assert.equal(frag.maxLoadTimeMs, 15000);
+  assert.equal(frag.timeoutRetry.maxNumRetry, 1);
+  assert.equal(frag.errorRetry.maxNumRetry, 1);
+  assert.equal('fragLoadingTimeOut' in LIVE_HLS_CONFIG, false, 'legacy option would be ignored next to fragLoadPolicy');
 });
 
 test('play loads the first stream through helperUrl with hls.js and marks the modal live', async () => {
@@ -128,4 +135,81 @@ test('retry clears the tried set and starts over from the first stream', async (
   const loads = h.log.filter(e => e[0] === 'load').length;
   await h.player.retry();
   assert.equal(h.log.filter(e => e[0] === 'load').length, loads + 1);
+});
+
+const loads = h => h.log.filter(e => e[0] === 'load').map(e => e[1]);
+const settle = () => new Promise(r => setTimeout(r, 0));
+
+test('stop on a player that never played leaves the shared video alone', () => {
+  const h = harness();
+  h.video.src = 'blob:movie';
+  h.video.currentTime = 1234;
+  const modal = { dataset: { live: '1' } };
+  const player = createLivePlayer({ video: h.video, modal, helperUrl: p => p, setStatus: () => {}, getHls: () => h.Hls, now: () => 0, setInterval: () => 1, clearInterval: () => {} });
+  player.stop();
+  assert.equal(h.video.src, 'blob:movie');
+  assert.equal(h.video.loaded, 0);
+  assert.equal(h.video.paused, false);
+  assert.equal(h.video.currentTime, 1234);
+});
+
+function deferredRefresh() {
+  const pending = [];
+  const refresh = () => new Promise(resolve => pending.push(resolve));
+  return { refresh, pending };
+}
+
+test('a refresh that resolves after stop + a new play does not hijack the new session', async () => {
+  const h = harness();
+  const d = deferredRefresh();
+  await h.player.play({ title: 'old', streams: [{ label: 'o1', play: '/old1' }], refresh: d.refresh });
+  h.Hls.last.emit('err', { fatal: true, type: 'networkError', response: { code: 403 } });
+  await settle();
+  assert.equal(d.pending.length, 1, 'refresh in flight');
+  h.player.stop();
+  await h.player.play({ title: 'new', streams: [{ label: 'n1', play: '/new1' }], refresh: async () => [] });
+  d.pending[0]([{ label: 'o2', play: '/old2' }]);
+  await settle(); await settle();
+  assert.deepEqual(loads(h), ['http://h/old1?key=k', 'http://h/new1?key=k']);
+  assert.equal(h.player.isActive(), true);
+  assert.equal(h.statuses.at(-1)[0], 'Connecting to n1…');
+});
+
+test('retry during a pending refresh wins over the stale continuation', async () => {
+  const h = harness();
+  const d = deferredRefresh();
+  await h.player.play({ title: 't', streams: [{ label: 's1', play: '/a' }], refresh: d.refresh });
+  h.Hls.last.emit('err', { fatal: true, type: 'networkError', response: { code: 403 } });
+  await settle();
+  assert.equal(d.pending.length, 1);
+  await h.player.retry();
+  assert.deepEqual(loads(h), ['http://h/a?key=k', 'http://h/a?key=k'], 'retry restarts from the first stream');
+  d.pending[0]([{ label: 'stale', play: '/stale' }]);
+  await settle(); await settle();
+  assert.equal(loads(h).includes('http://h/stale?key=k'), false);
+  assert.equal(loads(h).length, 2);
+});
+
+test('two non-fatal fragment failures before the first frame move to the next stream', async () => {
+  const h = harness();
+  await h.player.play({ title: 't', streams: [{ label: 's1', play: '/a' }, { label: 's2', play: '/b' }], refresh: async () => [] });
+  const first = h.Hls.last;
+  first.emit('err', { fatal: false, type: 'networkError', details: 'fragLoadTimeOut' });
+  assert.equal(loads(h).length, 1, 'one strike is tolerated');
+  first.emit('err', { fatal: false, type: 'networkError', details: 'fragLoadTimeOut' });
+  await settle();
+  assert.deepEqual(loads(h), ['http://h/a?key=k', 'http://h/b?key=k']);
+  assert.ok(h.log.findIndex(e => e[0] === 'destroy') < h.log.findIndex(e => e[1] === 'http://h/b?key=k'), 'failed instance destroyed first');
+  first.emit('mp');
+  assert.equal(h.video.played, 0, 'an abandoned instance cannot start playback');
+});
+
+test('fragment failures after the first frame are left to hls.js and the stall watchdog', async () => {
+  const h = harness();
+  await h.player.play({ title: 't', streams: [{ label: 's1', play: '/a' }, { label: 's2', play: '/b' }], refresh: async () => [] });
+  h.video.currentTime = 4;
+  h.Hls.last.emit('err', { fatal: false, type: 'networkError', details: 'fragLoadError' });
+  h.Hls.last.emit('err', { fatal: false, type: 'networkError', details: 'fragLoadError' });
+  await settle();
+  assert.equal(loads(h).length, 1);
 });

@@ -2864,9 +2864,9 @@ async function openPlayer(movie, target = null) {
 
 // Close video player modal
 function closePlayer() {
-  livePlayer.stop();
-  delete playerModal.dataset.live;
   savePlaybackPosition(); // capture the final position before we tear the player down
+  livePlayer.stop(); // after the save: stop() must never touch an on-demand position
+  delete playerModal.dataset.live;
   playerModalOpen = false;
   const recommendationsChanged = flushDwell();
   playerModal.style.display = 'none';
