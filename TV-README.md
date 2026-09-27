@@ -101,6 +101,16 @@ The Live tab lists today's football and a grid of free 24/7 sports channels.
 - Live traffic uses the system resolver with no public-DNS fallback, so the feature never routes around ISP blocks. The streamed.pk site, its API and its embed unlock chain are not used.
 - Note on sources: the per-match streams from both add-ons are unofficial restreams of pay channels. The channels in the Channels row are the broadcasters' own free streams.
 
+## Channels tab
+
+The Channels tab lists free live TV channels in category rows (News, General, Entertainment, Movies, Series, Documentary, Kids, Music, Sports, Comedy, Classic TV, Lifestyle, Food, Travel & Outdoor, Education & Science, Business, Religious, Weather, Shopping).
+
+- Sources, in `channels/*.json`, built on 27 Sep 2026 by probing every stream from this line with its true resolution measured: iptv-org UK/English (`iptv-english.json`), international and South Asian broadcasters (`international.json`), and free streaming services with UK feeds: Samsung TV Plus, Plex, Rakuten TV and STV (`fast.json`). Official or broadcaster-run streams only; restream hosts, bare IPs, geo-blocked and unattributable hosts are excluded.
+- `live-catalog.mjs` merges the lists (duplicates removed by id, URL and name), fills platform URL templates (a free anonymous Plex token is minted at startup and daily; Pluto session templates are skipped because iptv-english already carries Pluto channels), and re-checks liveness every 30 minutes by fetching each playlist. Plex is never bulk-checked, because it rate-limits the IP.
+- Rows show English, then Urdu, Punjabi, Hindi and Arabic channels first, UK channels first within those, then the sharpest; each row is capped at 100 cards.
+- Missing because no free official stream is reachable from the UK: BBC One/Two/Four (iptv-org lists them as DASH or geo-blocked), PTV, Geo, ARY, Express, Samaa, Hum and most Pakistani news channels.
+- To refresh the lists, re-run the survey and replace the JSON files; the helper picks them up on restart.
+
 Rot playbook: `npm run check-live` prints one line per source (highfly, nuvio, channels). It fails only when no match source works. If one source is BAD, check its hosts list in its `live-source-*.mjs` for a domain move. `journalctl --user -u moviesdb-helper | grep '\[live\]'` shows per-request status. Env: none required; `LIVE_RELAY_ALLOW_PRIVATE=1` is for the integration test only.
 
 Tests: `npm test` (unit). `npm run check-live-relay` probes the relay through a header-enforcing origin (needs ffmpeg). `npm run test:tv` includes `tv-live-e2e.test.js` (Playwright). 7 of the older TV e2e tests (tv-e2e.test.js, tv-player-e2e.test.js) already failed before this feature and still do.
