@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { srtToVtt, decodeSubtitle, subtitleLabel, isSubtitleFile, dedupeTrackLabels, shiftVtt } from './subtitles.js';
+import { srtToVtt, decodeSubtitle, subtitleLabel, isSubtitleFile, dedupeTrackLabels, shiftVtt, cleanSubtitleVtt } from './subtitles.js';
 
 // ---- srtToVtt ----
 
@@ -75,6 +75,18 @@ test('garbage in yields a valid, empty-but-parseable VTT rather than a throw', (
 
 test('empty input still yields a valid VTT', () => {
   assert.match(srtToVtt(''), /^WEBVTT/);
+});
+
+test('cleanSubtitleVtt removes early uploader adverts but preserves dialogue', () => {
+  const vtt = 'WEBVTT\n\n00:00:05.000 --> 00:00:15.000\n<b>Created and Encoded by -- Example --</b>\n\n00:02:00.000 --> 00:02:02.000\nHello\n';
+  const out = cleanSubtitleVtt(vtt);
+  assert.doesNotMatch(out, /Created and Encoded/);
+  assert.match(out, /Hello/);
+});
+
+test('cleanSubtitleVtt repairs common lowercase-L OCR pronouns', () => {
+  const out = cleanSubtitleVtt("WEBVTT\n\n00:01:00.000 --> 00:01:02.000\nl'm here. lt's working. l can help.\n");
+  assert.match(out, /I'm here\. It's working\. I can help\./);
 });
 
 // ---- decodeSubtitle ----

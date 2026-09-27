@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { recencyWeight, ratingNudge, buildTasteProfile, signalSignature, annotateSeen } from './recommendations.js';
+import { recencyWeight, ratingNudge, buildTasteProfile, signalSignature, annotateSeen, positiveSeedsForProfile } from './recommendations.js';
 import { candidateKey, mergeCandidates, scoreCandidate, generateReasons, rankCandidates, extractSeedCandidates, splitGenreKeywordIds, buildDiscoverRequests, coldStartBlend, pruneMetaCache } from './recommendations.js';
 import {
   bayesianRating, qualityMultiplier, recencyMultiplier,
@@ -21,6 +21,27 @@ test('recencyWeight decays ~half over 30 days', () => {
 
 test('recencyWeight defaults to 0.5 when watchedAt missing', () => {
   assert.equal(recencyWeight(undefined, NOW), 0.5);
+});
+
+test('recencyWeight keeps old watched titles at a small non-zero floor', () => {
+  assert.equal(recencyWeight(NOW - 3650 * DAY, NOW), 0.2);
+});
+
+test('positiveSeedsForProfile retains every unique watched title and prioritizes basket reactions', () => {
+  const basket = [{ id: 1, media_type: 'movie', genre_ids: [18], vote_average: 8, reaction: 'loved' }];
+  const watched = Array.from({ length: 25 }, (_, i) => ({
+    id: i + 1,
+    media_type: 'movie',
+    genre_ids: i >= 12 ? [999] : [100 + i],
+    vote_average: 7,
+    watchedAt: NOW - i * DAY,
+  }));
+  const seeds = positiveSeedsForProfile(basket, watched, NOW);
+  assert.equal(seeds.length, 25, 'duplicate basket/watch entry is deduped but no unique watch is dropped');
+  assert.equal(seeds[0].id, 1, 'explicit basket reaction has first claim on expansion slots');
+  assert.ok(seeds.some((movie) => movie.id === 25), 'oldest overflow watch remains in the positive profile input');
+  const profile = buildTasteProfile(seeds.map((movie) => ({ ...movie, _starred: movie.id === 1 })), NOW);
+  assert.ok(profile.genres[999] > 0, 'watched titles beyond the 12-seed network expansion cap affect taste');
 });
 
 test('ratingNudge maps 0-10 into 0.75..1.25, neutral when missing', () => {
@@ -1270,7 +1291,7 @@ test('itemSim: no genres and no provenance on either side => 0 (no NaN)', () => 
   assert.equal(itemSim(a, b), 0);
 });
 
-import { mmrRerank, minMax } from './recommendations.js';
+import { mmrRerank, minMax, rotateRecommendationEdition } from './recommendations.js';
 
 // Intra-list diversity = mean pairwise (1 - itemSim) over the output list.
 function ild(list, simFn) {
@@ -1617,6 +1638,15 @@ test('signalSignature: empty watchedIds is stable and distinct from non-empty', 
   assert.notEqual(empty, nonEmpty);
 });
 
+test('signalSignature changes when watched recency or engagement changes', () => {
+  const watched = [{ ...mkSigM(7), watchedAt: NOW, _engagement: { dwellMs: 5000, episodes: 0 } }];
+  const newer = signalSignature([], [], [7], [], watched);
+  const older = signalSignature([], [], [7], [], [{ ...watched[0], watchedAt: NOW - DAY }]);
+  const engaged = signalSignature([], [], [7], [], [{ ...watched[0], _engagement: { dwellMs: 90000, episodes: 2 } }]);
+  assert.notEqual(newer, older);
+  assert.notEqual(newer, engaged);
+});
+
 const META_V = 2;                               // mirrors META_CACHE_VERSION in recommendations.js
 const META_TTL = 7 * 24 * 60 * 60 * 1000;       // mirrors META_CACHE_TTL_MS (7 days)
 const mkMetaEntry = (savedAt) => ({ meta: { keywords: [], people: [] }, savedAt });
@@ -1852,6 +1882,21 @@ test('getRecommendationRows: hermetic pipeline streams final rows (non-vacuous) 
     assert.ok(!('stale' in rewritten) || rewritten.stale === undefined,
       'rewritten cache entry carries no stale flag');
     assert.equal(rewritten.sig, sig, 'rewritten cache entry keyed to the basket signature');
+
+    const watchedOnly = [{
+      id: 157336,
+      title: 'Interstellar',
+      media_type: 'movie',
+      genre_ids: [878, 18],
+      vote_average: 8.4,
+      watchedAt: NOW - DAY,
+    }];
+    const watchedOnlyResult = await getRecommendationRows(
+      { basket: [], watched: watchedOnly, downvoted: [], watchedIds: [157336] },
+      { now: NOW, limit: 20 },
+    );
+    assert.ok(watchedOnlyResult.rows.length > 0,
+      'watched history alone seeds recommendations when the basket is empty');
   } finally {
     globalThis.fetch = priorFetch;
     restoreStorage();
@@ -2067,4 +2112,21 @@ test('groupIntoRows: high-affinity titles never enter the wildcard row', () => {
   const similar = Array.from({ length: 5 }, (_, i) => grQ(3300 + i, { genres: [99], content: 0.6 }));
   const rows = groupIntoRows(similar, GROUP_PROFILE, { topCount: 0, minItems: 4 });
   assert.equal(rows.find((r) => r.kind === 'wildcard'), undefined);
+});
+
+test('rotateRecommendationEdition replaces the prior list when enough fresh candidates exist', () => {
+  const scored = [sc(1, 10), sc(2, 9), sc(3, 8), sc(4, 7), sc(5, 6)];
+  const out = rotateRecommendationEdition(scored, new Set(['movie:1', 'movie:2']), {
+    lambda: 1, limit: 2, simFn: () => 0,
+  });
+  assert.deepEqual(out.map(item => item.movie.id), [3, 4]);
+});
+
+test('rotateRecommendationEdition reuses old titles only to fill a fresh-pool shortfall', () => {
+  const scored = [sc(1, 10), sc(2, 9), sc(3, 8)];
+  const out = rotateRecommendationEdition(scored, new Set(['movie:1', 'movie:2']), {
+    lambda: 1, limit: 3, simFn: () => 0,
+  });
+  assert.equal(out[0].movie.id, 3, 'fresh candidate is always first');
+  assert.equal(out.length, 3, 'old candidates fill only the unavoidable shortfall');
 });

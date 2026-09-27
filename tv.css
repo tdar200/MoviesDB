@@ -10,12 +10,20 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-mode:not(.tv-controls-open) header > .filters, .tv-mode:not(.tv-controls-open) header > form { display: none !important; }
 /* Open filter panel: a solid, self-contained bar (no hero bleed-through), with big
    remote-friendly controls that show their current value and a clear focus ring. */
-.tv-mode.tv-controls-open header { background: #1a1a1a; box-shadow: 0 12px 30px rgba(0,0,0,.6); padding-bottom: 28px; }
+.tv-mode.tv-controls-open header { background: #1a1a1a; box-shadow: 0 12px 30px rgba(0,0,0,.6); padding-bottom: 28px; display: flex; flex-direction: column; align-items: flex-start; }
+.tv-mode.tv-controls-open .header-top { width: 100%; }
 .tv-mode.tv-controls-open #tv-browse-controls { color: #fff; background: rgba(255,255,255,.14); }
-.tv-mode .filters { margin-top: 22px; gap: 14px 16px; align-items: stretch; }
+/* A clean left sidebar: filters stacked as big full-width rows so the D-pad just
+   goes up/down through them, with the search box directly below (not floating off to
+   the side). Big targets, even spacing, one obvious column. */
+.tv-mode .filters { margin-top: 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: stretch; width: 100%; max-width: 520px; }
 .tv-mode .filter-group { display: flex; }
-.tv-mode input, .tv-mode select, .tv-mode .filter-select { font-size: 20px; min-height: 54px; }
-.tv-mode .filter-select, .tv-mode .filter-input, .tv-mode .search { background: #2b2b2b; color: #fff; border: 1px solid #3d3d3d; border-radius: 8px; padding: 0 18px; min-width: 190px; }
+.tv-mode .filter-group, .tv-mode .filter-group > *, .tv-mode .exclude-dropdown { width: 100%; }
+.tv-mode input, .tv-mode select, .tv-mode .filter-select { font-size: 21px; min-height: 60px; }
+.tv-mode .filter-select, .tv-mode .filter-input, .tv-mode .search { background: #2b2b2b; color: #fff; border: 1px solid #3d3d3d; border-radius: 8px; padding: 0 18px; min-width: 0; width: 100%; }
+/* Search: its own full-width row directly under the filter list. */
+.tv-mode.tv-controls-open #form { flex-basis: 100%; width: 100%; max-width: 520px; margin: 14px 0 0; }
+.tv-mode.tv-controls-open #form .search { width: 100%; }
 .tv-mode .filter-select:focus, .tv-mode .filter-input:focus, .tv-mode .search:focus, .tv-mode .exclude-btn:focus { border-color: #fff; }
 .tv-mode .exclude-btn { background: #2b2b2b; color: #fff; border: 1px solid #3d3d3d; border-radius: 8px; min-height: 54px; }
 /* When the filter panel is open, drop the hero so the controls + results lead. */
@@ -29,29 +37,39 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-hero-copy { position: relative; width: 54%; max-width: 760px; padding: 26px 4vw 42px; }
 .tv-eyebrow { color: #dedede; font-size: 15px; font-weight: bold; letter-spacing: 4px; margin: 0 0 18px; }
 .tv-hero h2 { font-size: clamp(34px, 3.8vw, 66px); line-height: 1.05; margin: 0 0 22px; letter-spacing: -1px; }
+.tv-hero-meta { color: #fff; font-size: 19px; font-weight: bold; margin: -10px 0 16px; }
 .tv-synopsis { font-size: 20px; line-height: 1.5; color: #ddd; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0 0 25px; }
 .tv-hero-actions { display: flex; gap: 16px; flex-wrap: wrap; }
 .tv-play { background: #f5f5f1; color: #141414; border: 0; font-size: 22px; font-weight: bold; padding: 16px 32px; border-radius: 5px; }
 .tv-more-info { background: rgba(109,109,110,.7); color: #fff; border: 0; font-size: 22px; font-weight: bold; padding: 16px 28px; border-radius: 5px; }
 .tv-row { width: 100%; min-width: 0; margin-bottom: 4px; }
 .tv-row h2 { font-size: 24px; margin: 0 0 6px; font-weight: 600; color: #e5e5e5; }
-/* Overflow is visible so the focused card's lift + shadow are not clipped; the body
-   clips horizontally instead, and the track is glided by transform (see tv-remote). */
-.tv-rail { overflow: visible; padding: 22px 0 26px; margin: 0; }
-.tv-rail-track { display: flex; gap: 14px; transition: transform .28s ease; }
-/* Bigger cards (4 per row) with a title/meta block always visible under the art. */
-.tv-card { flex: 0 0 calc((92vw - 42px) / 4); width: calc((92vw - 42px) / 4); min-width: 240px; padding: 0; border: 0; border-radius: 8px; background: #1c1c1c; color: white; text-align: left; overflow: hidden; cursor: pointer; position: relative; box-shadow: 0 2px 6px rgba(0,0,0,.45); transition: transform .18s ease, box-shadow .18s ease; }
-.tv-card-art { display: block; width: 100%; height: 13vw; min-height: 150px; object-fit: cover; background: #303030; }
+/* Clip each rail to the viewport. Leaving a 20-70 card transformed track visible
+   made the old TV repaint its full off-screen width on every D-pad press. */
+.tv-rail { overflow: hidden; padding: 22px 12px 26px; margin: 0 -12px; }
+.tv-rail-track { display: flex; gap: 14px; transition: transform .16s ease-out; }
+/* Four rich, readable recommendations per row. Each card explains why it is worth
+   opening without making the viewer leave the rail for basic context. */
+.tv-card { flex: 0 0 calc((92vw - 42px) / 4); width: calc((92vw - 42px) / 4); min-width: 240px; padding: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: #1c1c1c; color: white; text-align: left; overflow: hidden; cursor: pointer; position: relative; box-shadow: 0 6px 18px rgba(0,0,0,.28); }
+.tv-card-visual { display: block; position: relative; }
+.tv-card-visual::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 42%; background: linear-gradient(transparent, rgba(28,28,28,.72)); pointer-events: none; }
+.tv-card-art { display: block; width: 100%; height: 12vw; min-height: 150px; max-height: 235px; object-fit: cover; background: #303030; }
 .tv-card-noart { background: #303030; }
-.tv-card-badge { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,.78); color: #fff; font-size: 16px; font-weight: bold; padding: 4px 10px; border-radius: 5px; }
-.tv-card-caption { display: block; padding: 12px 14px 14px; }
-.tv-card-title { display: block; font-size: 20px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tv-card-meta { display: block; color: #b9b9b9; font-size: 16px; margin-top: 4px; }
+.tv-card-badge { position: absolute; top: 11px; left: 11px; z-index: 1; background: rgba(8,10,24,.86); color: #ffd166; font-size: 16px; font-weight: bold; padding: 5px 10px; border-radius: 5px; }
+.tv-card-caption { display: block; box-sizing: border-box; min-height: 172px; padding: 14px 16px 16px; }
+.tv-card-kicker { display: block; color: #8ab8ff; font-size: 14px; font-weight: bold; letter-spacing: 1.2px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-card-title { display: block; font-size: 21px; line-height: 1.18; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 5px; }
+.tv-card-overview { display: -webkit-box; min-height: 39px; color: #d3d5df; font-size: 16px; line-height: 1.35; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 7px; }
+.tv-card-footer { display: flex; justify-content: space-between; align-items: center; color: #aeb2c8; font-size: 15px; font-weight: bold; margin-top: 10px; }
+.tv-card-cta { color: #8ab8ff; }
 /* webOS 79 has no :focus-visible, so key off :focus. Controls get a clean bright ring;
    cards get the Netflix lift (scale + white edge) instead of a boxy outline. */
 .tv-mode :focus { outline: none; }
-.tv-mode button:focus, .tv-mode a:focus, .tv-mode select:focus, .tv-mode input:focus, .tv-mode [tabindex]:focus { outline: none; box-shadow: 0 0 0 3px rgba(255,255,255,.95); border-radius: 4px; }
-.tv-mode .tv-card:focus { transform: scale(1.08); z-index: 4; box-shadow: 0 12px 28px rgba(0,0,0,.6), 0 0 0 3px #fff; }
+.tv-mode button:focus, .tv-mode a:focus, .tv-mode select:focus, .tv-mode input:focus, .tv-mode [tabindex]:focus { outline: none; box-shadow: 0 0 0 4px #fff, 0 0 0 8px rgba(229,9,20,.65); border-radius: 4px; }
+/* Keep remote focus cheap enough for older TV GPUs: changing every card's opacity
+   and animating large blurred shadows repainted the whole rail on each D-pad press. */
+.tv-mode .tv-card:focus { outline: 4px solid #fff; outline-offset: -4px; z-index: 4; box-shadow: inset 0 -6px 0 #e50914; }
+.tv-mode .tv-card:focus .tv-card-caption { background: rgba(0,0,0,.35); }
 .tv-mode .app-tab:focus { box-shadow: none; background: rgba(255,255,255,.12); }
 .tv-mode .modal { z-index: 100; background: rgba(0,0,0,.97); padding: 24px; }
 .tv-mode .modal-content { width: 94vw; max-width: none; max-height: 94vh; overflow-y: auto; background: #181818; }
@@ -60,7 +78,6 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-mode .player-controls { gap: 15px; }
 .tv-mode .player-controls button, .tv-mode .close-btn { min-width: 48px; min-height: 48px; font-size: 22px; }
 .tv-mode .player-container { max-height: 68vh; }
-.tv-remote-hint { position: fixed; bottom: 0; left: 0; right: 0; padding: 13px 4vw; background: #141414; color: #999; font-size: 15px; z-index: 3; letter-spacing: 1px; }
 .tv-mode .rec-scroller { scrollbar-width: none; }
 .tv-mode .rec-card { min-width: 230px; }
 .tv-mode #recommendations-row { display: none; }
@@ -95,7 +112,7 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-native-player.tv-settings-open .player-controls { margin-top: 28px; }
 .tv-native-player.tv-settings-open .source-select { margin-bottom: 18px; }
 .tv-native-player .yts-status { position: absolute; top: 15%; left: 20%; right: 20%; bottom: auto; width: auto; height: auto; padding: 22px; background: rgba(0,0,0,.85); color: white; font-size: 24px; z-index: 12; border-radius: 8px; }
-.tv-subtitles { position: absolute; bottom: 7vh; left: 12vw; right: 12vw; text-align: center; white-space: pre-line; color: white; font-size: 34px; font-weight: 600; line-height: 1.4; text-shadow: -2px -2px 3px #000, 2px 2px 3px #000, 0 2px 5px #000; pointer-events: none; z-index: 15; }
+.tv-subtitles { position: absolute; bottom: 18vh; left: 12vw; right: 12vw; text-align: center; white-space: pre-line; color: white; font-size: 34px; font-weight: 600; line-height: 1.4; text-shadow: -2px -2px 3px #000, 2px 2px 3px #000, 0 2px 5px #000; pointer-events: none; z-index: 15; }
 .tv-native-player:not(.tv-hud-hidden) .tv-subtitles { bottom: 33vh; }
 
 .tv-search-notice { display: flex; align-items: center; margin-top: 16px; font-size: 22px; }
@@ -154,4 +171,35 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-episode-info { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .tv-episode-title { font-size: 20px; font-weight: bold; }
 .tv-episode-overview { font-size: 16px; color: #bbb; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tv-details-recommendations { width: 92vw; margin: 34px 0 10px; }
+.tv-details-recommendations-heading { color: #fff; font-size: 28px; margin: 0 0 4px; }
+.tv-details-recommendations .tv-rail { width: 92vw; box-sizing: border-box; }
 @media(max-width: 1100px) { .tv-details-body { max-width: 80%; } }
+
+/* ===== Navy blue theme — matches the web app (#22254b primary / #373b69 panels),
+   swapping the Netflix red accents for blue. Appended last so it wins. ===== */
+body.tv-mode { background: #22254b; }
+.tv-mode header { background: #22254b; }
+.tv-mode.tv-controls-open header { background: #2a2e5e; }
+.tv-mode h1 { color: #6ea8ff; }
+.tv-mode .tv-card { background: #373b69; }
+.tv-mode .tv-card-art, .tv-mode .tv-card-noart { background: #2a2e5e; }
+.tv-mode .filter-select, .tv-mode .filter-input, .tv-mode .search, .tv-mode .exclude-btn { background: #373b69; border-color: #4a4f86; }
+.tv-mode .tv-picker { background: #2a2e5e; }
+.tv-mode .tv-picker button { background: #373b69; }
+.tv-mode .modal-content { background: #22254b; }
+.tv-mode .modal.tv-native-player, .tv-mode .tv-native-player .modal-content { background: #000; } /* video stays black */
+.tv-more, .tv-picker button { color: #fff; }
+/* Blue accents in place of red */
+.tv-mode .app-tab.active, .tv-mode .tv-kind-tab.active { border-bottom: 3px solid #6ea8ff; color: #fff; }
+.tv-mode #tv-clear-filters { background: #2f6fed; }
+.tv-mode button:focus, .tv-mode a:focus, .tv-mode select:focus, .tv-mode input:focus, .tv-mode [tabindex]:focus { box-shadow: 0 0 0 4px #fff, 0 0 0 8px rgba(110,168,255,.7); }
+.tv-mode .tv-card:focus { box-shadow: none; }
+.tv-hero::before { background: linear-gradient(90deg, #22254b 3%, rgba(34,37,75,.88) 30%, rgba(34,37,75,.12) 85%), linear-gradient(0deg, #22254b, transparent 45%); }
+/* Top nav: hide the old view tabs (still in the DOM for the app's wiring) and show
+   the All / Movies / TV kind switcher in their place. */
+.tv-mode .app-tabs { display: none !important; }
+.tv-mode .tv-kind-nav { display: flex; gap: 8px; align-items: center; }
+/* Remaining red accents from the old theme, recoloured blue. */
+.tv-mode .tv-season-chip.active { background: #2f6fed; }
+.tv-mode .tv-progress-fill { background: #6ea8ff; }

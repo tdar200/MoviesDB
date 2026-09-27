@@ -57,6 +57,6 @@ test('stream-server checks the access key before routing, and the app sends it',
   assert.ok(firstRoute > check, 'the key check must run before the first API route');
   assert.match(server, /process\.env\.HELPER_KEY/, 'the key comes from the HELPER_KEY environment variable');
   const js = readFileSync(new URL('./script.js', import.meta.url), 'utf8');
-  assert.match(js, /buildHelperUrl\(STREAM_HELPER_BASE, path, STREAM_HELPER_KEY\)/, 'helperUrl() must append the key');
+  assert.match(js, /buildHelperUrl\(activeHelperBase, path, STREAM_HELPER_KEY\)/, 'helperUrl() must append the key');
   assert.match(js, /resolveHelperKey\(location\.search/, 'the key must be picked up from ?helperkey=');
 });

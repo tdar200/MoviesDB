@@ -112,6 +112,29 @@ export function srtToVtt(srt) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') + '\n';
 }
 
+// Clean defects that commonly come from OCR'd release subtitles without trying
+// to rewrite dialogue.  In particular, older YIFY sidecars often use a lowercase
+// L for the pronoun "I" and prepend an uploader advertisement as the first cue.
+// Work on WebVTT blocks so removing an advert also removes its timestamps.
+export function cleanSubtitleVtt(vtt) {
+  const blocks = String(vtt || '').replace(/\r\n?/g, '\n').split(/\n{2,}/);
+  const timingSeconds = (block) => {
+    const m = block.match(/((?:\d+:)?\d{2}:\d{2})[.,]\d{3}\s*-->/);
+    if (!m) return Infinity;
+    const p = m[1].split(':').map(Number);
+    return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+  };
+  const promo = /\b(?:created\s+and\s+encoded|encoded\s+by|subtitles?\s+(?:by|from)|downloaded\s+from)\b/i;
+  return blocks
+    .filter((block) => !(timingSeconds(block) < 90 && promo.test(block.replace(/<[^>]*>/g, ' '))))
+    .map((block) => block
+      .replace(/\blt(['’]s)\b/g, 'It$1')
+      .replace(/\bl(?=['’](?:m|d|ll|ve|re|s)\b)/g, 'I')
+      .replace(/\bl\b/g, 'I'))
+    .join('\n\n')
+    .replace(/\s+$/, '') + '\n';
+}
+
 // Make display labels unique. Two files in one torrent routinely map to the same
 // label (Predator: Badlands has a release-named sidecar AND Subs/English.srt, both
 // "English"). Beyond the picker looking broken, identical labels are unusable as a

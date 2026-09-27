@@ -9,7 +9,11 @@
 // sources on offer, making the user hand-pick the live one is not a workflow.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickNextSource, describeSourceAttempt, clampReadyTimeout, TV_SOURCE_ATTEMPT_CAP } from './tv-fallback.js';
+import {
+  pickNextSource, describeSourceAttempt, clampReadyTimeout, TV_SOURCE_ATTEMPT_CAP,
+  deferFailedSources, rememberSourceFailure, TV_SOURCE_FAILURE_TTL_MS,
+  describeTvSource,
+} from './tv-fallback.js';
 
 const sources = [
   { hash: 'aaa', quality: '1080p' },
@@ -21,9 +25,21 @@ test('pickNextSource returns the first source when nothing has been tried', () =
   assert.equal(pickNextSource(sources, [])?.hash, 'aaa');
 });
 
-test('pickNextSource skips every source already tried, in rank order', () => {
-  assert.equal(pickNextSource(sources, ['aaa'])?.hash, 'bbb');
-  assert.equal(pickNextSource(sources, ['aaa', 'bbb'])?.hash, 'ccc');
+test('pickNextSource leaves a failed 1080p source for an available alternative', () => {
+  assert.equal(pickNextSource(sources, ['aaa'])?.hash, 'ccc');
+  assert.equal(pickNextSource(sources, ['aaa', 'ccc'])?.hash, 'bbb');
+});
+
+test('pickNextSource retains same-quality copies as later fallbacks', () => {
+  const mixed = [
+    { hash: 'a', quality: '1080p' },
+    { hash: 'b', quality: '1080p' },
+    { hash: 'c', quality: '1080p' },
+    { hash: 'd', quality: '720p' },
+  ];
+  assert.equal(pickNextSource(mixed, ['a'])?.hash, 'd');
+  assert.equal(pickNextSource(mixed, ['a', 'd'])?.hash, 'b');
+  assert.equal(pickNextSource(mixed, ['a', 'd', 'b'])?.hash, 'c');
 });
 
 test('pickNextSource returns null once all sources are exhausted', () => {
@@ -39,6 +55,28 @@ test('pickNextSource stops at the attempt cap so a dead title cannot loop foreve
 test('pickNextSource tolerates junk input rather than throwing mid-playback', () => {
   assert.equal(pickNextSource(null, []), null);
   assert.equal(pickNextSource(sources, null)?.hash, 'aaa');
+});
+
+test('recently failed sources move to the end until their quarantine expires', () => {
+  const failures = new Map();
+  rememberSourceFailure(failures, 'aaa', 1000);
+  assert.deepEqual(deferFailedSources(sources, failures, 1001).map((s) => s.hash), ['bbb', 'ccc', 'aaa']);
+  assert.deepEqual(
+    deferFailedSources(sources, failures, 1000 + TV_SOURCE_FAILURE_TTL_MS + 1).map((s) => s.hash),
+    ['aaa', 'bbb', 'ccc'],
+  );
+});
+
+test('TV source labels omit unreliable index seeds and show actual connected peers', () => {
+  const source = { quality: '1080p', seeds: 116, remux: true, provider: 'Comet' };
+  assert.equal(describeTvSource(source), '1080p · MKV→MP4 · Comet');
+  assert.equal(describeTvSource(source, 0), '1080p · 0 connected · MKV→MP4 · Comet');
+  assert.equal(describeTvSource(source, 4), '1080p · 4 connected · MKV→MP4 · Comet');
+  assert.doesNotMatch(describeTvSource(source, 4), /116|seed/i);
+});
+
+test('cached source labels do not claim a BitTorrent peer count', () => {
+  assert.equal(describeTvSource({ quality: '1080p', debrid: true }, 0), '1080p · ⚡ cached');
 });
 
 test('describeSourceAttempt says which attempt this is, not a bare "connecting"', () => {
@@ -67,5 +105,9 @@ test('clampReadyTimeout falls back when the value is absent or junk', () => {
 
 test('clampReadyTimeout refuses a value that would hammer or hang the helper', () => {
   assert.equal(clampReadyTimeout('1', 60000), 5000);
-  assert.equal(clampReadyTimeout('999999', 60000), 60000);
+  assert.equal(clampReadyTimeout('999999', 60000), 360000);
+});
+
+test('clampReadyTimeout permits the five-minute torrent startup grace period', () => {
+  assert.equal(clampReadyTimeout('312000', 60000), 312000);
 });

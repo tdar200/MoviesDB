@@ -16,14 +16,14 @@ export function parseVtt(text) {
     return [{start,end,text:content}];
   });
 }
-export function cueText(cues, time) { return cues.filter(cue=>cue.start<=time&&cue.end>time).map(cue=>cue.text).join('\n'); }
+export function cueText(cues, time, offset = 0) { return cues.filter(cue=>cue.start<=time-offset&&cue.end>time-offset).map(cue=>cue.text).join('\n'); }
 
 // webOS native HLS can reject sidecar <track> files even when fetching the same
 // VTT succeeds. Render text safely in the app, using the video's media clock.
 export function installTvSubtitles(modal, video) {
   const overlay=document.createElement('div');overlay.className='tv-subtitles';modal.querySelector('.modal-content').append(overlay);
-  let cues=[],controller=null,refresh=null,url='';
-  const render=()=>{overlay.textContent=cueText(cues,video.currentTime||0);overlay.style.display=overlay.textContent?'block':'none';};
+  let cues=[],controller=null,refresh=null,url='',offset=0;
+  const render=()=>{overlay.textContent=cueText(cues,video.currentTime||0,offset);overlay.style.display=overlay.textContent?'block':'none';};
   async function load(target, signal) {
     try {
       const response=await fetch(target,{signal,cache:'no-store'});
@@ -34,7 +34,7 @@ export function installTvSubtitles(modal, video) {
     } catch { /* A later refresh retries partial or not-yet-downloaded subtitles. */ }
   }
   document.addEventListener('tv-subtitle-track',event=>{
-    controller?.abort();clearInterval(refresh);cues=[];url=event.detail?.url||'';render();
+    controller?.abort();clearInterval(refresh);cues=[];url=event.detail?.url||'';offset=Number(event.detail?.offset)||0;render();
     if(!url)return;
     controller=new AbortController();const signal=controller.signal;
     load(url,signal);

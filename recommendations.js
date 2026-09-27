@@ -13,6 +13,7 @@ const GENRE_NAMES = new Map();
 });
 
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30-day half-life
+const WATCHED_RECENCY_FLOOR = 0.2; // old watches still contribute without dominating recent taste
 
 // --- Engagement & star tuning ---
 const ENGAGEMENT_MIN = 0.4;
@@ -66,7 +67,7 @@ export function engagementBoost(dwellMs, episodes) {
 export function recencyWeight(watchedAt, now) {
   if (!watchedAt) return 0.5;
   const age = Math.max(0, now - watchedAt);
-  return Math.pow(0.5, age / HALF_LIFE_MS);
+  return Math.max(WATCHED_RECENCY_FLOOR, Math.pow(0.5, age / HALF_LIFE_MS));
 }
 
 // Higher-rated watched titles nudge their signal up. 0-10 → 0.75..1.25.
@@ -332,6 +333,33 @@ export function annotateSeen(seen) {
   }));
 }
 
+// Build the direct-expansion pool from every positive signal. The network fan-out
+// remains capped later by topSeeds(), but every returned title is retained in the
+// content profile. Explicit basket reactions receive first claim on expansion slots;
+// watched titles are ordered by recency, rating, and measured engagement.
+export function positiveSeedsForProfile(basket, watched, now = Date.now()) {
+  const seeds = [];
+  const used = new Set();
+  for (const movie of (basket || [])) {
+    const key = candidateKey(movie);
+    if (used.has(key)) continue;
+    used.add(key);
+    const reaction = movie.reaction === 'liked' ? LIKED_BONUS : STAR_BONUS;
+    seeds.push({ ...movie, _seedWeight: 10 + reaction * ratingNudge(movie.vote_average) });
+  }
+  for (const movie of (watched || [])) {
+    const key = candidateKey(movie);
+    if (used.has(key)) continue;
+    used.add(key);
+    const engagement = movie._engagement
+      ? engagementBoost(movie._engagement.dwellMs, movie._engagement.episodes)
+      : 1;
+    const weight = recencyWeight(movie.watchedAt, now) * ratingNudge(movie.vote_average) * engagement;
+    seeds.push({ ...movie, _seedWeight: weight });
+  }
+  return seeds;
+}
+
 // ROCCHIO: net a positive profile (basket) against a negative profile (downvoted) into a single
 // profile the candidate generator/scorer consume:  profile = pos - gamma*neg.
 // Genres keep their net value (which may go negative, so scoring penalizes disliked genres).
@@ -493,6 +521,22 @@ export function mmrRerank(scored, { lambda, perSeedCap = PER_SEED_CAP, limit, si
     chosen.push(picked);
   }
   return chosen;
+}
+// A changed taste signal creates a new recommendation edition. Keep scoring from
+// the complete profile, but prefer titles absent from the previous edition so a
+// completed movie produces a visibly fresh rail. Reuse old titles only when the
+// newly generated candidate pool cannot fill the requested limit.
+export function rotateRecommendationEdition(scored, previousKeys, options = {}) {
+  const previous = previousKeys instanceof Set ? previousKeys : new Set(previousKeys || []);
+  if (!previous.size) return mmrRerank(scored, options);
+  const freshScored = scored.filter(item => !previous.has(candidateKey(item.movie)));
+  const fresh = mmrRerank(freshScored, options);
+  const limit = options.limit;
+  if (!Number.isFinite(limit) || fresh.length >= limit) return fresh;
+  const selected = new Set(fresh.map(item => candidateKey(item.movie)));
+  const fallbackScored = scored.filter(item => previous.has(candidateKey(item.movie)) && !selected.has(candidateKey(item.movie)));
+  const fallback = mmrRerank(fallbackScored, { ...options, limit: limit - fresh.length });
+  return [...fresh, ...fallback].slice(0, limit);
 }
 
 function capitalize(s) {
@@ -1457,22 +1501,27 @@ function hashIds(ids) {
   return h.toString(36);
 }
 
-// Stable signature of the full signal set (basket + downvoted + watchedIds) for session
-// caching. Toggling a star/downvote OR watching a new title changes this, busting the cache.
-export function signalSignature(basket, downvoted, watchedIds, seen) {
+// Stable signature of the full signal set for session caching. Watch timestamps and
+// engagement are included because both affect the positive taste-profile weights.
+export function signalSignature(basket, downvoted, watchedIds, seen, watched) {
   // Basket ids carry their reaction tier so loved <-> liked flips bust the cache.
   const ids = (arr) => (arr || []).map((m) => `${m.id}${m.reaction === 'liked' ? '~l' : ''}`).sort().join(',');
   const seenPart = (seen && seen.length) ? `|s:${ids(seen)}` : '';
-  return `b:${ids(basket)}|d:${ids(downvoted)}|w:${hashIds(watchedIds)}${seenPart}`;
+  const watchedPart = (watched || []).map((m) => {
+    const engagement = m._engagement || {};
+    return `${candidateKey(m)}@${Number(m.watchedAt) || 0}:${Number(engagement.dwellMs) || 0}:${Number(engagement.episodes) || 0}`;
+  }).sort().join(',');
+  return `b:${ids(basket)}|d:${ids(downvoted)}|w:${hashIds(watchedIds)}${seenPart}|wp:${watchedPart}`;
 }
 
-// Shared pipeline: enrich basket + downvoted → positive/negative profiles → net profile
-// → candidates → rank, excluding watched ∪ downvoted ∪ basket. `input` is
-// { basket: [movie], downvoted: [movie], watchedIds: [id] }. Cached per (signature, limit).
+// Shared pipeline: enrich basket + watched + downvoted → positive/negative profiles →
+// net profile → candidates → rank, excluding watched ∪ downvoted ∪ basket.
 async function _pipeline(input, opts = {}) {
   const { limit = 20, now = Date.now(), gamma = DOWNVOTE_GAMMA, lambda = MMR_LAMBDA_PAGE, onRow, genreDist, groupOpts = {} } = opts;
   const basket = input.basket || [];
   const downvoted = input.downvoted || [];
+  const watched = input.watched || [];
+  let previousRecommendationKeys = new Set();
   const watchedIds = input.watchedIds || [];
   const seen = input.seen || [];
   // Built once, up front (only needs basket/downvoted/watchedIds): used both by the provisional
@@ -1480,19 +1529,22 @@ async function _pipeline(input, opts = {}) {
   // Composite-key the exclude set so a basketed/watched movie can't suppress a tv show of the
   // same numeric id (and vice versa). watchedIds are numeric (legacy) -> exclude BOTH types.
   const excludeIds = new Set();
-  for (const m of [...basket, ...downvoted, ...seen]) excludeIds.add(candidateKey(m));
+  for (const m of [...basket, ...watched, ...downvoted, ...seen]) excludeIds.add(candidateKey(m));
   for (const w of watchedIds) {
     if (w && typeof w === 'object') excludeIds.add(candidateKey(w));
     else { excludeIds.add(`movie:${w}`); excludeIds.add(`tv:${w}`); }
   }
 
-  const sig = signalSignature(basket, downvoted, watchedIds, seen);
+  const sig = signalSignature(basket, downvoted, watchedIds, seen, watched);
   // lambda is part of the key: the teaser (0.8) and page (0.6) must not share a cache entry.
   const cacheKey = `${RECS_CACHE_KEY}:${limit}:${lambda}`;
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
     if (cached && cached.sig === sig && !cached.stale) {
       return { profile: cached.profile, recs: cached.recs };
+    }
+    if (cached && Array.isArray(cached.recs)) {
+      previousRecommendationKeys = new Set(cached.recs.map(item => candidateKey(item.movie)));
     }
   } catch { /* ignore cache read errors */ }
 
@@ -1505,12 +1557,16 @@ async function _pipeline(input, opts = {}) {
     ...m, _starred: true, _engagement: null, _reaction: m.reaction === 'liked' ? 'liked' : 'loved',
   }));
   const annotateNeg = (arr) => arr.map((m) => ({ ...m, _starred: false, _engagement: null }));
-  const { enrichedBasket, collabCandidates } = await enrichAndExpandBasket(basket);
-  const basketEnriched = annotatePos(enrichedBasket);
+  const positiveSeeds = positiveSeedsForProfile(basket, watched, now);
+  const basketKeys = new Set(basket.map(candidateKey));
+  const { enrichedBasket: enrichedPositive, collabCandidates } = await enrichAndExpandBasket(positiveSeeds);
+  const positiveEnriched = enrichedPositive.map((movie) => basketKeys.has(candidateKey(movie))
+    ? annotatePos([movie])[0]
+    : { ...movie, _starred: false });
   const downEnriched = annotateNeg(await enrichWatchedTitles(downvoted));
-
-  // Seen-elsewhere titles join the positive pool at neutral weight (annotateSeen).
-  const posProfile = buildTasteProfile([...basketEnriched, ...annotateSeen(seen)], now);
+  const positiveKeys = new Set(positiveEnriched.map(candidateKey));
+  const seenForProfile = annotateSeen(seen).filter((movie) => !positiveKeys.has(candidateKey(movie)));
+  const posProfile = buildTasteProfile([...positiveEnriched, ...seenForProfile], now);
   const negProfile = downEnriched.length ? buildTasteProfile(downEnriched, now) : null;
   const profile = combineProfiles(posProfile, negProfile, { gamma });
 
@@ -1535,10 +1591,10 @@ async function _pipeline(input, opts = {}) {
     }
   }
 
-  const candidates = await generateCandidates(collabCandidates, basket.length, profile, negProfile);
+  const candidates = await generateCandidates(collabCandidates, positiveSeeds.length + seenForProfile.length, profile, negProfile);
   const pool = candidates.filter((c) => !excludeIds.has(candidateKey(c)));
   const scored = scorePool(pool, { profile, now, dislikeVector });
-  const recs = mmrRerank(scored, { lambda, limit });
+  const recs = rotateRecommendationEdition(scored, previousRecommendationKeys, { lambda, limit });
 
   try {
     // Strip the transient itemSim memo Sets (_genreSet/_seedSet) before persisting: JSON would
@@ -1556,7 +1612,7 @@ async function _pipeline(input, opts = {}) {
 // Home teaser orchestrator. Empty basket -> trending-only cold-start path (never []).
 export async function getRecommendations(input, opts = {}) {
   const safe = input || {};
-  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [], seen: safe.seen || [] };
+  const sig = { basket: safe.basket || [], watched: safe.watched || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [], seen: safe.seen || [] };
   // Home teaser: a single scarce row -> favor relevance (higher MMR lambda) over diversity.
   return (await _pipeline(sig, { lambda: MMR_LAMBDA_TEASER, ...opts })).recs;
 }
@@ -1564,12 +1620,12 @@ export async function getRecommendations(input, opts = {}) {
 // Recommendation page orchestrator. Empty basket -> trending-only cold-start rows (never empty).
 export async function getRecommendationRows(input, opts = {}) {
   const safe = input || {};
-  const sig = { basket: safe.basket || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [], seen: safe.seen || [] };
+  const sig = { basket: safe.basket || [], watched: safe.watched || [], downvoted: safe.downvoted || [], watchedIds: safe.watchedIds || [], seen: safe.seen || [] };
   const { limit = 60, now = Date.now(), groupOpts = {}, gamma, onRow } = opts;
   // Calibrate Top Picks + budget genre rows to the basket's own genre mix (Steck calibration).
   // Derived from the raw basket (its items carry genre_ids). Threaded into _pipeline so the
   // provisional streaming rows use the same calibration as the final rows.
-  const genreDist = genreHistogram(sig.basket);
+  const genreDist = genreHistogram([...sig.basket, ...sig.watched, ...sig.seen]);
   const { profile, recs } = await _pipeline(sig, { limit, now, gamma, onRow, genreDist, groupOpts });
   const rows = groupIntoRows(recs, profile, { genreDist, ...groupOpts });
   // Final, authoritative rows. When streaming, announce them (provisional:false) so the renderer

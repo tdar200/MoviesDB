@@ -20,29 +20,111 @@ import { CONFIG } from './config.js';
 import { parseByteRange } from './http-range.js';
 import { HlsSessions } from './hls-session.mjs';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, statfsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebTorrent from 'webtorrent';
 import { createYtsHandler } from './catalog-handlers.mjs';
 import { fetchYtsMovie } from './yts-api.mjs';
-import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle, shiftVtt } from './subtitles.js';
-import { fetchMovieSources, fetchTvSources, isRemuxableTvFile, pickEpisodeFile, pickEpisodeVideoFile } from './tv-api.mjs';
+import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle, shiftVtt, cleanSubtitleVtt } from './subtitles.js';
+import { fetchMovieSources, fetchTvSources, isRemuxableTvFile, isTranscodableTvFile, pickEpisodeFile, pickEpisodeVideoFile, pickMovieFileByIndex } from './tv-api.mjs';
+import { createResolvingFetch, fetchViaPublicDns } from './dns-fetch.js';
 import { pieceWindow } from './stream-window.mjs';
 import { helperRequestAllowed } from './helper-auth.js';
-import { clampReadyTimeout } from './tv-fallback.js';
+import { clampReadyTimeout, deferFailedSources, rememberSourceFailure } from './tv-fallback.js';
+import { lanBaseUrl } from './lan-info.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
-  fileTrackId, embeddedTrackId, parseTrackId,
+  fileTrackId, embeddedTrackId, externalTrackId, stremioTrackId, ytsSubtitleTrackId, parseTrackId,
 } from './subtitle-tracks.js';
+import { searchSubtitle, fetchSubtitleText, searchStremioSubtitle, fetchStremioSubtitleText, searchYtsSubtitle, fetchYtsSubtitleText } from './opensubtitles.mjs';
 
 const PORT = process.env.PORT || 3000;
 // Access key for the API endpoints. Empty = open (local npm start). Set it when
 // the helper is published beyond your own machines (see helper-auth.js).
 const HELPER_KEY = process.env.HELPER_KEY || '';
+
+// External subtitles fill the gap when a torrent ships none. A configured
+// OpenSubtitles.com key is preferred; the official Stremio OpenSubtitles add-on
+// supplies a no-key fallback. Results and converted VTT are cached in memory.
+const OPENSUBTITLES_API_KEY = process.env.OPENSUBTITLES_API_KEY || '';
+const osSearchCache = new Map(); // "imdb|s|e" -> { fileId, release, lang } | null
+const osVttCache = new Map();    // fileId -> converted WebVTT string
+const stremioSearchCache = new Map();
+const stremioSubtitleUrls = new Map();
+const ytsSubtitleSearchCache = new Map();
+const ytsSubtitleUrls = new Map();
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const READY_TIMEOUT_MS = 60_000;
+const failedTvSources = new Map();
+
+// Where torrent data and HLS segments live. The root filesystem is chronically
+// ~full (Docker), so downloads there stall playback the moment it hits zero. Prefer
+// the roomy /mnt/data partition; fall back to the OS temp dir. Override with
+// MEDIA_CACHE_DIR. A disk guard (below) evicts torrents if this ever runs low.
+const CACHE_ROOT = process.env.MEDIA_CACHE_DIR
+  || (existsSync('/mnt/data') ? '/mnt/data/moviesdb-cache' : join(tmpdir(), 'moviesdb-cache'));
+const TORRENT_DIR = join(CACHE_ROOT, 'webtorrent');
+const HLS_DIR = join(CACHE_ROOT, 'hls');
+try { mkdirSync(TORRENT_DIR, { recursive: true }); mkdirSync(HLS_DIR, { recursive: true }); } catch { /* fall back to defaults if unwritable */ }
+const DISK_FLOOR_BYTES = Number(process.env.MEDIA_DISK_FLOOR_BYTES || 4 * 1024 * 1024 * 1024); // keep >=4 GB free
+function freeBytes(path = CACHE_ROOT) {
+  try { const s = statfsSync(path); return s.bavail * s.bsize; } catch { return Infinity; }
+}
 const handleYts = createYtsHandler(fetchYtsMovie);
+
+// HEVC/x265 the browser can't decode is transcoded to H.264 on the fly. Default to software H.264 on this host: a CUDA/driver mismatch can make NVENC hang
+// until the TV startup deadline. Set TRANSCODE_ENCODER=h264_nvenc after repairing CUDA.
+const TRANSCODE_ENCODER = process.env.TRANSCODE_ENCODER || 'libx264';
+const TRANSCODE_GPU_DECODE = TRANSCODE_ENCODER.includes('nvenc') && process.env.TRANSCODE_GPU_DECODE !== '0';
+
+// Debrid stream URLs (Real-Debrid et al.) go through the same DNS-workaround the
+// torrent indexes use: the index host is frequently ISP-poisoned, and the URL
+// may 302 to the real file. resolveDebridInput follows redirects to the final,
+// directly-fetchable URL so ffmpeg (which uses plain system DNS) can read it.
+const resolvingFetch = createResolvingFetch();
+
+// Only https, only public hosts: `src` is fetched server-side, so block the
+// obvious SSRF targets even though the endpoint already requires the access key.
+function isSafeDebridUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== 'https:') return false;
+  // URL.hostname strips the [] from an IPv6 literal, so match the bare address.
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost')) return false;
+  // IPv4 private/loopback/link-local/unspecified.
+  if (/^(127\.|10\.|169\.254\.|0\.)/.test(h)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+  if (/^192\.168\./.test(h)) return false;
+  // IPv6 loopback (::1), unspecified (::), link-local (fe80::), ULA (fc00::/fd00::),
+  // and IPv4-mapped forms of the above (::ffff:127.0.0.1 / ::ffff:169.254.x).
+  if (h === '::1' || h === '::' || /^fe80:/.test(h) || /^f[cd][0-9a-f]{2}:/.test(h)) return false;
+  if (/^::ffff:/.test(h)) {
+    const v4 = h.replace('::ffff:', '');
+    if (/^(127\.|10\.|169\.254\.|0\.|192\.168\.)/.test(v4) || /^172\.(1[6-9]|2\d|3[01])\./.test(v4)) return false;
+  }
+  return true;
+}
+
+async function resolveDebridInput(src, signal) {
+  if (!isSafeDebridUrl(src)) throw new Error('unsafe or non-https debrid url');
+  // A ranged GET both follows redirects to the final URL and confirms the file
+  // is actually reachable; we read nothing (immediately cancel the body).
+  const res = await resolvingFetch(src, {
+    headers: { 'User-Agent': 'Mozilla/5.0', Range: 'bytes=0-1' },
+    redirect: 'follow',
+    signal,
+  });
+  try { await res.body?.cancel?.(); } catch { /* best effort */ }
+  if (!res.ok && res.status !== 206) throw new Error(`debrid url returned HTTP ${res.status}`);
+  const finalUrl = res.url && /^https?:\/\//i.test(res.url) ? res.url : src;
+  if (!isSafeDebridUrl(finalUrl)) throw new Error('debrid url redirected to an unsafe host');
+  return finalUrl;
+}
 
 // Seeding is unlimited by default, and it competes for the SAME uplink this
 // helper uses to serve video to other devices. On this line that uplink is
@@ -51,13 +133,24 @@ const handleYts = createYtsHandler(fetchYtsMovie);
 // set TORRENT_UPLOAD_LIMIT=-1 to restore unlimited seeding.
 const UPLOAD_LIMIT = Number.parseInt(process.env.TORRENT_UPLOAD_LIMIT ?? '262144', 10);
 
+// Download is the bigger offender: an unthrottled swarm pulls at the full line
+// rate (measured ~16 Mbit here), and on this box the same congested Wi-Fi carries
+// both that download AND the HLS upload to the TV — so a flat-out download starves
+// the stream it is feeding, which is exactly the "buffers forever" symptom. A
+// stream only needs to stay a little ahead of the playhead: 1.5 MB/s is ~6x the
+// average bitrate and comfortably above even high-bitrate peaks, while leaving the
+// link airtime for playback. Bytes per second; TORRENT_DOWNLOAD_LIMIT=-1 restores
+// unlimited (use that once this box is on wired ethernet, where there is headroom).
+const DOWNLOAD_LIMIT = Number.parseInt(process.env.TORRENT_DOWNLOAD_LIMIT ?? '1572864', 10);
+
 // maxConns: allow more simultaneous peers per torrent (default 55) so the
 // sequential playhead can pull from many seeders at once.
 const client = new WebTorrent({
   maxConns: 150,
   uploadLimit: Number.isFinite(UPLOAD_LIMIT) ? UPLOAD_LIMIT : 262144,
+  downloadLimit: Number.isFinite(DOWNLOAD_LIMIT) ? DOWNLOAD_LIMIT : 1572864,
 });
-const hlsSessions = new HlsSessions();
+const hlsSessions = new HlsSessions({ tmpDir: HLS_DIR });
 // The app can be served from a different origin than the stream helper (e.g. the UI
 // hosted on Vercel while streams still come from this machine). The provider bridge
 // must match the app's actual origin, so it is configurable and defaults to the
@@ -80,6 +173,10 @@ const TRACKERS = [
   'udp://open.tracker.cl:1337/announce',
   'udp://tracker.dler.org:6969/announce',
   'udp://tracker.moeking.me:6969/announce',
+  'udp://tracker2.dler.com:80/announce',
+  'udp://tracker.bitsearch.to:1337/announce',
+  'udp://pow7.com:80/announce',
+  'udp://retracker.lanta-net.ru:2710/announce',
   'udp://explodie.org:6969/announce',
   'https://tracker.tamersunion.org:443/announce',
   'udp://tracker1.bt.moack.co.kr:80/announce',
@@ -124,6 +221,13 @@ function pickVideoFile(torrent) {
   return vids.find((f) => isPlayableName(f.name)) || vids[0] || null;
 }
 
+// Historic/rare packs can have live peers while DHT no longer returns their
+// metadata. iTorrents caches the original bencoded metadata by infohash; using
+// it as the torrent id skips that deadlock while peer data still flows P2P.
+const VERIFIED_TORRENT_METADATA = new Map([
+  ['fe1d4208f36e9a1f1c2e771ee5e4e4734d6cf305', 'https://itorrents.net/torrent/FE1D4208F36E9A1F1C2E771EE5E4E4734D6CF305.torrent'],
+  ['74317662682c0f54cb076bd690cdc53e13512e6a', 'https://itorrents.net/torrent/74317662682C0F54CB076BD690CDC53E13512E6A.torrent'],
+]);
 function getTorrent(hash, name, readyTimeoutMs = READY_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const existing = torrents.get(hash);
@@ -153,8 +257,13 @@ function getTorrent(hash, name, readyTimeoutMs = READY_TIMEOUT_MS) {
       });
       return;
     }
-    const t = client.add(magnetFromHash(hash, name));
+    const torrentId = VERIFIED_TORRENT_METADATA.get(hash) || magnetFromHash(hash, name);
+    const t = client.add(torrentId, { path: TORRENT_DIR });
     torrents.set(hash, t);
+    // Stamp access on add: until the caller acquires a reader (after this promise
+    // resolves, up to 60s later while finding peers), the torrent would otherwise
+    // read as last=0 → infinitely idle → evicted mid-connect by the disk guard.
+    torrentAccess.set(hash, Date.now());
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -223,12 +332,20 @@ function destroyTorrent(hash) {
 // remux) AND no HLS session is still serving its already-remuxed segments.
 function evictIdleTorrents() {
   const now = Date.now();
+  // Disk guard: when the cache filesystem runs low, don't wait 20 minutes — free
+  // every torrent nothing is actively reading right now. This is what stops a busy
+  // session from filling the disk and freezing playback.
+  const low = freeBytes() < DISK_FLOOR_BYTES;
   const idle = [];
   for (const hash of [...torrents.keys()]) {
     if ((torrentReaders.get(hash) || 0) > 0) continue;
     if (hlsSessions.hasHash(hash)) continue;
+    const t = torrents.get(hash);
+    // Never evict a torrent still connecting/finding peers — a reader is almost
+    // certainly awaiting its metadata (getTorrent hasn't resolved yet).
+    if (t && !t.ready) continue;
     const last = torrentAccess.get(hash) || 0;
-    if (now - last >= TORRENT_IDLE_MS) { destroyTorrent(hash); continue; }
+    if (low || now - last >= TORRENT_IDLE_MS) { destroyTorrent(hash); continue; }
     idle.push([hash, last]);
   }
   // Hard cap: if still over the limit, drop the least-recently-used idle torrents.
@@ -237,8 +354,12 @@ function evictIdleTorrents() {
     idle.sort((a, b) => a[1] - b[1]);
     for (let i = 0; i < idle.length && over > 0; i++, over--) destroyTorrent(idle[i][0]);
   }
+  if (low) console.warn(`[disk] low space on ${CACHE_ROOT} (${(freeBytes() / 1e9).toFixed(1)} GB free); evicted idle torrents`);
 }
 setInterval(evictIdleTorrents, TORRENT_SWEEP_MS).unref();
+// Check disk far more often than the 5-minute idle sweep so a fast download can't
+// fill the disk between sweeps.
+setInterval(() => { if (freeBytes() < DISK_FLOOR_BYTES) evictIdleTorrents(); }, 20000).unref();
 
 // The file webtorrent is writing to on disk. Embedded-subtitle extraction and
 // seek-by-timestamp both need a real seekable file, not the on-demand stream.
@@ -275,10 +396,16 @@ function probeVideo(diskPath) {
 // Extract one embedded subtitle stream as WebVTT, cached by torrent+stream so the
 // ffmpeg pass runs once. Works on a partially-downloaded file: it yields cues for
 // whatever contiguous prefix is on disk, which grows as the episode downloads.
-const embeddedVttCache = new Map(); // `${hash}:${streamIndex}` -> vtt string
+const embeddedVttCache = new Map(); // `${hash}:${streamIndex}` -> { vtt, downloaded, at }
+const EMBEDDED_VTT_REFRESH_MS = 60000;
+const EMBEDDED_VTT_REFRESH_BYTES = 8 * 1024 * 1024;
 function extractEmbeddedVtt(diskPath, streamIndex, cacheKey, downloaded = 0) {
   const hit = embeddedVttCache.get(cacheKey);
-  if (hit && hit.downloaded === downloaded) return Promise.resolve(hit.vtt);
+  // Native webOS reloads <track> frequently. Re-extract only after both a minute
+  // and meaningful file growth; the cached cues remain valid in between.
+  if (hit && (hit.downloaded === downloaded
+    || Date.now() - hit.at < EMBEDDED_VTT_REFRESH_MS
+    || downloaded - hit.downloaded < EMBEDDED_VTT_REFRESH_BYTES)) return Promise.resolve(hit.vtt);
   return new Promise((resolve, reject) => {
     const p = spawn('ffmpeg', ['-v', 'error', '-i', diskPath, '-map', `0:${streamIndex}`, '-f', 'webvtt', 'pipe:1']);
     let out = '';
@@ -289,7 +416,7 @@ function extractEmbeddedVtt(diskPath, streamIndex, cacheKey, downloaded = 0) {
     p.on('close', () => {
       // ffmpeg logs "File ended prematurely" on a partial file but still emits
       // valid VTT for the downloaded prefix, so trust the output, not the code.
-      if (out.includes('-->')) { embeddedVttCache.set(cacheKey, { vtt: out, downloaded }); resolve(out); }
+      if (out.includes('-->')) { embeddedVttCache.set(cacheKey, { vtt: out, downloaded, at: Date.now() }); resolve(out); }
       else reject(new Error(err || 'no cues extracted'));
     });
   });
@@ -309,12 +436,13 @@ async function handleTvTorrents(res, url) {
     return res.end(JSON.stringify({ error: 'need imdb=tt.., season=, episode=' }));
   }
   try {
-    const sources = await fetchTvSources(imdb, season, episode, {
+    const rankedSources = await fetchTvSources(imdb, season, episode, {
       year: Number.isFinite(year) ? year : undefined,
       country,
       title: url.searchParams.get('title'),
       originalTitle: url.searchParams.get('originalTitle'),
     });
+    const sources = deferFailedSources(rankedSources, failedTvSources);
     const provider = sources[0]?.provider ? ` via ${sources[0].provider}` : '';
     console.log(`[tv] ${imdb} S${season}E${episode} -> ${sources.length} streamable source(s)${provider}`);
     res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
@@ -367,9 +495,12 @@ async function handleSubtitleList(res, url) {
   let duration = 0;
   const s = Number.parseInt(url.searchParams.get('s') || '', 10);
   const e = Number.parseInt(url.searchParams.get('e') || '', 10);
+  const requestedFileIndex = Number.parseInt(url.searchParams.get('file') || '', 10);
   const videoFile = (Number.isFinite(s) && Number.isFinite(e))
     ? pickEpisodeVideoFile(torrent.files, s, e)
-    : pickVideoFile(torrent);
+    : Number.isInteger(requestedFileIndex)
+      ? pickMovieFileByIndex(torrent.files, requestedFileIndex, '', true)
+      : pickVideoFile(torrent);
   if (videoFile) {
     const vIndex = torrent.files.indexOf(videoFile);
     try {
@@ -381,6 +512,62 @@ async function handleSubtitleList(res, url) {
     } catch { /* probe is best-effort; fall back to whatever files gave us */ }
   }
 
+  // Nothing bundled and nothing embedded — reach out to OpenSubtitles. Cached
+  // (including a null "searched, found nothing") so the app's retries and repeat
+  // opens don't re-query. The actual subtitle text is fetched lazily by /subtitle.
+  if (!tracks.length && OPENSUBTITLES_API_KEY) {
+    const imdb = url.searchParams.get('imdb') || '';
+    const cacheKey = `${imdb}|${Number.isFinite(s) ? s : ''}|${Number.isFinite(e) ? e : ''}`;
+    try {
+      let found = osSearchCache.get(cacheKey);
+      if (!osSearchCache.has(cacheKey)) {
+        found = await searchSubtitle({ apiKey: OPENSUBTITLES_API_KEY, imdbId: imdb, season: s, episode: e });
+        osSearchCache.set(cacheKey, found || null);
+      }
+      if (found) {
+        console.log(`[subs] opensubtitles match for ${imdb} -> file ${found.fileId} (${found.release})`);
+        tracks.push({ id: externalTrackId(found.fileId), label: 'English (OpenSubtitles)', lang: found.lang || 'en', external: true });
+      }
+    } catch (err) { console.log('[subs] opensubtitles search failed:', err.message); }
+  }
+
+  // YTS Subs carries release-specific captions. Prefer its exact BluRay/WEBRip
+  // match for YTS video files so captions do not drift between different cuts.
+  if (!tracks.length && /\byts\b/i.test(videoFile?.name || '')) {
+    const imdb = url.searchParams.get('imdb') || '';
+    const cacheKey = `${imdb}|${videoFile?.name || ''}`;
+    try {
+      let found = ytsSubtitleSearchCache.get(cacheKey);
+      if (!ytsSubtitleSearchCache.has(cacheKey)) {
+        found = await searchYtsSubtitle({ imdbId: imdb, releaseName: videoFile?.name || '' }, resolvingFetch);
+        ytsSubtitleSearchCache.set(cacheKey, found || null);
+      }
+      if (found) {
+        ytsSubtitleUrls.set(found.fileId, found.url);
+        console.log(`[subs] exact YTS match for ${imdb} -> ${found.fileId}`);
+        tracks.push({ id: ytsSubtitleTrackId(found.fileId), label: 'English (release matched)', lang: 'en', external: true });
+      }
+    } catch (err) { console.log('[subs] YTS subtitle search failed:', err.message); }
+  }
+
+  // The official Stremio OpenSubtitles add-on exposes a public, no-key subtitle
+  // resource. Use it after bundled/embedded tracks and the optional keyed API.
+  if (!tracks.length) {
+    const imdb = url.searchParams.get('imdb') || '';
+    const cacheKey = `${imdb}|${Number.isFinite(s) ? s : ''}|${Number.isFinite(e) ? e : ''}`;
+    try {
+      let found = stremioSearchCache.get(cacheKey);
+      if (!stremioSearchCache.has(cacheKey)) {
+        found = await searchStremioSubtitle({ imdbId: imdb, season: s, episode: e, releaseName: videoFile?.name || '' }, resolvingFetch);
+        stremioSearchCache.set(cacheKey, found || null);
+      }
+      if (found) {
+        stremioSubtitleUrls.set(found.fileId, found.url);
+        console.log(`[subs] no-key match for ${imdb} -> file ${found.fileId} (${found.release})`);
+        tracks.push({ id: stremioTrackId(found.fileId), label: 'English', lang: found.lang || 'en', external: true });
+      }
+    } catch (err) { console.log('[subs] no-key search failed:', err.message); }
+  }
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
   res.end(JSON.stringify({ tracks, duration }));
 }
@@ -397,6 +584,67 @@ async function handleSubtitleFile(res, url) {
   if (!/^[a-f0-9]{40}$/.test(hash) || !track) {
     res.writeHead(400);
     return res.end('invalid or missing hash/id');
+  }
+  // ?t=<seconds> shifts every cue earlier by that much, to match a stream that
+  // was restarted at a timestamp (the seek): the <video> clock is then 0-based.
+  const requestedSubShift = Math.max(0, Number(url.searchParams.get('t')) || 0);
+  const subShift = hlsSessions.subtitleStart(hash, requestedSubShift);
+
+  // An external (OpenSubtitles) track lives on a service, not in the torrent — no
+  // torrent fetch needed. Download + convert once, then serve from the cache so a
+  // seek (which re-requests with a new ?t=) doesn't spend another quota download.
+  if (track.kind === 'external') {
+    if (!OPENSUBTITLES_API_KEY) { res.writeHead(404); return res.end('external subtitles not configured'); }
+    try {
+      let vtt = osVttCache.get(track.fileId);
+      if (vtt == null) {
+        const srt = await fetchSubtitleText({ apiKey: OPENSUBTITLES_API_KEY, fileId: track.fileId });
+        vtt = cleanSubtitleVtt(srtToVtt(srt));
+        osVttCache.set(track.fileId, vtt);
+      }
+      console.log(`[subs] opensubtitles file ${track.fileId} -> ${vtt.length} bytes of VTT`);
+      res.writeHead(200, { 'content-type': 'text/vtt; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=3600' });
+      return res.end(subShift ? shiftVtt(vtt, subShift) : vtt);
+    } catch (err) {
+      res.writeHead(502);
+      return res.end('opensubtitles: ' + err.message);
+    }
+  }
+  if (track.kind === 'yts-subtitle') {
+    const sourceUrl = ytsSubtitleUrls.get(track.fileId);
+    if (!sourceUrl) { res.writeHead(404); return res.end('YTS subtitle URL expired; refresh the subtitle list'); }
+    try {
+      let vtt = osVttCache.get('yts:' + track.fileId);
+      if (vtt == null) {
+        const srt = await fetchYtsSubtitleText({ url: sourceUrl }, resolvingFetch);
+        vtt = cleanSubtitleVtt(srtToVtt(srt));
+        osVttCache.set('yts:' + track.fileId, vtt);
+      }
+      console.log(`[subs] exact YTS file ${track.fileId} -> ${vtt.length} bytes of VTT`);
+      res.writeHead(200, { 'content-type': 'text/vtt; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=3600' });
+      return res.end(subShift ? shiftVtt(vtt, subShift) : vtt);
+    } catch (err) {
+      res.writeHead(502);
+      return res.end('YTS subtitles: ' + err.message);
+    }
+  }
+  if (track.kind === 'stremio') {
+    const sourceUrl = stremioSubtitleUrls.get(track.fileId);
+    if (!sourceUrl) { res.writeHead(404); return res.end('no-key subtitle URL expired; refresh the subtitle list'); }
+    try {
+      let vtt = osVttCache.get('stremio:' + track.fileId);
+      if (vtt == null) {
+        const srt = await fetchStremioSubtitleText({ url: sourceUrl }, fetchViaPublicDns);
+        vtt = cleanSubtitleVtt(srtToVtt(srt));
+        osVttCache.set('stremio:' + track.fileId, vtt);
+      }
+      console.log(`[subs] no-key file ${track.fileId} -> ${vtt.length} bytes of VTT`);
+      res.writeHead(200, { 'content-type': 'text/vtt; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=3600' });
+      return res.end(subShift ? shiftVtt(vtt, subShift) : vtt);
+    } catch (err) {
+      res.writeHead(502);
+      return res.end('no-key subtitles: ' + err.message);
+    }
   }
   // `streaming=1` means the caller is playing this torrent right now, so the video
   // file must stay selected. Without it, a subtitle request that beat the video's
@@ -415,16 +663,14 @@ async function handleSubtitleFile(res, url) {
   // with it. Only ever deselect when we were the ones who added the torrent.
   if (isNewToUs) torrent.files.forEach((f) => f.deselect());
 
-  // ?t=<seconds> shifts every cue earlier by that much, to match a stream that
-  // was restarted at a timestamp (the seek): the <video> clock is then 0-based,
-  // but the subtitle's times are absolute, so without the shift captions lead the
-  // picture by exactly the seek offset.
-  const subShift = Math.max(0, Number(url.searchParams.get('t')) || 0);
+  // subShift (?t=<seconds>) is computed above; it shifts every cue earlier to match
+  // a stream restarted at a timestamp (the <video> clock is then 0-based, but the
+  // subtitle times are absolute — without the shift captions lead by the seek offset).
   const sendVtt = (vtt) => {
     res.writeHead(200, {
       'content-type': 'text/vtt; charset=utf-8',
       'access-control-allow-origin': '*',
-      'cache-control': track.kind === 'embedded' ? 'no-store' : 'public, max-age=3600',
+      'cache-control': track.kind === 'embedded' ? 'public, max-age=45' : 'public, max-age=3600',
     });
     res.end(subShift ? shiftVtt(vtt, subShift) : vtt);
   };
@@ -435,7 +681,7 @@ async function handleSubtitleFile(res, url) {
     if (!file) { res.writeHead(404); return res.end('no video file at that index'); }
     try { file.select(); } catch { /* keep it downloading so more cues become available */ }
     try {
-      const vtt = await extractEmbeddedVtt(diskPathOf(torrent, file), track.streamIndex, `${hash}:${track.fileIndex}:${track.streamIndex}`, file.downloaded);
+      const vtt = cleanSubtitleVtt(await extractEmbeddedVtt(diskPathOf(torrent, file), track.streamIndex, `${hash}:${track.fileIndex}:${track.streamIndex}`, file.downloaded));
       console.log(`[subs] embedded ${file.name} stream ${track.streamIndex} -> ${vtt.length} bytes of VTT`);
       return sendVtt(vtt);
     } catch (err) {
@@ -451,14 +697,21 @@ async function handleSubtitleFile(res, url) {
     return res.end('no subtitle file at that index');
   }
   // Subtitle files are tiny but sit outside the sequential video window, so the
-  // piece picker would otherwise leave them until last. Select explicitly, or
-  // subtitles arrive minutes after the picture.
+  // piece picker would otherwise leave them until last — captions then arrive 20-40s
+  // after the picture (movies felt "captionless" because the .srt was starved behind
+  // the streaming video; shows carry subs inside the downloading .mkv). Select it AND
+  // mark its pieces critical so those few KB jump the queue and captions show at once.
   try { file.select(1); } catch { /* older webtorrent: select() takes no priority */ }
+  try {
+    if (typeof torrent.critical === 'function' && Number.isInteger(file._startPiece)) {
+      torrent.critical(file._startPiece, file._endPiece);
+    }
+  } catch { /* internals vary by webtorrent version; select() above still applies */ }
 
   try {
     const raw = await file.arrayBuffer();
     const text = decodeSubtitle(Buffer.from(raw));
-    const vtt = /\.vtt$/i.test(file.name) ? text : srtToVtt(text);
+    const vtt = cleanSubtitleVtt(/\.vtt$/i.test(file.name) ? text : srtToVtt(text));
     console.log(`[subs] ${file.path} -> ${vtt.length} bytes of VTT`);
     sendVtt(vtt);
   } catch (err) {
@@ -467,15 +720,25 @@ async function handleSubtitleFile(res, url) {
   }
 }
 
+const priorityFileByTorrent = new WeakMap();
 function prioritizeTorrentFile(torrent, file, start = 0) {
-  torrent.files.forEach((f) => (f === file ? f.select() : f.deselect()));
   try {
     const w = pieceWindow({ file, pieceLength: torrent.pieceLength || 1, start });
-    torrent.deselect(w.fileStart, w.fileEnd);
+    // Reset selection only when playback changes to another file. FFmpeg opens
+    // several concurrent ranges for MP4: header, moov-at-end and first media data.
+    // Clearing the file on every request made those ranges erase each other's
+    // priorities, causing a 90-second first frame despite >1 MB/s throughput.
+    if (priorityFileByTorrent.get(torrent) !== file) {
+      torrent.files.forEach((candidate) => candidate.deselect());
+      priorityFileByTorrent.set(torrent, file);
+    }
+    // Add this request to the existing selection union. Keep both the requested
+    // bytes and the MP4 tail critical because decoding needs both before frame 1.
     torrent.select(w.window.from, w.window.to, 1);
     torrent.select(w.tail.from, w.tail.to, 1);
     torrent.critical(w.critical.from, w.critical.to);
-  } catch { /* ignore */ }
+    torrent.critical(w.tail.from, w.tail.to);
+  } catch { /* WebTorrent internals vary; the read stream still selects its range */ }
 }
 
 // Chrome cannot parse Matroska. Compatible TV releases are remuxed to a
@@ -597,12 +860,24 @@ async function handleStream(req, res, url) {
   // season pack usually omits. The app forwards it as ?ctx=; the torrent's own
   // name is the fallback when an older client does not send it.
   const releaseContext = `${url.searchParams.get('ctx') || ''} ${torrent.name || ''}`.trim();
-  const file = wantsEpisode ? pickEpisodeFile(torrent.files, s, e, releaseContext) : pickVideoFile(torrent);
+  // ?anycodec=1 (the transcode path) picks the episode by container only, WITHOUT
+  // the H.264 playability filter — the whole point is to hand an HEVC file to the
+  // GPU transcoder, which pickEpisodeFile would otherwise reject as unplayable.
+  const anyCodec = url.searchParams.get('anycodec') === '1';
+  const requestedFileIndex = Number.parseInt(url.searchParams.get('file') || '', 10);
+  const wantsIndexedMovie = !wantsEpisode && Number.isInteger(requestedFileIndex);
+  const file = wantsEpisode
+    ? (anyCodec ? pickEpisodeVideoFile(torrent.files, s, e) : pickEpisodeFile(torrent.files, s, e, releaseContext))
+    : wantsIndexedMovie
+      ? pickMovieFileByIndex(torrent.files, requestedFileIndex, releaseContext, anyCodec)
+      : pickVideoFile(torrent);
   if (!file) {
     res.writeHead(404);
     return res.end(wantsEpisode
       ? `no playable file for S${s}E${e} in this torrent`
-      : 'no playable video file in torrent');
+      : wantsIndexedMovie
+        ? `no playable movie file at index ${requestedFileIndex} in torrent`
+        : 'no playable video file in torrent');
   }
   console.log(`[stream] ${file.name} (${(file.length / 1e9).toFixed(2)} GB) peers=${torrent.numPeers} range=${req.headers.range || 'none'}`);
 
@@ -687,6 +962,134 @@ async function serveStatic(req, res, url) {
   }
 }
 
+// GET /debrid-proxy?src=<https url>  -> range-capable passthrough of a debrid
+// file. Native-MP4 debrid results play straight through this (no transcode);
+// MKV goes through /hls/start?src instead. The helper does the fetch so the TV
+// never has to resolve the (often ISP-poisoned) debrid/index host itself.
+async function handleDebridProxy(req, res, url) {
+  const src = (url.searchParams.get('src') || '').trim();
+  const controller = new AbortController();
+  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+  let finalUrl;
+  try {
+    finalUrl = await resolveDebridInput(src, controller.signal);
+  } catch (err) {
+    res.writeHead(400, { 'access-control-allow-origin': '*' });
+    return res.end(JSON.stringify({ error: err.message }));
+  }
+  try {
+    const headers = { 'User-Agent': 'Mozilla/5.0' };
+    if (req.headers.range) headers.Range = req.headers.range;
+    const upstream = await resolvingFetch(finalUrl, { headers, redirect: 'follow', signal: controller.signal });
+    // resolvingFetch's DNS-fallback path returns a buffered {ok,status,text,json}
+    // object with no streamable body/headers — we can't proxy that as a stream, so
+    // fail cleanly rather than crash on `upstream.headers.get`.
+    if (!upstream.headers || typeof upstream.headers.get !== 'function' || !upstream.body) {
+      if (!res.headersSent) { res.writeHead(502, { 'access-control-allow-origin': '*' }); res.end(JSON.stringify({ error: 'debrid source not directly streamable' })); }
+      return;
+    }
+    const passthrough = {
+      'access-control-allow-origin': '*',
+      'accept-ranges': 'bytes',
+      'content-type': upstream.headers.get('content-type') || 'video/mp4',
+    };
+    for (const h of ['content-length', 'content-range']) {
+      const v = upstream.headers.get(h);
+      if (v) passthrough[h] = v;
+    }
+    res.writeHead(upstream.status, passthrough);
+    if (req.method === 'HEAD') return res.end();
+    const { Readable } = await import('node:stream');
+    const body = Readable.fromWeb(upstream.body);
+    // Without these, an aborted/broken upstream (the normal seek/close path) emits an
+    // unhandled 'error' that crashes the whole Node process.
+    body.on('error', () => { try { res.destroy(); } catch { /* already gone */ } });
+    res.on('error', () => { try { body.destroy(); } catch { /* already gone */ } });
+    body.pipe(res);
+  } catch (err) {
+    if (res.writableEnded || res.headersSent) { try { res.destroy(); } catch { /* ignore */ } return; }
+    res.writeHead(502, { 'access-control-allow-origin': '*' });
+    res.end(JSON.stringify({ error: 'debrid fetch failed: ' + err.message }));
+  }
+}
+
+// GET /transcode?hash=..&s=..&e=..  -> a live H.264 fragmented-MP4 stream of an
+// HEVC source, GPU-transcoded. Progressive MP4 plays in plain <video> on both the
+// TV and a desktop browser (unlike HLS, which desktop Chrome can't play natively).
+// ffmpeg reads the episode through our own /stream endpoint, so webtorrent's
+// sequential piece selection still applies.
+async function handleTranscode(req, res, url) {
+  const debridSrc = (url.searchParams.get('src') || '').trim();
+  const hash = (url.searchParams.get('hash') || '').toLowerCase();
+  if (!debridSrc && !/^[a-f0-9]{40}$/.test(hash)) { res.writeHead(400); return res.end('invalid hash'); }
+  const startSec = Math.max(0, Math.min(86400, Number(url.searchParams.get('t')) || 0));
+  // Input is either a debrid HTTP file (transcode it directly) or our own /stream
+  // torrent endpoint (anycodec=1 so it serves the HEVC file rather than 404ing).
+  let inputUrl;
+  if (debridSrc) {
+    try { inputUrl = await resolveDebridInput(debridSrc); }
+    catch (err) { res.writeHead(400, { 'access-control-allow-origin': '*' }); return res.end(JSON.stringify({ error: err.message })); }
+  } else {
+    const input = new URL('/stream', `http://127.0.0.1:${server.address().port}`);
+    input.search = url.search;
+    input.searchParams.set('raw', '1');
+    input.searchParams.set('anycodec', '1');
+    input.searchParams.delete('t');
+    inputUrl = input.href;
+  }
+
+  let child = null;
+  let done = false;
+  const cleanup = () => { done = true; try { child?.kill('SIGKILL'); } catch { /* already gone */ } };
+  res.on('close', cleanup);
+
+  // One attempt: GPU decode+encode first; on total failure, software decode +
+  // (still GPU) encode. Resolve as soon as the first output byte arrives so a
+  // stalled/erroring ffmpeg falls through to the fallback instead of hanging.
+  const attempt = (gpuDecode, encoder = TRANSCODE_ENCODER) => new Promise((resolve) => {
+    const pre = [];
+    if (startSec > 0) pre.push('-ss', String(startSec));
+    if (gpuDecode) pre.push('-hwaccel', 'cuda', '-c:v', 'hevc_cuvid');
+    // Force High@4.1 so the browser MSE codec string is deterministic
+    // (avc1.640029). fragmented MP4 (empty_moov init segment + moof/mdat frags)
+    // is what the client feeds into MediaSource.
+    const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-rw_timeout', '30000000',
+      ...pre, '-i', inputUrl, '-map', '0:v:0', '-map', '0:a:0?',
+      '-c:v', encoder, '-preset', encoder.includes('nvenc') ? 'p4' : 'veryfast', '-profile:v', 'high', '-level', '4.1',
+      '-b:v', process.env.TRANSCODE_BITRATE || '4M', '-maxrate', process.env.TRANSCODE_MAXRATE || '6M', '-bufsize', '8M',
+      '-c:a', 'aac', '-ac', '2', '-b:a', '160k', '-sn',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1'];
+    child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    let firstByte = false;
+    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+    child.stdout.once('data', (chunk) => {
+      firstByte = true;
+      if (done) { resolve({ ok: true }); return; } // res already closed; don't dangle the promise
+      res.writeHead(200, { 'content-type': 'video/mp4', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+      res.write(chunk);
+      // An unhandled stdout/socket 'error' (broken pipe when the viewer closes) would
+      // otherwise crash the whole process; tear the pair down instead.
+      child.stdout.on('error', () => { try { child.kill('SIGKILL'); } catch { /* gone */ } });
+      res.on('error', () => { try { child.kill('SIGKILL'); } catch { /* gone */ } });
+      child.stdout.pipe(res);
+      resolve({ ok: true });
+    });
+    child.on('close', () => { if (!firstByte) resolve({ ok: false, stderr }); });
+    child.on('error', (e) => { if (!firstByte) resolve({ ok: false, stderr: String(e) }); });
+  });
+
+  console.log(`[transcode] ${hash || 'debrid'} enc=${TRANSCODE_ENCODER} gpuDecode=${TRANSCODE_GPU_DECODE}`);
+  let r = await attempt(TRANSCODE_GPU_DECODE);
+  if (!r.ok && !done && TRANSCODE_GPU_DECODE) r = await attempt(false); // software-decode fallback
+  if (!r.ok && !done && TRANSCODE_ENCODER !== 'libx264') r = await attempt(false, 'libx264');
+  if (!r.ok && !done) {
+    console.error(`[transcode] failed ${hash}: ${(r.stderr || '').slice(-300)}`);
+    if (!res.headersSent) { res.writeHead(502, { 'access-control-allow-origin': '*' }); res.end(JSON.stringify({ error: 'transcode failed' })); }
+    else res.end();
+  }
+}
+
 function handleStreamStatus(res, url) {
   const hash = (url.searchParams.get('hash') || '').toLowerCase().trim();
   const t = torrents.get(hash);
@@ -701,7 +1104,10 @@ function handleStreamStatus(res, url) {
       body.name = file.name;
       body.length = file.length;
       body.remux = isRemuxableTvFile(file.path || file.name);
-      body.playable = isPlayableName(file.name) || body.remux;
+      // HEVC counts as playable here because the helper can transcode it — without
+      // this, the status poll would wrongly declare a transcode source "not playable"
+      // and bail to the movie-fallback path.
+      body.playable = isPlayableName(file.name) || body.remux || isTranscodableTvFile(file.name);
     }
   }
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
@@ -721,23 +1127,73 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(401, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
       return res.end(JSON.stringify({ error: 'access key required' }));
     }
+    // Tell a same-network client (the TV) how to reach this helper directly over
+    // the LAN, bypassing the throughput-capped Tailscale funnel. The browser only
+    // adopts this if it can actually reach the address (it probes it first), so
+    // returning it here is safe even when the client is remote.
+    if (url.pathname === '/lan-info') {
+      const base = lanBaseUrl(networkInterfaces(), server.address()?.port || currentPort);
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ base }));
+    }
     if (url.pathname === '/hls/start') {
+      const debridSrc = (url.searchParams.get('src') || '').trim();
       const hash = (url.searchParams.get('hash') || '').toLowerCase();
-      if (!/^[a-f0-9]{40}$/.test(hash)) { res.writeHead(400); return res.end('invalid hash'); }
+      // Two input kinds: a torrent (infohash -> our own /stream endpoint) or a
+      // debrid file (a ready HTTP url -> ffmpeg reads it directly). Everything
+      // downstream (remux to HLS, session lifecycle) is identical.
+      if (!debridSrc && !/^[a-f0-9]{40}$/.test(hash)) { res.writeHead(400); return res.end('invalid hash'); }
       const startSec = Math.max(0, Math.min(86400, Number(url.searchParams.get('t')) || 0));
-      const input = new URL('/stream', `http://127.0.0.1:${server.address().port}`);
-      input.search = url.search;
-      input.searchParams.set('raw', '1');
-      input.searchParams.delete('t');
+      const transcode = url.searchParams.get('transcode') === '1';
       const controller = new AbortController();
       res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+      let inputUrl;
+      let sessionHash = hash;
       try {
-        const session = await hlsSessions.start({ inputUrl: input.href, hash, startSec, signal: controller.signal });
+        if (debridSrc) {
+          inputUrl = await resolveDebridInput(debridSrc, controller.signal);
+          sessionHash = 'debrid:' + createHash('sha1').update(debridSrc).digest('hex');
+        } else {
+          const input = new URL('/stream', `http://127.0.0.1:${server.address().port}`);
+          input.search = url.search;
+          input.searchParams.set('raw', '1');
+          if (transcode) input.searchParams.set('anycodec', '1'); // serve the HEVC file to ffmpeg
+          input.searchParams.delete('t');
+          inputUrl = input.href;
+        }
+        if (transcode) console.log(`[hls-transcode] ${sessionHash} enc=${TRANSCODE_ENCODER}`);
+        // Transcode HEVC->H.264 into HLS. Try the configured GPU path first,
+        // then software decode, and finally full libx264 when NVENC itself is
+        // unavailable (for example after a CUDA/driver mismatch).
+        let session;
+        let lastError;
+        const attempts = transcode
+          ? [
+            { encoder: TRANSCODE_ENCODER, gpuDecode: TRANSCODE_GPU_DECODE },
+            ...(TRANSCODE_GPU_DECODE ? [{ encoder: TRANSCODE_ENCODER, gpuDecode: false }] : []),
+            ...(TRANSCODE_ENCODER !== 'libx264' ? [{ encoder: 'libx264', gpuDecode: false }] : []),
+          ]
+          : [{ encoder: TRANSCODE_ENCODER, gpuDecode: false }];
+        for (const attempt of attempts) {
+          try {
+            session = await hlsSessions.start({ inputUrl, hash: sessionHash, startSec, signal: controller.signal, transcode, ...attempt });
+            break;
+          } catch (err) {
+            lastError = err;
+            if (controller.signal.aborted) throw err;
+            if (attempt.encoder !== 'libx264') console.warn(`[hls-transcode] ${attempt.encoder} failed; retrying`);
+          }
+        }
+        if (!session) throw lastError;
         if (res.destroyed) { await hlsSessions.stop(session.id); return; }
         res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
         return res.end(JSON.stringify(session));
       } catch (error) {
         if (res.destroyed) return;
+        if (hash) {
+          rememberSourceFailure(failedTvSources, hash);
+          console.log(`[tv] temporarily deferring failed source ${hash.slice(0, 8)}`);
+        }
         res.writeHead(504, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
         return res.end(JSON.stringify({ error: error.message }));
       }
@@ -770,6 +1226,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/subtitles') return await handleSubtitleList(res, url);
     if (url.pathname === '/subtitle') return await handleSubtitleFile(res, url);
     if (url.pathname === '/stream') return await handleStream(req, res, url);
+    if (url.pathname === '/transcode') return await handleTranscode(req, res, url);
+    if (url.pathname === '/debrid-proxy') return await handleDebridProxy(req, res, url);
     if (url.pathname === '/stream-status') return handleStreamStatus(res, url);
     if (url.pathname === '/stream-stop') {
       destroyTorrent((url.searchParams.get('hash') || '').toLowerCase().trim());

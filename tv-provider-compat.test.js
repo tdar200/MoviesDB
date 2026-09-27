@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { compatibilityScript } from './tv-provider-compat.mjs';
+import { compatibilityScript, tvAppIsRunning } from './tv-provider-compat.mjs';
 test('compatibility shim guards old MediaSession and accepts controls only from the app parent',async()=>{
  const events={};const messages=[];let played=0,paused=0;
  const video={currentTime:40,duration:100,paused:true,muted:true,volume:0,readyState:4,play(){played++;return Promise.resolve();},pause(){paused++;}};
@@ -65,6 +65,13 @@ test('server exhaustion and prolonged buffering report failure once with the res
  delete context.window.moviesProviderBridgeInstalled;context.document.body.innerText='BUFFERING';messages.length=0;
  vm.runInNewContext(source,context);
  for(let i=0;i<31;i++)tick();assert.equal(messages.filter(m=>m.type==='failure').length,1);assert.equal(messages.find(m=>m.type==='failure').detail.reason,'stalled');
+});
+
+test('TV compatibility inspection only attaches to an already-running Movies app',()=>{
+ assert.equal(tvAppIsRunning('com.webos.app.home\ncom.moviesdb.tv\n','com.moviesdb.tv'),true);
+ assert.equal(tvAppIsRunning('com.moviesdb.tv - display 0\n','com.moviesdb.tv'),true);
+ assert.equal(tvAppIsRunning('com.webos.app.home\n','com.moviesdb.tv'),false);
+ assert.equal(tvAppIsRunning('com.moviesdb.tv.preview\n','com.moviesdb.tv'),false);
 });
 
 test('terminal provider errors recover even when the failed video is paused', async()=>{

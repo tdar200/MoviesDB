@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isTextSubCodec, parseEmbeddedSubStreams, embeddedTrackLabel,
-  fileTrackId, embeddedTrackId, parseTrackId,
+  fileTrackId, embeddedTrackId, externalTrackId, stremioTrackId, ytsSubtitleTrackId, parseTrackId,
 } from './subtitle-tracks.js';
 
 test('text subtitle codecs are recognised; image-based ones are not', () => {
@@ -42,6 +42,12 @@ test('track ids round-trip', () => {
   assert.equal(embeddedTrackId(0, 2), 'e0:2');
   assert.deepEqual(parseTrackId('f3'), { kind: 'file', fileIndex: 3 });
   assert.deepEqual(parseTrackId('e0:2'), { kind: 'embedded', fileIndex: 0, streamIndex: 2 });
+  assert.equal(externalTrackId('4461104'), 'x4461104');
+  assert.deepEqual(parseTrackId('x4461104'), { kind: 'external', fileId: '4461104' });
+  assert.equal(stremioTrackId('1957415482'), 's1957415482');
+  assert.deepEqual(parseTrackId('s1957415482'), { kind: 'stremio', fileId: '1957415482' });
+  assert.equal(ytsSubtitleTrackId('374256'), 'y374256');
+  assert.deepEqual(parseTrackId('y374256'), { kind: 'yts-subtitle', fileId: '374256' });
   assert.equal(parseTrackId('garbage'), null);
   assert.equal(parseTrackId(''), null);
 });

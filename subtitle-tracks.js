@@ -49,6 +49,11 @@ export function embeddedTrackLabel({ lang, title, forced } = {}) {
 // (its index in the torrent file list); an embedded track is "e<fileIndex>:<streamIndex>".
 export function fileTrackId(fileIndex) { return `f${fileIndex}`; }
 export function embeddedTrackId(fileIndex, streamIndex) { return `e${fileIndex}:${streamIndex}`; }
+// An external track lives on a subtitle service (OpenSubtitles), not in the
+// torrent — "x<fileId>", where fileId is the service's numeric file id.
+export function externalTrackId(fileId) { return `x${fileId}`; }
+export function stremioTrackId(fileId) { return `s${fileId}`; }
+export function ytsSubtitleTrackId(fileId) { return `y${fileId}`; }
 
 export function parseTrackId(id) {
   const s = String(id || '');
@@ -56,5 +61,11 @@ export function parseTrackId(id) {
   if (m) return { kind: 'file', fileIndex: Number(m[1]) };
   m = /^e(\d+):(\d+)$/.exec(s);
   if (m) return { kind: 'embedded', fileIndex: Number(m[1]), streamIndex: Number(m[2]) };
+  m = /^x(\d+)$/.exec(s);
+  if (m) return { kind: 'external', fileId: m[1] };
+  m = /^s(\d+)$/.exec(s);
+  if (m) return { kind: 'stremio', fileId: m[1] };
+  m = /^y(\d+)$/.exec(s);
+  if (m) return { kind: 'yts-subtitle', fileId: m[1] };
   return null;
 }

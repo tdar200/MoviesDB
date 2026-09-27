@@ -26,8 +26,51 @@ export function installTvRemote() {
   controls.onclick = () => {
     const on = !document.body.classList.contains('tv-controls-open');
     toggleControls(on);
-    if (on) Array.from(header.querySelectorAll('input[type="search"]')).find(visible)?.focus();
+    // Focus the first FILTER, not the search box — landing on a text input popped the
+    // on-screen keyboard every time the panel opened, blocking the filters behind it.
+    if (on) (Array.from(header.querySelectorAll('.filter-select')).find(visible) || Array.from(header.querySelectorAll('input[type="search"]')).find(visible))?.focus();
   };
+
+  // Top nav: All / Movies / TV. Replaces the old view tabs (Recommended/Watched/
+  // My List/YouTube), whose content now lives as rows on the home. The old tabs stay
+  // in the DOM (hidden) because the rest of the app wires to them by id.
+  const kindNav = document.createElement('div');
+  kindNav.className = 'tv-kind-nav';
+  [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV']].forEach(([kind, label], i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'app-tab tv-kind-tab' + (i === 0 ? ' active' : '');
+    b.dataset.kind = kind;
+    b.textContent = label;
+    b.onclick = () => {
+      toggleControls(false);
+      kindNav.querySelector('.tv-top250-tab')?.classList.remove('active');
+      if (window.__setTvMediaKind) window.__setTvMediaKind(kind);
+    };
+    kindNav.append(b);
+  });
+  const imdbTop250 = document.createElement('button');
+  imdbTop250.type = 'button';
+  imdbTop250.className = 'app-tab tv-top250-tab';
+  imdbTop250.textContent = 'IMDb Top 250';
+  imdbTop250.onclick = () => {
+    toggleControls(false);
+    kindNav.querySelectorAll('.tv-kind-tab').forEach(button => button.classList.remove('active'));
+    imdbTop250.classList.add('active');
+    document.getElementById('top250-btn').click();
+  };
+  kindNav.append(imdbTop250);
+  const appTabs = document.querySelector('.app-tabs');
+  if (appTabs) appTabs.parentNode.insertBefore(kindNav, appTabs);
+  // The home focus anchor is now the active kind tab (was #tab-movies).
+  const homeAnchor = () => document.querySelector('.tv-kind-tab.active') || document.querySelector('.tv-kind-tab') || document.getElementById('tab-movies');
+
+  // Genre / theme / score / provider are browsable ROWS now, so drop them from the
+  // filter dropdowns (kept in the DOM so the app's wiring doesn't break). Media type
+  // is the top nav. What's left in the panel: year, language, sort, votes, actor, search.
+  ['genre', 'theme', 'min-rating', 'provider', 'exclude-genres-btn', 'media-type'].forEach((id) => {
+    document.getElementById(id)?.closest('.filter-group, .exclude-dropdown')?.style.setProperty('display', 'none', 'important');
+  });
   const searchNotice = document.createElement('div');
   searchNotice.className = 'tv-search-notice';
   const searchLabel = document.createElement('span');
@@ -73,10 +116,6 @@ export function installTvRemote() {
   window.addEventListener('popstate', syncClearFilters);
   syncClearFilters();
 
-  const hint = document.createElement('div');
-  hint.className = 'tv-remote-hint';
-  hint.textContent = '↑ ↓ ← →  Browse     OK  Select     Back  Return';
-  document.body.append(hint);
   const nativeVideo = document.getElementById('player-video');
   const playback = document.createElement('button');
   playback.id = 'tv-play-pause';
@@ -127,7 +166,7 @@ export function installTvRemote() {
     detailsWasOpen = open;
     if (!open) setTimeout(() => {
       if (modalOpen() || detailsOpen()) return;
-      focus(lastCardFocus && lastCardFocus.isConnected ? lastCardFocus : document.getElementById('tab-movies'));
+      focus(lastCardFocus && lastCardFocus.isConnected ? lastCardFocus : homeAnchor());
     }, 0);
   }).observe(detailsOverlay, { attributes: true, attributeFilter: ['hidden'] });
   let modalWasOpen = false;
@@ -138,23 +177,33 @@ export function installTvRemote() {
   const anchorRail = card => {
     const rail = card.closest('.tv-rail');
     const track = rail && rail.querySelector('.tv-rail-track');
-    if (!rail || !track) { card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' }); return; }
+    if (!rail || !track) { card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' }); return null; }
     const gutter = 12;
     const tx = parseFloat(track.dataset.tx || '0');
-    const delta = (rail.getBoundingClientRect().left + gutter) - card.getBoundingClientRect().left;
+    const railRect = rail.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    let delta = 0;
+    if (cardRect.left < railRect.left + gutter) delta = (railRect.left + gutter) - cardRect.left;
+    else if (cardRect.right > railRect.right - gutter) delta = (railRect.right - gutter) - cardRect.right;
     let next = tx + delta;
     const min = Math.min(0, rail.clientWidth - track.scrollWidth);
     if (next > 0) next = 0;
     if (next < min) next = min;
     track.dataset.tx = String(next);
     track.style.transform = `translateX(${next}px)`;
+    return cardRect;
   };
   const focus = node => {
     if (!node) return;
     node.focus({ preventScroll: true });
     if (node.classList && node.classList.contains('tv-card')) {
-      anchorRail(node);
-      node.scrollIntoView({ block: 'nearest', behavior: 'auto' }); // vertical only; horizontal is the transform
+      const rect = anchorRail(node);
+      // The rail transform owns horizontal movement. Only invoke native scrolling
+      // when a card is actually outside the vertical viewport; scrollIntoView on
+      // every left/right press forces a second full layout on older webOS Chromium.
+      if (rect && (rect.top < 0 || rect.bottom > window.innerHeight)) {
+        node.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+      }
     } else {
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
     }
@@ -213,7 +262,7 @@ export function installTvRemote() {
       const row = Array.from(document.querySelectorAll('[data-tv-row]')).find(r => r.dataset.tvRow === previousRow);
       const matchingCard = scope => Array.from(scope.querySelectorAll('.tv-card')).find(c => c.dataset.movieId === previousMovieId);
       const replacement = previousMovieId && ((row && matchingCard(row)) || matchingCard(document));
-      focus(previousFocus?.isConnected && visible(previousFocus) ? previousFocus : replacement || document.getElementById('tab-movies'));
+      focus(previousFocus?.isConnected && visible(previousFocus) ? previousFocus : replacement || homeAnchor());
     }
   }).observe(modal, { attributes: true, attributeFilter: ['style'] });
   document.querySelectorAll('.app-tabs button').forEach(button => button.addEventListener('click', () => {
@@ -233,7 +282,7 @@ export function installTvRemote() {
       if (detailsOpen()) { document.dispatchEvent(new CustomEvent('tv-close-details')); return; }
       if (modalOpen()) { document.getElementById('close-modal').click(); return; }
       if (document.body.classList.contains('tv-controls-open')) { toggleControls(false); focus(controls); return; }
-      if (active !== document.getElementById('tab-movies')) { focus(document.getElementById('tab-movies')); return; }
+      if (active !== homeAnchor()) { focus(homeAnchor()); return; }
       if (window.webOS?.platformBack) window.webOS.platformBack();
       else if (/web0?os/i.test(navigator.userAgent)) window.close();
       return;
@@ -265,7 +314,18 @@ export function installTvRemote() {
     if ((active?.tagName === 'VIDEO' || active?.id === 'ts-bar') && ['ArrowLeft', 'ArrowRight'].includes(key)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    const items = candidates();
+    const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
+    const sign = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1;
+    const rail = active?.closest('.tv-rail, .rec-scroller');
+    // Rail navigation is the overwhelmingly common TV action. Resolve it within
+    // the current row before scanning every focusable node and forcing visibility
+    // checks/layout across the whole document.
+    if (horizontal && rail) {
+      const row = Array.from(rail.querySelectorAll(selector));
+      const next = row[row.indexOf(active) + sign];
+      if (next) focus(next);
+      return;
+    }
     if (!modalOpen() && !picker && key === 'ArrowDown' && active?.closest('.header-top') && !document.body.classList.contains('tv-controls-open')) {
       focus(document.querySelector('.tv-play') || document.querySelector('#main ' + selector.split(',')[0]));
       return;
@@ -274,18 +334,27 @@ export function installTvRemote() {
       focus(document.querySelector('.app-tab.active'));
       return;
     }
+    // Move between catalogue rows by column. Geometry-scoring every focusable
+    // card made each up/down press scan 800+ cards once the full home loaded.
+    if (!modalOpen() && !picker && !detailsOpen() && !horizontal && active?.classList.contains('tv-card')) {
+      const section = active.closest('.tv-row');
+      const rows = Array.from(document.querySelectorAll('#main .tv-row'));
+      const rowIndex = rows.indexOf(section);
+      const targetRow = rows[rowIndex + sign];
+      if (targetRow) {
+        const column = Array.from(section.querySelectorAll('.tv-card')).indexOf(active);
+        const targetCards = Array.from(targetRow.querySelectorAll('.tv-card'));
+        focus(targetCards[Math.min(Math.max(0, column), targetCards.length - 1)]);
+      } else if (sign < 0) {
+        focus(document.querySelector('.tv-play') || homeAnchor());
+      }
+      return;
+    }
+    const items = candidates();
     if (!items.includes(active)) { focus(items[0]); return; }
-    const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
-    const sign = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1;
     const origin = active.getBoundingClientRect();
     const ox = origin.left + origin.width / 2;
     const oy = origin.top + origin.height / 2;
-    const rail = active.closest('.tv-rail, .rec-scroller');
-    if (horizontal && rail) {
-      const row = Array.from(rail.querySelectorAll(selector)).filter(visible);
-      focus(row[row.indexOf(active) + sign]);
-      return;
-    }
     let best = null;
     let bestScore = Infinity;
     for (const item of items) {
@@ -301,5 +370,5 @@ export function installTvRemote() {
     }
     focus(best);
   }, true);
-  focus(document.getElementById('tab-movies'));
+  focus(homeAnchor());
 }

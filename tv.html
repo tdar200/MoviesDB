@@ -6,7 +6,7 @@
     <meta name="description" content="Browse trending movies, TV shows, and YouTube videos" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="style.css" />
-    <link rel="stylesheet" href="tv.css" />
+    <link rel="stylesheet" href="tv.css?v=4e31a7e9b9" />
   </head>
   <body class="tv-mode">
     <header>
@@ -284,6 +284,11 @@
             <select id="subtitle-select" class="source-select" aria-label="Select subtitles" style="display: none;">
               <!-- Populated by JavaScript (subtitle tracks inside the YTS torrent) -->
             </select>
+            <div id="subtitle-sync-controls" class="episode-controls" style="display: none;">
+              <button id="subtitle-earlier" type="button" class="nav-btn" aria-label="Show subtitles earlier" title="Subtitles earlier">−</button>
+              <span id="subtitle-offset-label" aria-live="polite">Sub +0.0s</span>
+              <button id="subtitle-later" type="button" class="nav-btn" aria-label="Show subtitles later" title="Subtitles later">+</button>
+            </div>
             <div id="episode-controls" class="episode-controls" style="display: none;">
               <select id="season-select" class="episode-select" aria-label="Select season">
                 <!-- Populated by JavaScript -->
@@ -314,7 +319,7 @@
           <!-- crossorigin: the stream helper can live on another origin (STREAM_HELPER_BASE); without
                CORS mode the browser silently drops cross-origin subtitle <track>s. The helper sends
                Access-Control-Allow-Origin: * on /stream and /subtitle, so this is safe. -->
-          <video id="player-video" controls playsinline preload="metadata" crossorigin="anonymous" style="display: none;"></video>
+          <video id="player-video" controls playsinline preload="auto" crossorigin="anonymous" style="display: none;"></video>
           <!-- Torrent (remuxed MKV) seek bar. A live-remuxed stream has no seekable
                index, so the native scrub bar cannot move within it; this bar seeks
                by restarting the stream at a timestamp (?t=). Shown only for remuxed

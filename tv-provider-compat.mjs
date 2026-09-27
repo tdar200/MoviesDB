@@ -9,6 +9,9 @@ export function popupGuardScript(popup, parentOrigin) {
   const origin = JSON.stringify(parentOrigin).replace(/</g, '\\u003c');
   return `(function(){var ancestors=Array.prototype.slice.call(location.ancestorOrigins||[]);if(ancestors.indexOf(${origin})<0)return;if(location.hostname!=='player.vidlove.cc'&&ancestors.indexOf('https://player.vidlove.cc')<0)return;${popup}\n})();`;
 }
+export function tvAppIsRunning(output, appId) {
+  return String(output).split(/\r?\n/).some(line => line.trim().split(/\s+-\s+display\s+/)[0] === appId);
+}
 export function startTvProviderCompat({ device = 'lgtv', appId = 'com.moviesdb.tv', appOrigin, log = console.log } = {}) {
   let stopped = false, child, socket, retry;
   const parentOrigin = new URL(appOrigin).origin;
@@ -62,7 +65,7 @@ export function startTvProviderCompat({ device = 'lgtv', appId = 'com.moviesdb.t
     for (const job of pending.values()) { clearTimeout(job.timer); job.reject(new Error('TV disconnected')); }
     pending.clear();
   }
-  function run() {
+  function inspect() {
     if (stopped) return;
     let output = '', attached = false;
     child = spawn(process.execPath, ['--import', preload, process.env.TV_ARES_INSPECT || join(dirname(process.execPath), 'ares-inspect'), '-d', device, appId], {
@@ -79,8 +82,25 @@ export function startTvProviderCompat({ device = 'lgtv', appId = 'com.moviesdb.t
     });
     child.stderr.on('data', () => {});
     child.on('error', error => { if (!stopped) log('[TV] Inspector unavailable: ' + error.message); });
-    child.on('close', () => { if (!stopped) retry = setTimeout(run, 15000); });
+    child.on('close', () => { if (!stopped) retry = setTimeout(poll, 15000); });
   }
-  run();
+  function poll() {
+    if (stopped) return;
+    let output = "";
+    const launcher = process.env.TV_ARES_LAUNCH || join(dirname(process.execPath), "ares-launch");
+    child = spawn(process.execPath, [launcher, "-d", device, "--running"], {
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.on("data", chunk => { output = (output + chunk.toString()).slice(-4000); });
+    child.stderr.on("data", () => {});
+    child.on("error", error => { if (!stopped) log("[TV] App check unavailable: " + error.message); });
+    child.on("close", code => {
+      if (stopped) return;
+      if (code === 0 && tvAppIsRunning(output, appId)) inspect();
+      else retry = setTimeout(poll, 15000);
+    });
+  }
+  poll();
   return () => { stopped = true; clearTimeout(retry); socket?.close(); child?.kill('SIGTERM'); };
 }

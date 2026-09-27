@@ -3,14 +3,16 @@ import { initYouTube, activateYouTube } from './youtube.js';
 import { getRecommendations, getRecommendationRows, clearRecommendationCache } from './recommendations.js';
 import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
-import { playbackHealth } from './playback-health.js';
-import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow } from './tv-ui.js';
-import { createTvDetails } from './tv-details.js';
-import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows } from './tv-rows.mjs';
+import { playbackHealth, bufferRecovery } from './playback-health.js';
+import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow, sortTvTrackByRating } from './tv-ui.js';
+import { createTvDetails, mergeTitleRecommendations } from './tv-details.js';
+import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows, staticHomeRows } from './tv-rows.mjs';
 import { fetchTmdbJson } from './tmdb-queue.js';
 import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
 import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentFailure } from './yts-status.js';
 import { dedupeTrackLabels } from './subtitles.js';
+import { IMDB_TOP_250 } from './imdb-top250.js';
+import { EMMY_WINNERS } from './emmy-winners.js';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -68,6 +70,10 @@ const playerVideo = document.getElementById('player-video');
 const ytsStatusEl = document.getElementById('yts-status');
 const qualitySelect = document.getElementById('quality-select');
 const subtitleSelect = document.getElementById('subtitle-select');
+const subtitleSyncControls = document.getElementById('subtitle-sync-controls');
+const subtitleEarlierBtn = document.getElementById('subtitle-earlier');
+const subtitleLaterBtn = document.getElementById('subtitle-later');
+const subtitleOffsetLabel = document.getElementById('subtitle-offset-label');
 const playerTitle = document.getElementById('player-title');
 const closeModalBtn = document.getElementById('close-modal');
 const playerFullscreenBtn = document.getElementById('player-fullscreen');
@@ -81,7 +87,8 @@ const tabTrailer = document.getElementById('tab-trailer');
 import { EMBED_SOURCES, IFRAME_BLOCKED_PROVIDERS, BLOCKED_PROVIDERS } from './embed-sources.js';
 import { pickFullscreenTarget, toggleFullscreen, isTypingTarget, isFullscreenKey } from './player-fullscreen.js';
 import { buildHelperUrl, resolveHelperKey } from './helper-url.js';
-import { pickNextSource, describeSourceAttempt, TV_SOURCE_ATTEMPT_CAP } from './tv-fallback.js';
+import { isAdoptableLanBase } from './lan-info.mjs';
+import { pickNextSource, describeSourceAttempt, describeTvSource, TV_SOURCE_ATTEMPT_CAP } from './tv-fallback.js';
 import { absolutePosition, seekTarget, seekToFraction, formatTime } from './torrent-seek.js';
 let currentSourceIndex = 0;
 // Preferred default source for the player. The TV app opens with ?source=<name>
@@ -142,8 +149,70 @@ const HELPER_AVAILABLE = IS_LOCAL_HELPER || STREAM_HELPER_BASE !== '';
 // kept in localStorage; every helper URL carries it as ?key=.
 const STREAM_HELPER_KEY = resolveHelperKey(location.search, (() => { try { return localStorage; } catch { return null; } })());
 
-// Build a helper endpoint URL (prepends the configured base; '' = same origin).
-const helperUrl = (path) => buildHelperUrl(STREAM_HELPER_BASE, path, STREAM_HELPER_KEY);
+// The helper base actually in use. It starts as the configured base (usually the
+// Tailscale funnel) but can be upgraded at runtime to a direct LAN address when
+// the TV turns out to be on the same network as the helper — the funnel routes
+// through a relay that caps throughput below a video bitrate, while a LAN-direct
+// hop runs an order of magnitude faster. See upgradeHelperToLan() below.
+let activeHelperBase = STREAM_HELPER_BASE;
+let lanProbeInFlight = null;
+
+function rememberedLanHelperBase() {
+  try {
+    const base = localStorage.getItem('streamHelperLanBase') || '';
+    return isAdoptableLanBase(base) ? base.replace(/\/+$/, '') : '';
+  } catch { return ''; }
+}
+
+// Build a helper endpoint URL (prepends the active base; '' = same origin).
+const helperUrl = (path) => buildHelperUrl(activeHelperBase, path, STREAM_HELPER_KEY);
+
+// Resolves once the LAN-upgrade probe has finished (or was skipped). Playback
+// awaits this so the very first stream already uses the fast path when available.
+let helperBaseReady = Promise.resolve();
+
+// Ask the helper for its LAN address and, if this client can actually reach it,
+// switch to it. Only ever upgrades funnel/remote → private-LAN http; never the
+// reverse. Silent and best-effort: any failure just keeps the configured base.
+function upgradeHelperToLan() {
+  // Only meaningful when we're pointed at a remote base (the funnel). A same-origin
+  // or already-local helper needs no upgrade. Reuse an active probe so playback and
+  // startup cannot launch duplicate requests on the TV's constrained webview.
+  if (!STREAM_HELPER_BASE || IS_LOCAL_HELPER) return Promise.resolve();
+  if (lanProbeInFlight) return lanProbeInFlight;
+  lanProbeInFlight = (async () => {
+    const candidates = [];
+    const remembered = rememberedLanHelperBase();
+    if (remembered) candidates.push(remembered);
+    try {
+      const info = await fetchWithTimeout(buildHelperUrl(STREAM_HELPER_BASE, '/lan-info', STREAM_HELPER_KEY), 8000);
+      const { base } = await info.json();
+      if (isAdoptableLanBase(base) && !candidates.includes(base)) candidates.push(base);
+    } catch { /* a remembered LAN address can still work while the relay is slow */ }
+    for (const base of candidates) {
+      try {
+        const probe = await fetchWithTimeout(buildHelperUrl(base, '/lan-info', STREAM_HELPER_KEY), 4000);
+        if (!probe || !probe.ok) continue;
+        activeHelperBase = base;
+        try { localStorage.setItem('streamHelperLanBase', base); } catch { /* storage unavailable */ }
+        console.log('[helper] using LAN-direct base', base);
+        return;
+      } catch { /* try the next advertised/private address */ }
+    }
+  })().finally(() => { lanProbeInFlight = null; });
+  helperBaseReady = lanProbeInFlight;
+  return helperBaseReady;
+}
+
+// fetch with an abort timeout (webOS's fetch has no timeout option).
+function fetchWithTimeout(url, ms) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { signal: ac.signal, cache: 'no-store' }).finally(() => clearTimeout(t));
+}
+
+// Kick the probe off at load so the fast path is resolved before playback.
+if (HELPER_AVAILABLE) upgradeHelperToLan();
 
 // Provider test results storage key
 const PROVIDER_RESULTS_KEY = 'providerTestResults';
@@ -218,6 +287,9 @@ const nextEpisodeBtn = document.getElementById('next-episode');
 
 // Current movie being played (for source switching)
 let currentPlayingMovie = null;
+// IMDb id of the current playback, passed to the helper's /subtitles so it can fall
+// back to OpenSubtitles when the torrent itself ships no subtitles (YIFY .mp4s).
+let currentSubtitleImdb = '';
 let dwellTitleId = null;       // id of the title whose watch session is in progress
 let dwellMovie = null;         // its movie object, for committing to watched history
 let playerModalOpen = false;   // is the player modal visible?
@@ -251,18 +323,22 @@ function syncWatchTimer() {
 
 // Persist this session's active watch time and, if it crossed the threshold, commit the
 // title to watched history. Idempotent — safe to call on close, reopen, and pagehide.
-function flushDwell() {
-  if (!dwellTitleId) return;
+function flushDwell(options = {}) {
+  if (!dwellTitleId) return false;
+  const forceWatched = options.forceWatched === true;
   watchTimer.pause(Date.now());
   const watchMs = watchTimer.elapsed(Date.now());
-  if (watchMs > 0) {
-    recordDwell(dwellTitleId, watchMs);
-    if (dwellMovie && watchMs >= watchedThresholdMs()) addToWatchedHistory(dwellMovie);
-    clearRecommendationCache();
+  let changed = watchMs > 0;
+  if (watchMs > 0) recordDwell(dwellTitleId, watchMs);
+  if (dwellMovie && (forceWatched || watchMs >= watchedThresholdMs())) {
+    addToWatchedHistory(dwellMovie);
+    changed = true;
   }
+  if (changed) clearRecommendationCache();
   watchTimer.reset();
   dwellTitleId = null;
   dwellMovie = null;
+  return changed;
 }
 
 // Current trailer key
@@ -281,7 +357,13 @@ const WATCH_PROGRESS_KEY = 'tvShowProgress';
 function saveWatchProgress(showId, season, episode) {
   try {
     const progress = JSON.parse(localStorage.getItem(WATCH_PROGRESS_KEY) || '{}');
-    progress[showId] = { season, episode, timestamp: Date.now() };
+    // Read-modify-write: this shares the entry with savePlaybackPosition (which
+    // stores positionSec/durationSec). Switching episode resets the position to the
+    // new episode's start, but must not drop the other fields' shape.
+    const prev = progress[showId] || {};
+    const changedEpisode = prev.season !== season || prev.episode !== episode;
+    progress[showId] = { ...prev, season, episode, timestamp: Date.now() };
+    if (changedEpisode) { progress[showId].positionSec = 0; progress[showId].durationSec = 0; }
     localStorage.setItem(WATCH_PROGRESS_KEY, JSON.stringify(progress));
   } catch (error) {
     console.error('Error saving watch progress:', error);
@@ -299,6 +381,63 @@ function getWatchProgress(showId) {
   }
 }
 
+// ---- Resume: remember the playback POSITION (seconds), plus the episode for a
+// show, so a title can be resumed where it was left off or restarted from scratch.
+function savePlaybackPosition() {
+  const m = currentPlayingMovie;
+  if (!m || m.id == null || !playerModalOpen || !playerVideo) return;
+  const pos = Math.floor(absolutePosition(torrentSeekBase, playerVideo.currentTime || 0));
+  if (!Number.isFinite(pos) || pos < 5) return; // too early to be worth resuming
+  const dur = Math.floor(torrentDuration || playerVideo.duration || 0);
+  try {
+    const store = JSON.parse(localStorage.getItem(WATCH_PROGRESS_KEY) || '{}');
+    const entry = store[m.id] || {};
+    // Finished (>95%): clear the position so it starts fresh next time.
+    entry.positionSec = (dur && pos > dur * 0.95) ? 0 : pos;
+    if (dur) entry.durationSec = dur;
+    if (m.media_type === 'tv' || (m.name && !m.title)) { entry.season = currentSeason; entry.episode = currentEpisode; }
+    entry.timestamp = Date.now();
+    store[m.id] = entry;
+    localStorage.setItem(WATCH_PROGRESS_KEY, JSON.stringify(store));
+  } catch { /* localStorage full/blocked — resume is best-effort */ }
+}
+
+// Resumable info for a title, or null when there's nothing worth resuming (never
+// started, only the first few seconds, or already finished).
+function getResume(movie) {
+  if (!movie || movie.id == null) return null;
+  try {
+    const e = (JSON.parse(localStorage.getItem(WATCH_PROGRESS_KEY) || '{}'))[movie.id];
+    if (!e || !e.positionSec || e.positionSec < 30) return null;
+    if (e.durationSec && e.positionSec > e.durationSec * 0.95) return null;
+    return e;
+  } catch { return null; }
+}
+
+// Save the position periodically while watching, and it's also saved on close.
+setInterval(() => { if (playerModalOpen) savePlaybackPosition(); }, 8000);
+// Finished playing → clear the resume position so it doesn't offer to resume the
+// final seconds (matters when the duration was never learned, so the >95% clear in
+// savePlaybackPosition couldn't fire).
+if (playerVideo) playerVideo.addEventListener('ended', () => {
+  const m = currentPlayingMovie;
+  if (!m || m.id == null) return;
+  const advanceEpisode = playerModalOpen
+    && (m.media_type === 'tv' || (m.name && !m.title))
+    && currentTvData && currentSeasonData && !nextEpisodeBtn.disabled;
+  // Reaching the real media end is authoritative: commit even when this session
+  // resumed inside the last three minutes, then rebuild whichever recommendation
+  // surface is visible instead of leaving its now-stale cards mounted.
+  const committed = flushDwell({ forceWatched: true });
+  if (!committed) addToWatchedHistory(m);
+  onSignalChanged();
+  try {
+    const s = JSON.parse(localStorage.getItem(WATCH_PROGRESS_KEY) || '{}');
+    if (s[m.id]) { s[m.id].positionSec = 0; localStorage.setItem(WATCH_PROGRESS_KEY, JSON.stringify(s)); }
+  } catch { /* best-effort */ }
+  if (advanceEpisode) goToNextEpisode().catch((error) => console.error('Could not autoplay the next episode:', error));
+});
+
 // Watched history storage key
 const WATCHED_HISTORY_KEY = 'watchedHistory';
 
@@ -313,8 +452,8 @@ function addToWatchedHistory(movie) {
       ...movie,
       watchedAt: Date.now()
     });
-    // Keep max 100 items
-    localStorage.setItem(WATCHED_HISTORY_KEY, JSON.stringify(filtered.slice(0, 100)));
+    // Retain the complete history: every watched title contributes to recommendations.
+    localStorage.setItem(WATCHED_HISTORY_KEY, JSON.stringify(filtered));
     clearRecommendationCache();
   } catch (error) {
     console.error('Error saving to watched history:', error);
@@ -561,15 +700,21 @@ function handleProfileImportFromHash() {
   return merged.added;
 }
 
-// Assemble the explicit signal input the engine consumes: the starred basket (positive,
-// tiered loved/liked), the downvoted set (negative steer), seen titles (neutral profile
-// + exclusion), and watched ids (exclude-only; seen ids ride along for exclusion).
+// Assemble every signal the engine consumes. Watched titles are full positive-profile
+// inputs (with recency and engagement), not merely ids to exclude from the output.
 function buildSignalItems() {
   const seen = getSeenList();
+  const watched = getWatchedHistory();
+  const engagement = getEngagementStore();
+  const watchedForProfile = watched.map((movie) => ({
+    ...movie,
+    _engagement: engagement[movie.id] || null,
+  }));
   return {
     basket: getStarredList(),
     downvoted: getDownvotedList(),
-    watchedIds: [...getWatchedHistory().map((m) => m.id), ...seen.map((m) => m.id)],
+    watched: watchedForProfile,
+    watchedIds: [...watched.map((m) => m.id), ...seen.map((m) => m.id)],
     seen,
   };
 }
@@ -634,7 +779,13 @@ function populateSourceSelector() {
     const opt = pi >= 0 ? sourceSelect.querySelector(`option[value="${pi}"]`) : null;
     if (pi >= 0 && ((opt && opt.dataset.newTab !== 'true') || (TV_MODE && !currentPlayingMovie && HELPER_AVAILABLE && EMBED_SOURCES[pi].tvOnly))) firstUsableIndex = pi;
   }
-  if (firstUsableIndex !== null) currentSourceIndex = firstUsableIndex;
+  // Don't let the first inline embed clobber the torrent default openPlayer chose:
+  // with dead embeds, the desktop app should open onto the torrent source too, not
+  // just the TV app. Only preserve an UNMANUAL torrent default that's in the list.
+  const keepingTorrentDefault = !tvSourceChosenManually && HELPER_AVAILABLE
+    && EMBED_SOURCES[currentSourceIndex]?.torrent
+    && sourceSelect.querySelector(`option[value="${currentSourceIndex}"]`);
+  if (firstUsableIndex !== null && !keepingTorrentDefault) currentSourceIndex = firstUsableIndex;
   sourceSelect.value = currentSourceIndex;
 }
 
@@ -951,7 +1102,7 @@ async function loadByActor() {
     isTop250Mode = false;
     top250Btn.classList.remove('active');
 
-    const movies = await fetchByActor(currentFilters.actorId, currentFilters.mediaType);
+    const movies = await fetchByActor(currentFilters.actorId, effectiveMediaType());
     allMovies = movies;
     hasMorePages = false; // All results loaded at once for actor filter
 
@@ -964,32 +1115,11 @@ async function loadByActor() {
   }
 }
 
-// Fetch Top 250 movies from TMDB
+// Return the real IMDb Top 250 snapshot, already resolved to TMDB card metadata.
+// Keeping this local avoids 250 searches every time the TV opens the collection
+// and, unlike TMDB's /movie/top_rated feed, preserves IMDb's exact rank order.
 async function fetchTop250() {
-  const movies = [];
-  const pages = 13; // 13 pages * 20 = 260 movies, we'll take first 250
-
-  try {
-    const promises = [];
-    for (let page = 1; page <= pages; page++) {
-      promises.push(fetchWithErrorHandling(ENDPOINTS.topRatedMovies(page)).catch(() => null));
-    }
-
-    const responses = await Promise.all(promises);
-    responses.forEach(data => {
-      if (data?.results) {
-        data.results.forEach(movie => {
-          if (movies.length < 250) {
-            movies.push({ ...movie, media_type: 'movie' });
-          }
-        });
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching Top 250:', error);
-  }
-
-  return movies;
+  return IMDB_TOP_250.map(movie => ({ ...movie }));
 }
 
 // Load Top 250 movies
@@ -1246,13 +1376,67 @@ let playbackGeneration = 0;
 let hlsSessionId = null;
 let hlsController = null;
 let playbackHealthTimer = null;
+let connectionHealthTimer = null;
+// A manually selected torrent may need several minutes to discover a reachable
+// peer. Automatic selection uses short deadlines so it can reach alternatives.
+const TORRENT_EXTRA_STARTUP_MS = 5 * 60 * 1000;
 const TV_HLS = TV_MODE && !!playerVideo?.canPlayType('application/vnd.apple.mpegurl');
 
 function clearPlaybackHealth() {
   clearInterval(playbackHealthTimer);
   playbackHealthTimer = null;
+  clearInterval(connectionHealthTimer);
+  connectionHealthTimer = null;
+}
+
+// Index seed counts do NOT predict real connectivity: a "227-seed" torrent can pull
+// 0 peers/0 bytes while an "88-seed" one screams at 5 MB/s. So before a source has
+// produced any video, watch its ACTUAL swarm and abandon it fast when it is plainly
+// dead (no peers, or peers but no data), letting the cascade reach a live source
+// instead of burning the full startup window on each dud. Once playback begins this
+// bows out and watchPlaybackHealth takes over.
+function watchConnectionHealth(hash, recover, { noPeersMs = 13000, noDataMs = 22000, slowMs = 20000, minSustainBps = 700 * 1024, debrid = false } = {}) {
+  clearInterval(connectionHealthTimer);
+  // A debrid source is a cached HTTP file with no swarm — /stream-status reports it as
+  // idle (0 peers), so the swarm-based dead/slow checks would always fire and cascade
+  // away from a perfectly good file. There's nothing to watch here; let playback health
+  // handle a genuine stall.
+  if (debrid) return;
+  const startedAt = Date.now();
+  let maxProgress = 0;
+  let maxSpeed = 0;
+  connectionHealthTimer = setInterval(async () => {
+    if (currentTorrentHash !== hash || !playerModalOpen) { clearInterval(connectionHealthTimer); return; }
+    if (playerVideo.currentTime > 0.25) { clearInterval(connectionHealthTimer); return; } // playing — hand off
+    let s;
+    try { s = await fetch(helperUrl(`/stream-status?hash=${hash}`)).then((r) => r.json()); } catch { return; }
+    if (currentTorrentHash !== hash) return;
+    maxProgress = Math.max(maxProgress, s.progress || 0);
+    maxSpeed = Math.max(maxSpeed, s.downloadSpeed || 0);
+    const elapsed = Date.now() - startedAt;
+    // Dead: no peers, or peers but no bytes. Too-slow: it connected and pulled data
+    // but its PEAK rate can't sustain 1080p — waiting on it just buffers forever, so
+    // move to a faster source (peak, not instantaneous, so one that ramps up is kept).
+    const dead = (elapsed > noPeersMs && (s.peers || 0) === 0)
+      || (elapsed > noDataMs && maxProgress <= 0.0005);
+    const tooSlow = elapsed > slowMs && maxSpeed > 0 && maxSpeed < minSustainBps;
+    if (dead || tooSlow) { clearInterval(connectionHealthTimer); recover(); }
+  }, 2000);
+}
+let hlsKeepAlive = null;
+// Ping the session's playlist while the player is open so a PAUSED (fully-buffered)
+// stream isn't idle-swept out from under the viewer — reading the m3u8 refreshes the
+// session's last-access clock. Without this, pausing for a while wedged playback.
+function startHlsKeepAlive(id) {
+  clearInterval(hlsKeepAlive);
+  hlsKeepAlive = setInterval(() => {
+    if (hlsSessionId !== id || !playerModalOpen) { clearInterval(hlsKeepAlive); hlsKeepAlive = null; return; }
+    fetch(helperUrl(`/hls/${id}/index.m3u8`)).catch(() => {});
+  }, 30000);
 }
 function stopHlsSession() {
+  clearInterval(hlsKeepAlive);
+  hlsKeepAlive = null;
   hlsController?.abort();
   hlsController = null;
   if (hlsSessionId) {
@@ -1261,25 +1445,76 @@ function stopHlsSession() {
     fetch(helperUrl(`/hls/stop?id=${id}`), { keepalive: true }).catch(() => {});
   }
 }
-function watchPlaybackHealth(recover) {
+function watchPlaybackHealth(recover, { startupMs = 30000, stallMs = 30000, source = null } = {}) {
   clearPlaybackHealth();
   let health = null;
+  let starvation = null;
+  let statusBusy = false;
+  let lastStatusAt = 0;
   let started = false;
-  playbackHealthTimer = setInterval(() => {
+  playbackHealthTimer = setInterval(async () => {
     if (!currentTorrentHash || !playerModalOpen) return;
     if (playerVideo.currentTime > 0.25) started = true;
-    health = playbackHealth(health, { now: Date.now(), time: playerVideo.currentTime, paused: playerVideo.paused, started });
-    if (health.stalled) { clearPlaybackHealth(); recover(); }
+    const now = Date.now();
+    // Before the first frame, allow a longer window (startupMs): a transcode source
+    // must download AND transcode, and its swarm may still be ramping up peers —
+    // abandoning it here would drop the best source for a dead one. Once playing,
+    // fall back to the tighter stall window.
+    health = playbackHealth(health, { now, time: playerVideo.currentTime, paused: playerVideo.paused, started, timeoutMs: started ? stallMs : startupMs });
+    if (health.stalled) { clearPlaybackHealth(); recover(); return; }
+
+    // Once duration is known, compare the source's real byte rate with its average
+    // bitrate. A low readyState + under-two-second buffer sustained while download
+    // speed is below the required rate predicts a stall, so move to the next ranked
+    // source before the picture freezes. Debrid has no torrent status to inspect.
+    if (!started || !source?.sizeBytes || source.debrid || !torrentDuration || statusBusy || now - lastStatusAt < 3000) return;
+    lastStatusAt = now;
+    statusBusy = true;
+    const hash = currentTorrentHash;
+    try {
+      const status = await fetch(helperUrl(`/stream-status?hash=${hash}`)).then((r) => r.json());
+      if (hash !== currentTorrentHash || !playerModalOpen) return;
+      let bufferedSeconds = 0;
+      if (playerVideo.buffered?.length) bufferedSeconds = Math.max(0, playerVideo.buffered.end(playerVideo.buffered.length - 1) - playerVideo.currentTime);
+      starvation = bufferRecovery(starvation, {
+        now: Date.now(), bufferedSeconds, readyState: playerVideo.readyState,
+        paused: playerVideo.paused, downloadSpeed: status.downloadSpeed,
+        requiredSpeed: Number(source.sizeBytes) / torrentDuration,
+      });
+      if (starvation.recover) { clearPlaybackHealth(); recover(); }
+    } catch { /* the normal stall timer remains authoritative if status is unavailable */ }
+    finally { statusBusy = false; }
   }, 1000);
 }
-async function prepareTvHls(hash, season, episode, src, startSec, recover) {
+async function prepareTvHls(hash, season, episode, src, startSec, recover, startupExtraMs = 0) {
+  // Retry LAN discovery at playback time when the one-shot startup probe failed.
+  // Persisted addresses are tested first, so normal playback avoids the relay and
+  // does not wait for its slower public /lan-info response.
+  try {
+    if (activeHelperBase === STREAM_HELPER_BASE) await upgradeHelperToLan();
+    else await helperBaseReady;
+  } catch { /* keep configured base */ }
   stopHlsSession();
   clearPlaybackHealth();
   const controller = hlsController = new AbortController();
   const generation = playbackGeneration;
-  const streamUrl = new URL(buildTvStreamUrl(hash, season, episode, src, startSec, 20000), location.href);
+  const streamUrl = new URL(buildTvStreamUrl(hash, season, episode, src, startSec, 12000 + startupExtraMs), location.href);
   streamUrl.pathname = '/hls/start';
+  // For an HEVC source, tell /hls/start to GPU-transcode into the HLS pipeline
+  // (segmented files stream through the funnel; a live /transcode response does not).
+  if (src?.transcode) streamUrl.searchParams.set('transcode', '1');
   setYtsStatus(startSec > 0 ? 'Preparing your selected position…' : 'Preparing playback…');
+  // /hls/start can block for a long time on a dead swarm; watch the actual peers
+  // and cascade fast if there is nothing to download (recover aborts this fetch).
+  // A transcode source only needs the HEVC input bitrate (~300 KB/s), so hold it to
+  // a lower "sustain" bar than a direct 1080p stream, and give it a touch longer.
+  watchConnectionHealth(hash, recover, {
+    noPeersMs: 13000 + startupExtraMs,
+    noDataMs: 22000 + startupExtraMs,
+    slowMs: (src?.transcode ? 26000 : 20000) + startupExtraMs,
+    ...(src?.transcode ? { minSustainBps: 300 * 1024 } : {}),
+    debrid: src?.debrid,
+  });
   try {
     const response = await fetch(streamUrl.href, { signal: controller.signal });
     const result = await response.json();
@@ -1289,14 +1524,122 @@ async function prepareTvHls(hash, season, episode, src, startSec, recover) {
       return;
     }
     hlsSessionId = result.id;
+    startHlsKeepAlive(result.id);
+    // Stream-copy seeks start on the preceding keyframe, and MPEG-TS rebases its
+    // timestamps. Use the helper's measured source-time base for subtitles,
+    // progress, and subsequent seeks instead of the requested (but not exact)
+    // start second.
+    if (Number.isFinite(result.mediaStartSec)) {
+      torrentSeekBase = result.mediaStartSec;
+      reloadSubtitlesAtOffset(torrentSeekBase);
+      renderTorrentTime();
+    }
     playerVideo.src = helperUrl(`/hls/${result.id}/index.m3u8`);
     playerVideo.load();
     playerVideo.play().catch(() => { clearPlaybackHealth(); setYtsStatus('Press OK on Play to start.'); });
-    watchPlaybackHealth(recover);
+    watchPlaybackHealth(recover, { startupMs: 30000 + startupExtraMs, source: src });
   } catch (error) {
     if (controller.signal.aborted || generation !== playbackGeneration) return;
     recover();
   }
+}
+
+// ---- HEVC transcode playback (MediaSource) ----
+//
+// The helper GPU-transcodes an HEVC source to H.264 and streams it as a live
+// fragmented MP4. A plain <video src> cannot decode a live fMP4, so we feed it
+// through MediaSource instead — which works in desktop Chrome and webOS alike.
+// The read is throttled to stay ~45s ahead and already-played data is evicted, so
+// memory stays bounded across a full episode. Aborting kills the fetch, which
+// closes the response and stops the helper's ffmpeg.
+const TRANSCODE_MIME = 'video/mp4; codecs="avc1.640029,mp4a.40.2"';
+let transcodeAbort = null;
+let transcodeObjectUrl = null;
+function stopTranscode() {
+  if (transcodeAbort) { try { transcodeAbort.abort(); } catch { /* already gone */ } transcodeAbort = null; }
+  // Release the MediaSource blob URL — otherwise every transcode/source switch leaks one.
+  if (transcodeObjectUrl) { try { URL.revokeObjectURL(transcodeObjectUrl); } catch { /* ignore */ } transcodeObjectUrl = null; }
+}
+function playTranscodeMse(url, recover) {
+  stopTranscode();
+  const generation = playbackGeneration;
+  const ac = transcodeAbort = new AbortController();
+  if (!window.MediaSource || !MediaSource.isTypeSupported(TRANSCODE_MIME)) { recover(); return; }
+  const ms = new MediaSource();
+  transcodeObjectUrl = URL.createObjectURL(ms);
+  playerVideo.src = transcodeObjectUrl;
+  playerVideo.load();
+
+  ms.addEventListener('sourceopen', async () => {
+    if (ac.signal.aborted || generation !== playbackGeneration) return;
+    let sb;
+    try { sb = ms.addSourceBuffer(TRANSCODE_MIME); } catch { recover(); return; }
+    const queue = [];
+    const pump = () => {
+      if (sb.updating || !queue.length || ac.signal.aborted) return;
+      const chunk = queue[0]; // peek: only drop it once it is actually appended
+      try { sb.appendBuffer(chunk); queue.shift(); } catch (e) {
+        if (e && e.name === 'QuotaExceededError') {
+          // Keep the chunk and free room. If nothing could be removed yet (playhead
+          // still near the buffer start), updateend won't fire — so poll pump until
+          // playback advances enough to evict. Without this the queue wedges.
+          if (!evict(true)) setTimeout(() => { if (!ac.signal.aborted) pump(); }, 400);
+        } else { queue.shift(); } // a chunk that can never be appended must not wedge the queue
+      }
+    };
+    const evict = (force) => {
+      try {
+        const keepFrom = playerVideo.currentTime - (force ? 5 : 30);
+        if (!sb.updating && sb.buffered.length && keepFrom > sb.buffered.start(0) + 1) {
+          sb.remove(sb.buffered.start(0), keepFrom);
+          return true;
+        }
+      } catch { /* remove races with append; harmless */ }
+      return false;
+    };
+    const bufferedAhead = () => {
+      try {
+        for (let i = 0; i < sb.buffered.length; i++) {
+          if (playerVideo.currentTime >= sb.buffered.start(i) - 0.5 && playerVideo.currentTime <= sb.buffered.end(i)) {
+            return sb.buffered.end(i) - playerVideo.currentTime;
+          }
+        }
+      } catch { /* buffered not ready */ }
+      return 0;
+    };
+    sb.addEventListener('updateend', pump);
+
+    try {
+      const resp = await fetch(url, { signal: ac.signal });
+      if (!resp.ok) { if (!ac.signal.aborted) recover(); return; }
+      const reader = resp.body.getReader();
+      ac.signal.addEventListener('abort', () => { try { reader.cancel(); } catch { /* already closed */ } });
+      for (;;) {
+        // Throttle: ffmpeg transcodes faster than real time, so don't race ahead
+        // and pile the whole episode into memory. Also hold when the append queue
+        // backs up (e.g. a quota stall) so it can't grow unbounded.
+        while ((bufferedAhead() > 45 || queue.length > 120) && !ac.signal.aborted) await new Promise((r) => setTimeout(r, 400));
+        if (ac.signal.aborted || generation !== playbackGeneration) return;
+        const { done, value } = await reader.read();
+        if (done) break;
+        queue.push(value);
+        pump();
+        if (playerVideo.currentTime > 40) evict(false);
+      }
+      // Drain the queue, then close the stream so the video ends cleanly.
+      const drain = setInterval(() => {
+        if (ac.signal.aborted) { clearInterval(drain); return; }
+        if (!queue.length && !sb.updating) {
+          clearInterval(drain);
+          try { if (ms.readyState === 'open') ms.endOfStream(); } catch { /* already ended */ }
+        }
+      }, 200);
+    } catch (error) {
+      if (!ac.signal.aborted && generation === playbackGeneration) recover();
+    }
+  });
+
+  playerVideo.play().catch(() => { /* gesture policy; controls remain */ });
 }
 
 let currentTorrentHash = null;   // infohash being streamed, for teardown
@@ -1354,6 +1697,7 @@ function stopYtsStream() {
   playbackGeneration++;
   clearPlaybackHealth();
   stopHlsSession();
+  stopTranscode();
   tvPlayCtx = null;
   torrentSeekBase = 0;
   torrentDuration = 0;
@@ -1392,6 +1736,41 @@ function setSubtitlePref(value) {
   try { localStorage.setItem(SUBTITLE_PREF_KEY, value); } catch { /* private mode */ }
 }
 
+function subtitleSyncKey(track) {
+  if (!track?.src) return '';
+  try {
+    const url = new URL(track.src, location.href);
+    return `subtitleSync:${url.searchParams.get('hash') || ''}:${url.searchParams.get('id') || ''}`;
+  } catch { return ''; }
+}
+function subtitleSyncOffset(track) {
+  const key = subtitleSyncKey(track);
+  if (!key) return 0;
+  try { return Math.max(-30, Math.min(30, Number(localStorage.getItem(key)) || 0)); }
+  catch { return 0; }
+}
+function setSubtitleSyncOffset(track, value) {
+  const key = subtitleSyncKey(track);
+  if (!key) return 0;
+  const offset = Math.round(Math.max(-30, Math.min(30, Number(value) || 0)) * 10) / 10;
+  try { localStorage.setItem(key, String(offset)); } catch { /* private mode */ }
+  return offset;
+}
+function renderSubtitleSyncControls(track, offset = 0) {
+  if (!subtitleSyncControls) return;
+  const visible = TV_MODE && !!track;
+  subtitleSyncControls.style.display = visible ? 'flex' : 'none';
+  if (subtitleOffsetLabel) subtitleOffsetLabel.textContent = `Sub ${offset >= 0 ? '+' : ''}${offset.toFixed(1)}s`;
+}
+function adjustSubtitleSync(delta) {
+  if (!playerVideo || !subtitleSelect) return;
+  const slot = subtitleSelect.value === '' ? -1 : Number(subtitleSelect.value);
+  const track = slot >= 0 ? playerVideo.querySelectorAll('track')[slot] : null;
+  if (!track) return;
+  setSubtitleSyncOffset(track, subtitleSyncOffset(track) + delta);
+  showSubtitleTrack(String(slot));
+}
+
 // Remove every <track> from the player. Detaching the elements is not enough on
 // its own — a stale track left showing would caption the *next* movie.
 function clearSubtitleTracks() {
@@ -1402,6 +1781,7 @@ function clearSubtitleTracks() {
     for (const tt of playerVideo.textTracks || []) tt.mode = 'disabled';
   }
   if (subtitleSelect) { subtitleSelect.style.display = 'none'; subtitleSelect.innerHTML = ''; }
+  renderSubtitleSyncControls(null);
 }
 
 // Show only the chosen track, identified by its position among the <track>
@@ -1416,10 +1796,12 @@ function showSubtitleTrack(slot) {
   for (let i = 0; i < tracks.length; i++) {
     tracks[i].mode = !TV_MODE && i === want ? 'showing' : 'disabled';
   }
+  const track = want >= 0 ? playerVideo.querySelectorAll('track')[want] : null;
+  const offset = track ? subtitleSyncOffset(track) : 0;
   if (TV_MODE) {
-    const track = playerVideo.querySelectorAll('track')[want];
-    document.dispatchEvent(new CustomEvent('tv-subtitle-track', { detail: { url: track?.src || '' } }));
+    document.dispatchEvent(new CustomEvent('tv-subtitle-track', { detail: { url: track?.src || '', offset } }));
   }
+  renderSubtitleSyncControls(track, offset);
   const chosen = want >= 0 ? subtitleSlots[want] : null;
   setSubtitlePref(chosen ? chosen.label : 'off');
 }
@@ -1442,7 +1824,7 @@ function defaultSubtitleSlot(tracks) {
 
 // Attach the subtitle tracks for one torrent and build the picker.
 let subtitleLoadRequest = 0;
-async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
+async function loadSubtitlesFor(hash, season, episode, attempt = 0, fileIndex = null) {
   if (!playerVideo || !subtitleSelect) return;
   const generation = playbackGeneration;
   const request = ++subtitleLoadRequest;
@@ -1454,19 +1836,22 @@ async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
     // the video file to save bandwidth on our behalf. s/e let the helper pick the
     // right episode inside a season pack to read its embedded subtitle tracks.
     const ep = (Number.isFinite(season) && Number.isFinite(episode)) ? `&s=${season}&e=${episode}` : '';
-    const r = await fetch(helperUrl(`/subtitles?hash=${hash}${ep}&streaming=1`));
+    const file = Number.isInteger(fileIndex) ? `&file=${fileIndex}` : '';
+    // imdb lets the helper fall back to OpenSubtitles when the torrent has no subs.
+    const imdb = currentSubtitleImdb ? `&imdb=${encodeURIComponent(currentSubtitleImdb)}` : '';
+    const r = await fetch(helperUrl(`/subtitles?hash=${hash}${ep}${file}${imdb}&streaming=1`));
     if (!r.ok) return;                      // no subtitles is not an error worth shouting about
     const body = await r.json();
     if (request !== subtitleLoadRequest) return;
     tracks = dedupeTrackLabels(body.tracks || []);
     if (body.duration && currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) setTorrentDuration(body.duration);
     else if (TV_HLS && attempt < 6) {
-      setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+      setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1, fileIndex); }, 9000);
     }
   } catch {
     // Transient fetch failure (webOS drops fetches under the initial request
     // storm). Retry rather than leaving the film without subtitles for good.
-    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1, fileIndex); }, 9000);
     return;
   }
 
@@ -1475,14 +1860,17 @@ async function loadSubtitlesFor(hash, season, episode, attempt = 0) {
     // Embedded subtitles live inside the .mkv and are unreadable until enough of
     // the header has downloaded. On a fresh stream that lags playback, so retry a
     // few times before giving up rather than showing no subtitles for the session.
-    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1); }, 9000);
+    if (attempt < 6) setTimeout(() => { if (currentTorrentHash === hash && generation === playbackGeneration && request === subtitleLoadRequest) loadSubtitlesFor(hash, season, episode, attempt + 1, fileIndex); }, 9000);
     return;
   }
 
   subtitleSlots = tracks;
   for (const t of tracks) {
     const el = document.createElement('track');
-    el.kind = 'subtitles';
+    // webOS gets captions from our JS overlay because native HLS sidecar tracks
+    // are unreliable there. Mark the backing track as metadata so the webview
+    // cannot also paint it later and double the dialogue over the overlay.
+    el.kind = TV_MODE ? 'metadata' : 'subtitles';
     el.label = t.label;
     el.srclang = t.lang || 'en';
     // t.id is the stable track id (file "f3" or embedded "e1:2"); older helpers
@@ -1536,12 +1924,23 @@ function startYtsStatusPolling(hash) {
     catch { return; }
     if (currentTorrentHash !== hash) return;
 
+    // For TV torrents, replace the index estimate with WebTorrent's actual
+    // connected socket count. This remains useful after the overlay disappears.
+    const tvSource = currentTvSources.find((source) => source.hash === hash);
+    if (tvSource && qualitySelect) {
+      const option = [...qualitySelect.options].find((item) => item.value === hash);
+      if (option) option.textContent = describeTvSource(tvSource, Number(s.peers) || 0);
+    }
+
     // Already playing smoothly — let onplaying clear the overlay.
     if (playerVideo && !playerVideo.paused && playerVideo.readyState >= 3) {
       setYtsStatus(null);
       return;
     }
-    if (s.state === 'ready' && s.playable === false) {
+    // This YTS-quality auto-step is movie-only logic (it walks `currentYtsTorrents`).
+    // For a TV show that list is empty, and a mislabeled "not playable" would wrongly
+    // show the "None of YTS's versions…" movie message, so only run it for movies.
+    if (s.state === 'ready' && s.playable === false && currentYtsTorrents.length) {
       clearYtsPoll();
       // Auto-step to the next not-yet-tried quality (1080p is usually .mp4 even
       // when 720p is .mkv) so the default still ends up playing. Only consider
@@ -1623,7 +2022,7 @@ async function loadAlternateMovieStream(movie, imdbId, generation, startSec = 0)
       setYtsStatus('No playable source is available for this movie right now. Retry playback to check again.', true);
       return;
     }
-    currentTvSources = body.sources;
+    currentTvSources = stampDebridIds(body.sources);
     populateTvQualitySelect(currentTvSources);
     playTvSource(currentTvSources[0].hash, undefined, undefined, [], startSec);
   } catch {
@@ -1656,6 +2055,7 @@ async function loadYtsStream(movie, startSec = 0) {
     const imdbId = ext && ext.imdb_id;
     if (!imdbId) { setYtsStatus(describeImdbLookupFailure({ requestFailed: extFailed }), true); return; }
     if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return; // user switched away
+    currentSubtitleImdb = imdbId; // for the OpenSubtitles fallback in loadSubtitlesFor
 
     // The lookup fails in two completely different ways and they need different
     // messages: the helper not being there at all (fetch throws) vs the helper
@@ -1751,6 +2151,7 @@ async function loadTvStream(movie, season, episode, startSec = 0) {
     const imdbId = ext && ext.imdb_id;
     if (!imdbId) { setYtsStatus(describeImdbLookupFailure({ requestFailed: extFailed }), true); return; }
     if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
+    currentSubtitleImdb = imdbId; // series imdb id — /subtitles pairs it with s/e for OpenSubtitles
 
     const series = currentTvData || movie;
     const params = new URLSearchParams({
@@ -1785,15 +2186,12 @@ async function loadTvStream(movie, season, episode, startSec = 0) {
     }
     if ((currentPlayingMovie?.id !== reqId || generation !== playbackGeneration)) return;
 
-    currentTvSources = attempt.data.sources || [];
-    // TV source order: 1080p first (the default quality), then the highest seed count
-    // (fastest to stream), then a direct-play MP4 as a final tiebreak (it skips the
-    // MKV->HLS remux that HEVC WEB-DL rips fail on). A source that fails the remux is
-    // dropped to the next by the cascade in playTvSource.
-    if (TV_MODE) currentTvSources = [...currentTvSources].sort((a, b) =>
-      (Number(b.quality === '1080p') - Number(a.quality === '1080p')) ||
-      ((b.seeds || 0) - (a.seeds || 0)) ||
-      (Number(!b.remux) - Number(!a.remux)));
+    // Trust the helper's ranking (rankTvSources): debrid first, then 1080p, then a
+    // healthy direct-play copy BEFORE any HEVC transcode, then by seeds. An earlier
+    // client-side re-sort here ordered purely by seed count and so kept picking a
+    // well-seeded HEVC (needing transcode) over a healthy H.264 copy — the White
+    // Lotus buffering bug. The server order is authoritative; don't re-sort.
+    currentTvSources = stampDebridIds(attempt.data.sources || []);
     if (!currentTvSources.length) {
       setYtsStatus(`No active MP4 or H.264 MKV torrent for S${season}E${episode}. Try another source or episode.`, true);
       return;
@@ -1816,9 +2214,7 @@ function populateTvQualitySelect(sources) {
   sources.forEach((src) => {
     const opt = document.createElement('option');
     opt.value = src.hash;
-    const mode = src.remux ? ' · MKV→MP4' : '';
-    const provider = src.provider ? ' · ' + src.provider : '';
-    opt.textContent = `${src.quality}${src.seeds ? ' · ' + src.seeds + ' seeds' : ''}${mode}${provider}`;
+    opt.textContent = describeTvSource(src);
     qualitySelect.appendChild(opt);
   });
   qualitySelect.style.display = sources.length ? 'inline-block' : 'none';
@@ -1837,10 +2233,48 @@ let torrentSeekBase = 0;     // seconds the current stream was started at
 let torrentDuration = 0;     // episode length, from the /subtitles probe
 let suppressSourceWalk = false;
 
+// Debrid sources arrive with a ready `url` and NO infohash, but the whole player
+// keys sources by `.hash` (dropdown values, the fallback cascade's tried-set,
+// currentTvSources lookups). Give each a stable, non-hex synthetic id so it flows
+// through that machinery untouched; playTvSource branches on `.debrid`/`.url` to
+// build the right helper URL. Non-hex means it can never be mistaken for a real
+// 40-char infohash by the helper.
+function stampDebridIds(sources) {
+  return (Array.isArray(sources) ? sources : []).map((s) => {
+    if (s && !s.hash && s.url) {
+      let h = 5381;
+      for (let i = 0; i < s.url.length; i++) h = ((h << 5) + h + s.url.charCodeAt(i)) >>> 0;
+      return { ...s, hash: 'debrid_' + h.toString(16) };
+    }
+    return s;
+  });
+}
+
 function buildTvStreamUrl(hash, season, episode, src, t, ready) {
+  // A debrid source is a ready HTTP file. A native H.264 copy is proxied straight
+  // through (no transcode); an HEVC/unknown copy is GPU-transcoded from the URL
+  // (/transcode?src=). On the TV, prepareTvHls rewrites the path to /hls/start and
+  // keeps ?src= either way.
+  if (src?.debrid && src?.url) {
+    let path = src?.transcode
+      ? `/transcode?src=${encodeURIComponent(src.url)}`
+      : `/debrid-proxy?src=${encodeURIComponent(src.url)}`;
+    if (t > 0) path += `&t=${Math.floor(t)}`;
+    return helperUrl(path);
+  }
+  // An HEVC source is transcoded to H.264 on the helper's GPU and streamed as a
+  // progressive fragmented MP4 — plays in plain <video> on the TV and desktop alike.
+  if (src?.transcode) {
+    let path = `/transcode?hash=${hash}&s=${season}&e=${episode}` +
+      `&title=${encodeURIComponent(src?.filename || '')}`;
+    if (Number.isInteger(src?.fileIndex)) path += `&file=${src.fileIndex}`;
+    if (t > 0) path += `&t=${Math.floor(t)}`;
+    return helperUrl(path);
+  }
   let path = `/stream?hash=${hash}&s=${season}&e=${episode}&ready=${ready}` +
     `&title=${encodeURIComponent(src?.filename || '')}` +
     `&ctx=${encodeURIComponent((src?.title || '').slice(0, 200))}`;
+  if (Number.isInteger(src?.fileIndex)) path += `&file=${src.fileIndex}`;
   if (t > 0) path += `&t=${Math.floor(t)}`;
   return helperUrl(path);
 }
@@ -1889,12 +2323,12 @@ function torrentSeekTo(t) {
   if (!tvPlayCtx) return;
   torrentSeekBase = seekTarget(0, t, torrentDuration);   // clamp into the episode
   if (TV_HLS) {
-    playTvSource(tvPlayCtx.hash, tvPlayCtx.season, tvPlayCtx.episode, [], torrentSeekBase);
+    playTvSource(tvPlayCtx.hash, tvPlayCtx.season, tvPlayCtx.episode, [], torrentSeekBase, { manualSource: tvPlayCtx.manualSource });
     return;
   }
   suppressSourceWalk = true;
   setYtsStatus('Seeking…');
-  playerVideo.src = buildTvStreamUrl(tvPlayCtx.hash, tvPlayCtx.season, tvPlayCtx.episode, tvPlayCtx.src, torrentSeekBase, 20000);
+  playerVideo.src = buildTvStreamUrl(tvPlayCtx.hash, tvPlayCtx.season, tvPlayCtx.episode, tvPlayCtx.src, torrentSeekBase, 20000 + TORRENT_EXTRA_STARTUP_MS);
   playerVideo.load();
   playerVideo.play().catch(() => {});
   renderTorrentTime();
@@ -1904,9 +2338,10 @@ function torrentSeekBy(delta) {
   torrentSeekTo(seekTarget(absolutePosition(torrentSeekBase, playerVideo.currentTime), delta, torrentDuration));
 }
 
-function playTvSource(hash, season, episode, tried = [], startSec = 0) {
+function playTvSource(hash, season, episode, tried = [], startSec = 0, { manualSource = false } = {}) {
   if (!hash) return;
   stopHlsSession();
+  stopTranscode();
   clearPlaybackHealth();
   playerVideo.onerror = null;
   playerVideo.onloadedmetadata = null;
@@ -1920,12 +2355,16 @@ function playTvSource(hash, season, episode, tried = [], startSec = 0) {
 
   const attempted = [...tried, hash];
   const src = currentTvSources.find((x) => x.hash === hash);
-  setYtsStatus(describeSourceAttempt({ attempt: attempted.length, quality: src?.quality, remux: src?.remux }));
+  if (src && qualitySelect) {
+    const option = [...qualitySelect.options].find((item) => item.value === hash);
+    if (option) option.textContent = describeTvSource(src);
+  }
+  setYtsStatus(describeSourceAttempt({ attempt: attempted.length, quality: src?.quality, remux: src?.remux, debrid: src?.debrid, transcode: src?.transcode }));
 
   // A fresh source starts at 0 and its length is unknown until the subtitle probe
   // returns it. The seek bar only helps for remuxed MKV; native <video> controls
   // already seek a direct MP4.
-  tvPlayCtx = { hash, season, episode, src };
+  tvPlayCtx = { hash, season, episode, src, manualSource };
   torrentSeekBase = startSec;
   torrentDuration = 0;
   showTorrentSeek(TV_HLS || Boolean(src?.remux));
@@ -1937,26 +2376,52 @@ function playTvSource(hash, season, episode, tried = [], startSec = 0) {
   const recover = () => {
     const resumeAt = torrentSeekBase + (Number(playerVideo.currentTime) || 0);
     stopHlsSession();
+    stopTranscode();
     clearPlaybackHealth();
+    // A deliberate seek reloaded THIS source at a new offset. A transient error there
+    // should retry the same source at the seek point, not cascade to a different
+    // (often worse) one. Reset the flag so a persistent failure still cascades next.
+    if (suppressSourceWalk) { suppressSourceWalk = false; return playTvSource(hash, season, episode, tried, torrentSeekBase, { manualSource }); }
     const next = pickNextSource(currentTvSources, attempted);
     if (next) return playTvSource(next.hash, season, episode, attempted, resumeAt);
     clearYtsPoll();
     setYtsStatus('No source could sustain playback. Choose another quality or try this episode again.', true);
   };
+  const startupExtraMs = manualSource ? TORRENT_EXTRA_STARTUP_MS : 0;
   playerVideo.onplaying = () => { setYtsStatus(null); clearYtsPoll(); };
   playerVideo.onerror = recover;
-  if (TV_HLS) {
-    prepareTvHls(hash, season, episode, src, startSec, recover);
-    loadSubtitlesFor(hash, season, episode);
+  // HEVC delivery differs by client. On the TV (native HLS) it is GPU-transcoded
+  // into the HLS pipeline (segmented files stream through the funnel; a single live
+  // /transcode response gets buffered by the funnel and never arrives). On the
+  // desktop (no native HLS) it is GPU-transcoded to a live fMP4 fed through
+  // MediaSource. Both are handled below — the TV case falls through to prepareTvHls.
+  if (src?.transcode && !TV_HLS) {
+    const url = buildTvStreamUrl(hash, season, episode, src, startSec, 0);
+    playTranscodeMse(url, recover);
+    // Be patient before the first frame (download + GPU-encode + swarm ramp); the
+    // connection watchdog still bails fast if the swarm is genuinely dead. HEVC only
+    // needs its input bitrate, so a lower sustain bar than a direct 1080p stream.
+    watchPlaybackHealth(recover, { startupMs: 90000 + startupExtraMs, source: src });
+    watchConnectionHealth(hash, recover, { noPeersMs: 13000 + startupExtraMs, noDataMs: 22000 + startupExtraMs, minSustainBps: 300 * 1024, slowMs: 26000 + startupExtraMs, debrid: src?.debrid });
+    startYtsStatusPolling(hash);
+    loadSubtitlesFor(hash, season, episode, 0, src?.fileIndex);
     return;
   }
-  const ready = attempted.length >= TV_SOURCE_ATTEMPT_CAP ? 60000 : 20000;
+  if (TV_HLS) {
+    // Remux (H.264 copy) or transcode (HEVC->H.264) — prepareTvHls picks based on src.
+    prepareTvHls(hash, season, episode, src, startSec, recover, startupExtraMs);
+    startYtsStatusPolling(hash);
+    loadSubtitlesFor(hash, season, episode, 0, src?.fileIndex);
+    return;
+  }
+  const ready = (attempted.length >= TV_SOURCE_ATTEMPT_CAP ? 30000 : 12000) + startupExtraMs;
   playerVideo.src = buildTvStreamUrl(hash, season, episode, src, startSec, ready);
-  watchPlaybackHealth(recover);
+  watchPlaybackHealth(recover, { startupMs: 30000 + startupExtraMs, source: src });
+  watchConnectionHealth(hash, recover, { noPeersMs: 13000 + startupExtraMs, noDataMs: 22000 + startupExtraMs, slowMs: 20000 + startupExtraMs, debrid: src?.debrid }); // skip a dead swarm fast, reach a live source
   playerVideo.load();
   playerVideo.play().catch(() => { /* autoplay may be blocked; controls remain */ });
   startYtsStatusPolling(hash);
-  loadSubtitlesFor(hash, season, episode);   // embedded tracks live inside the MKV
+  loadSubtitlesFor(hash, season, episode, 0, src?.fileIndex);   // embedded tracks live inside the MKV
 }
 
 // Change video source
@@ -2179,6 +2644,8 @@ async function openPlayer(movie, target = null) {
 
   const title = movie.title || movie.name || 'Unknown';
   const type = movie.media_type === 'tv' ? 'tv' : 'movie';
+  // Resume position (seconds) from the details screen's Resume button, else 0 (start).
+  const startSec = target && Number.isFinite(target.startSec) ? Math.max(0, Math.floor(target.startSec)) : 0;
 
   // Store current movie for source switching
   currentPlayingMovie = movie;
@@ -2225,11 +2692,13 @@ async function openPlayer(movie, target = null) {
 
   // If the previously selected source isn't valid for this title (e.g. a
   // movies-only torrent source while opening a TV show), fall back to the first.
-  if (TV_MODE && !tvSourceChosenManually) {
-    // Default to the native torrent source: the embed providers (111Movies et al.)
-    // now gate the webOS embed behind an anti-bot CAPTCHA that cannot be automated,
-    // whereas torrents stream through the helper with no such challenge. Fall back
-    // to the 111Movies embed only when no helper is reachable (torrents need it).
+  if (!tvSourceChosenManually) {
+    // Default to the native torrent source in BOTH the TV app and the desktop app:
+    // the embed providers (Videasy, 111Movies et al.) now load a blank/CAPTCHA'd
+    // player, whereas torrents stream through the helper with no such challenge.
+    // Fall back to the 111Movies embed only when no helper is reachable (torrents
+    // need it). Previously this ran only in TV_MODE, so the desktop app opened
+    // shows onto the dead Videasy embed.
     const torrentDefault = HELPER_AVAILABLE
       ? EMBED_SOURCES.findIndex(s => s.torrent && (type === 'tv' ? s.tvOnly : s.movieOnly))
       : -1;
@@ -2239,7 +2708,7 @@ async function openPlayer(movie, target = null) {
   }
   const sel = EMBED_SOURCES[currentSourceIndex];
   if (sel && sel.torrent && ((sel.movieOnly && type === 'tv') || (sel.tvOnly && type !== 'tv'))) {
-    currentSourceIndex = TV_MODE && HELPER_AVAILABLE
+    currentSourceIndex = HELPER_AVAILABLE
       ? EMBED_SOURCES.findIndex(source => source.torrent && (type === 'tv' ? source.tvOnly : source.movieOnly)) : 0;
   }
 
@@ -2314,7 +2783,7 @@ async function openPlayer(movie, target = null) {
           </html>
         `;
       } else if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) {
-        loadTvStream(movie, currentSeason, currentEpisode);
+        loadTvStream(movie, currentSeason, currentEpisode, startSec);
       } else {
         const embedUrl = getEmbedUrl(type, movie.id, currentSeason, currentEpisode);
         loadIframeSrc(embedUrl);
@@ -2336,12 +2805,33 @@ async function openPlayer(movie, target = null) {
     // Movie - no episode controls
     episodeControls.style.display = 'none';
     playerTitle.textContent = title;
-    const sourceNow = EMBED_SOURCES[currentSourceIndex];
-    if (sourceNow && sourceNow.torrent) {
-      loadYtsStream(movie);
+    // An unreleased movie (future release date) has no torrent and no embed —
+    // trying to play it just yields a dead "No YTS torrent found" lookup. This is
+    // the trap behind e.g. "Mirzapur: The Movie" (2026) sitting next to the series
+    // in search. Say it plainly instead.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    if (movie.release_date && movie.release_date > todayIso) {
+      showPlayerVideo(false);
+      stopYtsStream();
+      playerIframe.src = '';
+      playerIframe.srcdoc = `
+        <html>
+          <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e;color:#fff;font-family:sans-serif;text-align:center;padding:1rem;">
+            <div>
+              <p style="font-size:1.4rem;margin:0 0 .5rem;">Not released yet</p>
+              <p style="color:#aaa;font-size:1rem;margin:0;">${title} releases on ${movie.release_date}</p>
+            </div>
+          </body>
+        </html>
+      `;
     } else {
-      const embedUrl = getEmbedUrl(type, movie.id);
-      loadIframeSrc(embedUrl);
+      const sourceNow = EMBED_SOURCES[currentSourceIndex];
+      if (sourceNow && sourceNow.torrent) {
+        loadYtsStream(movie, startSec);
+      } else {
+        const embedUrl = getEmbedUrl(type, movie.id);
+        loadIframeSrc(embedUrl);
+      }
     }
   }
 
@@ -2370,8 +2860,9 @@ async function openPlayer(movie, target = null) {
 
 // Close video player modal
 function closePlayer() {
+  savePlaybackPosition(); // capture the final position before we tear the player down
   playerModalOpen = false;
-  flushDwell();
+  const recommendationsChanged = flushDwell();
   playerModal.style.display = 'none';
   stopYtsStream();
   showPlayerVideo(false);
@@ -2382,6 +2873,7 @@ function closePlayer() {
   currentTvData = null;
   currentSeasonData = null;
   document.body.style.overflow = '';
+  if (recommendationsChanged) onSignalChanged();
 }
 
 // Show/hide loading state
@@ -2480,8 +2972,9 @@ function applyFilters(movies, isSearch = false) {
       return false;
     }
 
-    // Media type filter
-    if (currentFilters.mediaType !== 'all' && movie.media_type !== currentFilters.mediaType) {
+    // Media type filter (explicit filter, or the TV top-nav kind)
+    const wantType = effectiveMediaType();
+    if (wantType !== 'all' && movie.media_type !== wantType) {
       return false;
     }
 
@@ -2579,6 +3072,10 @@ function sortMovies(movies, stats) {
     };
   });
 
+  if (isTop250Mode) {
+    return moviesWithScore.sort((a, b) => a.imdb_rank - b.imdb_rank);
+  }
+
   // Sort based on current sort option
   const sortBy = currentFilters.sortBy;
 
@@ -2644,7 +3141,7 @@ async function fetchMoreTrending(pagesToFetch = 5, abortToken) {
   const themeId = currentFilters.theme;
   const excludeGenres = currentFilters.excludeGenres.length > 0 ? currentFilters.excludeGenres.join(',') : null;
   const language = currentFilters.language || null;
-  const mediaType = currentFilters.mediaType;
+  const mediaType = effectiveMediaType();
   const minVotes = currentFilters.minVotes || null;
 
   // Combine keyword IDs: theme + genre (if genre is keyword-based)
@@ -2754,7 +3251,7 @@ async function fetchQualityGems(pagesPerType = GEM_PAGES_PER_TYPE) {
   const providerId = currentFilters.provider;
   const excludeGenres = currentFilters.excludeGenres.length > 0 ? currentFilters.excludeGenres.join(',') : null;
   const language = currentFilters.language || null;
-  const mediaType = currentFilters.mediaType;
+  const mediaType = effectiveMediaType();
   const minVotes = currentFilters.minVotes || 0;
   let keywordId = currentFilters.theme;
   if (currentFilters.genreIsKeyword && currentFilters.genre > 0) {
@@ -3108,7 +3605,7 @@ async function renderRecommendationsRow() {
   if (!browseGridOwnsMain()) return;
 
   const items = buildSignalItems();
-  if (items.basket.length === 0) return; // basket-primary cold-start: nothing to recommend
+  if (items.basket.length === 0 && items.watched.length === 0 && items.seen.length === 0) return;
 
   let recs = [];
   try {
@@ -3135,6 +3632,10 @@ async function renderRecommendationsRow() {
 // Called after any basket/downvote toggle. The stores already busted the rec cache;
 // re-render whichever recommendation surface is currently showing so the change applies.
 function onSignalChanged() {
+  if (TV_MODE && tvHomeIsCurrent()) {
+    renderTvHome(lastTrendingSeed);
+    return;
+  }
   if (tabRecommended.classList.contains('active')) {
     scheduleRecRecompute();
   } else if (currentApp === 'movies' && !isWatchedMode && !isFavoritesMode && !isSearchMode && !isTop250Mode) {
@@ -3426,9 +3927,24 @@ async function fetchCast(type, id) {
     return Array.isArray(data && data.cast) ? data.cast : [];
   } catch (e) { return []; }
 }
+async function fetchDetailsRecommendations(type, id) {
+  const safeResults = async url => {
+    try {
+      const data = await fetchTmdbJson(url);
+      return Array.isArray(data && data.results) ? data.results : [];
+    } catch { return []; }
+  };
+  const [recommended, similar] = await Promise.all([
+    safeResults(ENDPOINTS.recommendations(type, id)),
+    safeResults(ENDPOINTS.similar(type, id)),
+  ]);
+  return mergeTitleRecommendations(recommended, similar, { id, media_type: type }, 20);
+}
 const tvDetails = TV_MODE ? createTvDetails({
   fetchCast, fetchTrailer: fetchTrailers, fetchTvDetails, fetchSeasonDetails,
+  fetchRecommendations: fetchDetailsRecommendations,
   onPlay: (movie, target) => { tvDetails.close(); openPlayer(movie, target); },
+  getResume,
   isStarred, toggleStar, isDownvoted, toggleDownvote, onSignalChanged,
 }) : null;
 
@@ -3456,36 +3972,156 @@ function tvHomeIsCurrent() {
 // Continue Watching + My List first. Rows paint as each feed arrives so the screen
 // fills top-down rather than waiting on eight requests. `seed` reuses the trending
 // page loadTrending already fetched, so that request is not repeated.
+// Which slice of the catalogue the home shows: 'all' | 'movie' | 'tv' (top nav).
+let tvMediaKind = 'all';
+function setTvMediaKind(kind) {
+  tvMediaKind = (kind === 'movie' || kind === 'tv') ? kind : 'all';
+  document.querySelectorAll('.tv-kind-tab').forEach(b => b.classList.toggle('active', b.dataset.kind === tvMediaKind));
+  window.scrollTo(0, 0);
+  renderTvHome(lastTrendingSeed);
+}
+if (TV_MODE) window.__setTvMediaKind = setTvMediaKind; // called by the injected top nav in tv-remote.js
+
+// Media type to apply to FILTERED/SEARCH results: the explicit media-type filter if
+// set, else the top-nav kind on TV (the media-type dropdown is hidden there). Kept
+// separate from currentFilters.mediaType so selecting a kind doesn't make the home
+// read as "filtered" (which would swap the curated home for a flat results grid).
+function effectiveMediaType() {
+  if (currentFilters.mediaType && currentFilters.mediaType !== 'all') return currentFilters.mediaType;
+  return TV_MODE && tvMediaKind !== 'all' ? tvMediaKind : 'all';
+}
+
 let tvHomeToken = 0;
+let lastTrendingSeed = null;
+const TV_HOME_ROW_LIMIT = 12;
+const TV_HOME_CARD_LIMIT = 12;
+const TV_HOME_RECOMMENDATION_LIMIT = TV_HOME_CARD_LIMIT * 10;
 async function renderTvHome(seed) {
+  installTvEndlessRows();
+  if (seed && seed.length) lastTrendingSeed = seed;
   const token = ++tvHomeToken;
   const onSelect = openDetails;
   const onPlay = (movie) => openPlayer(movie);
-  const personal = signalRows({ continueWatching: getWatchedHistory(), myList: getStarredList() });
-  const featured = (seed && seed.length && seed[0]) || (personal[0] && personal[0].items[0]) || null;
+  const kind = tvMediaKind;
+  const personal = signalRows({ continueWatching: getWatchedHistory(), myList: getStarredList() }, TV_HOME_CARD_LIMIT);
+  // The trending seed is all-media, so only use it as the hero under the "All" tab;
+  // under Movies/TV let renderTvRows pick the hero from the first kind-appropriate row.
+  const featured = (kind === 'all' && seed && seed.length && seed[0]) || (personal[0] && personal[0].items[0]) || null;
 
   renderTvRows(main, personal, { onSelect, onPlay, featured });
 
   const seen = new Set();
   dedupeAcrossRows(personal).forEach(r => r.items.forEach(it => seen.add(titleKey(it))));
 
-  const defs = catalogRowDefs(CONFIG.API_KEY, CONFIG.BASE_URL);
+  // Surface the complete IMDb and Emmy collections directly on All. These rails
+  // deliberately bypass cross-row dedupe so their curated membership stays intact.
+  const staticCollections = { imdbTop250: IMDB_TOP_250, emmyWinners: EMMY_WINNERS };
+  const staticCollectionLimit = Math.max(IMDB_TOP_250.length, EMMY_WINNERS.length);
+  for (const row of staticHomeRows(kind, staticCollections, staticCollectionLimit)) {
+    appendTvRow(main, row, onSelect);
+  }
+
+  // Append one endless row: paint it AND stamp it so it can page as the user scrolls.
+  const appendEndless = (def, items) => {
+    if (def.mediaType) items = items.map(it => (it.media_type ? it : { ...it, media_type: def.mediaType }));
+    const shown = dedupeItems(items.slice(0, TV_HOME_CARD_LIMIT), seen);
+    const section = appendTvRow(main, { key: def.key, title: def.title, items: shown }, onSelect);
+    if (section) {
+      section.dataset.rowUrl = def.url;
+      section.dataset.rowPage = '1';
+      if (def.mediaType) section.dataset.rowMedia = def.mediaType;
+      // Seed with a snapshot of everything shown across rows so far, so paging deep
+      // into this rail doesn't reintroduce titles already shown in an earlier row.
+      tvRowSeen.set(section, new Set(seen));
+    }
+    return section;
+  };
+
+  // Recommended row: use the same aggregate taste engine as the full recommendation
+  // page. Every watched title contributes; no single recent film can dictate the rail.
+  try {
+    // Ask for extra candidates so Movies/TV tabs can filter by media type and
+    // still fill the expanded 120-card recommendation rail.
+    const ranked = await getRecommendations(buildSignalItems(), { limit: TV_HOME_RECOMMENDATION_LIMIT * 2 });
+    let candidates = ranked.map(rec => rec && rec.movie).filter(Boolean);
+    if (kind !== 'all') {
+      candidates = candidates.filter(movie => {
+        const type = (movie.media_type === 'tv' || (movie.name && !movie.title)) ? 'tv' : 'movie';
+        return type === kind;
+      });
+    }
+    if (candidates.length && token === tvHomeToken && tvHomeIsCurrent()) {
+      const items = dedupeItems(candidates, new Set(seen)).slice(0, TV_HOME_RECOMMENDATION_LIMIT);
+      items.forEach(item => seen.add(titleKey(item)));
+      appendTvRow(main, { key: 'recommended', title: 'Recommended for You', items }, onSelect);
+    }
+  } catch { /* no recommendations; skip the row */ }
+
+  const defs = catalogRowDefs(CONFIG.API_KEY, CONFIG.BASE_URL, kind).slice(0, TV_HOME_ROW_LIMIT);
   for (const def of defs) {
     if (token !== tvHomeToken || !tvHomeIsCurrent()) return; // user navigated away
     let items = [];
-    if (def.key === 'trending' && seed && seed.length) {
+    if (def.key === 'trending' && kind === 'all' && seed && seed.length) {
       items = seed.slice(0, 40);
     } else {
       try {
         const data = await fetchTmdbJson(def.url);
-        items = (data && data.results) || [];
+        items = (data && (data.results || data.items)) || []; // curated lists use `items`
       } catch (e) { items = []; }
     }
-    // Movie/tv-only endpoints omit media_type; stamp it so playback picks the right path.
-    if (def.mediaType) items = items.map(it => (it.media_type ? it : { ...it, media_type: def.mediaType }));
     if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
-    appendTvRow(main, { key: def.key, title: def.title, items: dedupeItems(items, seen) }, onSelect);
+    appendEndless(def, items);
   }
+}
+
+// Per-row dedupe sets for endless paging: keyed by the row's <section>.
+const tvRowSeen = new WeakMap();
+
+// Fetch the next page of a row's feed and append it. Called as the user nears the
+// end of a rail, so every category (Comedies, Top Rated, …) scrolls endlessly
+// instead of stopping at the first page.
+async function extendTvRow(section) {
+  if (!section || section.dataset.rowLoading === '1' || section.dataset.rowDone === '1') return;
+  const base = section.dataset.rowUrl;
+  if (!base) return;
+  const page = Number(section.dataset.rowPage || '1') + 1;
+  section.dataset.rowLoading = '1';
+  try {
+    const url = /[?&]page=\d+/.test(base) ? base.replace(/([?&]page=)\d+/, `$1${page}`) : `${base}${base.includes('?') ? '&' : '?'}page=${page}`;
+    const data = await fetchTmdbJson(url);
+    let items = (data && (data.results || data.items)) || []; // curated lists use `items`
+    if (section.dataset.rowMedia) items = items.map(it => (it.media_type ? it : { ...it, media_type: section.dataset.rowMedia }));
+    const seen = tvRowSeen.get(section) || new Set();
+    const fresh = dedupeItems(items, seen);
+    tvRowSeen.set(section, seen);
+    const track = section.querySelector('.tv-rail-track');
+    if (track) {
+      fresh.forEach(m => track.append(createTvCard(m, openDetails)));
+      sortTvTrackByRating(track);
+    }
+    section.dataset.rowPage = String(page);
+    // Stop when a page adds nothing new (empty page, or an endpoint that ignores
+    // ?page= and re-returns the same items — all deduped away), or past total_pages.
+    // Without the fresh===0 guard such a row would refetch forever on every scroll.
+    if (!items.length || fresh.length === 0 || page >= (data.total_pages || 500)) section.dataset.rowDone = '1';
+  } catch { /* transient; a later scroll retries */ } finally {
+    section.dataset.rowLoading = '0';
+  }
+}
+
+// Trigger the fetch when focus lands within the last few cards of a rail. Installed
+// once; harmless off the TV home (rows without rowUrl are ignored).
+let tvEndlessInstalled = false;
+function installTvEndlessRows() {
+  if (tvEndlessInstalled) return;
+  tvEndlessInstalled = true;
+  document.addEventListener('focusin', (event) => {
+    const card = event.target?.closest?.('.tv-card');
+    const section = card?.closest?.('[data-tv-row]');
+    if (!card || !section || !section.dataset.rowUrl) return;
+    const cards = section.querySelectorAll('.tv-card');
+    if (Array.prototype.indexOf.call(cards, card) >= cards.length - 6) extendTvRow(section);
+  });
 }
 
 // Create movie card element
@@ -3841,7 +4477,7 @@ async function loadTrending() {
     isTop250Mode = false;
     top250Btn.classList.remove('active');
     updateQueryParams();
-    
+
     // Determine how many pages to fetch based on filters
     // High vote filters have limited results, so fetch fewer pages
     let pagesToFetch = 250; // Default for trending
@@ -3852,7 +4488,7 @@ async function loadTrending() {
     } else if (currentFilters.minVotes >= 1000) {
       pagesToFetch = 100; // Even more for 1k+ votes
     }
-    
+
     // FIRST WAVE: enough pages for a meaningful paint (~200 titles), shown immediately.
     // The deep pool the weighted sort wants (up to 250 pages + quality gems) follows in
     // the background and re-sorts in place — waiting for it kept the grid on a spinner
@@ -4193,7 +4829,7 @@ if (qualitySelect) {
   qualitySelect.addEventListener('change', (e) => {
     const hash = (e.target.value || '').toLowerCase();
     // For TV the dropdown lists whole torrents, not qualities of one movie.
-    if (tvPlayCtx && currentTvSources.some(source => source.hash === hash)) playTvSource(hash, tvPlayCtx.season, tvPlayCtx.episode);
+    if (tvPlayCtx && currentTvSources.some(source => source.hash === hash)) playTvSource(hash, tvPlayCtx.season, tvPlayCtx.episode, [], 0, { manualSource: true });
     else playYtsQuality(hash);
   });
 }
@@ -4203,6 +4839,9 @@ if (subtitleSelect) {
     showSubtitleTrack(e.target.value || '');
   });
 }
+
+if (subtitleEarlierBtn) subtitleEarlierBtn.addEventListener('click', () => adjustSubtitleSync(-0.5));
+if (subtitleLaterBtn) subtitleLaterBtn.addEventListener('click', () => adjustSubtitleSync(0.5));
 
 // Episode control event listeners
 seasonSelect.addEventListener('change', (e) => {

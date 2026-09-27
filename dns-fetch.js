@@ -82,12 +82,14 @@ export async function fetchViaPublicDns(url, options = {}) {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8');
+          const buffer = Buffer.concat(chunks);
+          const text = buffer.toString('utf8');
           resolve({
             ok: res.statusCode >= 200 && res.statusCode < 300,
             status: res.statusCode,
             text: async () => text,
             json: async () => JSON.parse(text),
+            arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
           });
         });
       }

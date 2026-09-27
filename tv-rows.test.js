@@ -1,7 +1,7 @@
 // Tests for tv-rows.mjs — the pure row model behind the TV home screen.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows } from './tv-rows.mjs';
+import { catalogRowDefs, dedupeAcrossRows, dedupeItems, orderRowItems, titleKey, signalRows, sortItemsByRating, staticHomeRows } from './tv-rows.mjs';
 
 test('dedupeItems dedupes progressively against a shared seen set', () => {
   const seen = new Set();
@@ -13,6 +13,23 @@ test('dedupeItems dedupes progressively against a shared seen set', () => {
 
 test('titleKey separates movie and tv namespaces', () => {
   assert.notEqual(titleKey({ id: 7, media_type: 'movie' }), titleKey({ id: 7, media_type: 'tv' }));
+});
+
+test('sortItemsByRating orders highest first, keeps ties stable, and does not mutate', () => {
+  const items = [
+    { id: 1, vote_average: 7.1 },
+    { id: 2, vote_average: 9.3 },
+    { id: 3, vote_average: 9.3 },
+    { id: 4 },
+  ];
+  assert.deepEqual(sortItemsByRating(items).map(item => item.id), [2, 3, 1, 4]);
+  assert.deepEqual(items.map(item => item.id), [1, 2, 3, 4]);
+});
+
+test('orderRowItems preserves Continue Watching and rates every other rail', () => {
+  const items = [{ id: 1, vote_average: 5 }, { id: 2, vote_average: 9 }];
+  assert.deepEqual(orderRowItems({ key: 'continue', items }).map(item => item.id), [1, 2]);
+  assert.deepEqual(orderRowItems({ key: 'mylist', items }).map(item => item.id), [2, 1]);
 });
 
 test('catalogRowDefs builds distinct TMDB feeds, not slices of one', () => {
@@ -92,6 +109,53 @@ test('signalRows caps each row to the limit', () => {
   const many = Array.from({ length: 50 }, (_, i) => ({ id: i, media_type: 'movie' }));
   const rows = signalRows({ continueWatching: many }, 20);
   assert.equal(rows[0].items.length, 20);
+});
+
+test('staticHomeRows puts a capped IMDb Top 250 rail on All', () => {
+  const imdbTop250 = Array.from({ length: 250 }, (_, i) => ({
+    id: i + 1,
+    title: `Rank ${i + 1}`,
+    media_type: 'movie',
+    imdb_rank: i + 1,
+  }));
+  const rows = staticHomeRows('all', { imdbTop250 }, 12);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, 'imdb_top250');
+  assert.equal(rows[0].title, 'IMDb Top 250');
+  assert.deepEqual(rows[0].items.map(movie => movie.imdb_rank), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  const complete = staticHomeRows('all', { imdbTop250 }, imdbTop250.length);
+  assert.equal(complete[0].items.length, 250);
+  assert.equal(complete[0].items.at(-1).imdb_rank, 250);
+});
+
+test('staticHomeRows keeps the IMDb rail exclusive to All', () => {
+  const imdbTop250 = [{ id: 1, title: 'One', media_type: 'movie', imdb_rank: 1 }];
+  assert.deepEqual(staticHomeRows('movie', { imdbTop250 }), []);
+  assert.deepEqual(staticHomeRows('tv', { imdbTop250 }), []);
+  assert.deepEqual(staticHomeRows('all'), []);
+});
+
+test('staticHomeRows includes a complete Emmy winners rail on All', () => {
+  const emmyWinners = Array.from({ length: 20 }, (_, i) => ({
+    id: i + 1,
+    name: `Winner ${i + 1}`,
+    media_type: 'tv',
+  }));
+  const rows = staticHomeRows('all', { emmyWinners }, emmyWinners.length);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, 'emmy_winners');
+  assert.equal(rows[0].title, 'Emmy Award Winners');
+  assert.equal(rows[0].items.length, 20);
+  assert.ok(rows[0].items.every(item => item.media_type === 'tv'));
+});
+
+test('staticHomeRows places IMDb and Emmy collections in distinct rails', () => {
+  const imdbTop250 = [{ id: 1, title: 'Film', media_type: 'movie' }];
+  const emmyWinners = [{ id: 1, name: 'Series', media_type: 'tv' }];
+  assert.deepEqual(
+    staticHomeRows('all', { imdbTop250, emmyWinners }).map(row => row.key),
+    ['imdb_top250', 'emmy_winners'],
+  );
 });
 
 test('a full assembly puts signal rows first and never repeats a title', () => {

@@ -7,7 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   matchesEpisode, isPlayableTvFile, isRemuxableTvFile, rankTvSources,
-  pickEpisodeFile, pickEpisodeVideoFile, fetchTvSources, clearTvCache,
+  pickEpisodeFile, pickEpisodeVideoFile, pickMovieFileByIndex, fetchTvSources, clearTvCache,
+  debridSettings, torrentioDebridSegment, indexStreamUrl, isTranscodableTvFile, supplementalTvSources,
 } from './tv-api.mjs';
 
 // ---- matchesEpisode ----
@@ -108,6 +109,30 @@ test('ranks by seeds within the same quality', () => {
   assert.deepEqual(out.map((s) => s.seeds), [50, 5]);
 });
 
+test('prefers a smaller healthy episode over a larger one with stale-looking seed counts', () => {
+  const out = rankTvSources([
+    src('large.S01E01.720p.x264.mkv', 200, { title: 'large 👤 200 💾 2.4 GB' }),
+    src('small.S01E01.720p.x264.mkv', 20, { title: 'small 👤 20 💾 650 MB' }),
+  ]);
+  assert.match(out[0].filename, /^small/);
+});
+
+test('prefers English or untagged audio over an explicit foreign-only release', () => {
+  const out = rankTvSources([
+    src('Show.S01E01.720p.FRENCH.x264.mkv', 300, { title: 'Show FRENCH 👤 300 💾 500 MB' }),
+    src('Show.S01E01.720p.x264.mkv', 20, { title: 'Show English 👤 20 💾 700 MB' }),
+  ]);
+  assert.doesNotMatch(out[0].filename, /FRENCH/);
+});
+
+test('does not penalize MULTi releases because they normally include English audio', () => {
+  const out = rankTvSources([
+    src('Show.S01E01.720p.MULTi.FRENCH.x264.mkv', 20, { title: 'Show MULTi FRENCH 👤 20 💾 500 MB' }),
+    src('Show.S01E01.720p.x264.mkv', 20, { title: 'Show 👤 20 💾 700 MB' }),
+  ]);
+  assert.match(out[0].filename, /MULTi/);
+});
+
 test('reports the quality it detected, and unknown when absent', () => {
   assert.equal(rankTvSources([src('a.S01E01.mp4', 5)])[0].quality, 'unknown');
 });
@@ -121,6 +146,15 @@ test('picks the requested episode out of a season pack, not the biggest file', (
     { name: 'Show.S01E02.1080p.mp4', path: 'Show S01/Show.S01E02.1080p.mp4', length: 9000 },
   ];
   assert.equal(pickEpisodeFile(files, 1, 1).name, 'Show.S01E01.1080p.mp4');
+});
+
+test('picks the indexed movie from a multi-film torrent instead of the largest file', () => {
+  const files = [
+    { name: 'Other.Movie.1080p.x264.mkv', path: 'Other.Movie.1080p.x264.mkv', length: 9000 },
+    { name: 'The.God.of.Cookery.720p.x264.mkv', path: 'The.God.of.Cookery.720p.x264.mkv', length: 500 },
+  ];
+  assert.equal(pickMovieFileByIndex(files, 1, 'Ultimate Stephen Chow x264').name, 'The.God.of.Cookery.720p.x264.mkv');
+  assert.equal(pickMovieFileByIndex(files, 9, 'Ultimate Stephen Chow x264'), null);
 });
 
 test('falls back to the only playable video in a single-episode torrent', () => {
@@ -170,8 +204,12 @@ test('asks the primary index for the right imdb/season/episode and returns ranke
   };
   const out = await fetchTvSources('tt0903747', 1, 1, { fetchImpl: fake });
   assert.match(seen[0], /tt0903747:1:1/);
-  assert.equal(out.length, 1, 'the mkv/x265 source must be dropped');
-  assert.equal(out[0].hash, 'b'.repeat(40));
+  // The x265 source is no longer dropped — it is kept as a GPU-transcode option,
+  // ranked below the directly-playable H.264 copy.
+  assert.equal(out.length, 2);
+  assert.equal(out[0].hash, 'b'.repeat(40), 'the directly-playable 1080p H.264 ranks first');
+  assert.equal(out[0].transcode, false);
+  assert.equal(out[1].transcode, true, 'the 2160p x265 is offered for transcode, not direct play');
 });
 
 test('falls back to the next index when the primary is unreachable', async () => {
@@ -303,21 +341,24 @@ test('different episodes are cached separately', async () => {
 //   filename "Severance S01E01.mp4"  title "Severance - Season 1 - Mp4 x264 AC3 1080p"
 // has its resolution only in the title, so the picker showed "unknown".
 
-test('rejects a source whose TITLE reveals x265 even when the filename does not', () => {
+test('an H265 source revealed only by the title is offered for transcode, never direct play', () => {
   const out = rankTvSources([{
     hash: 'a'.repeat(40), seeds: 14,
     filename: 'Severance.S01E01.2160p.WEB-DL.DV.HDR[Ben The Men].mp4',
     title: 'Severance.S01.2160p.WEB-DL.DV.HDR.DDP5.1.Atmos.H265.MP4-BTM',
   }]);
-  assert.equal(out.length, 0, 'an H265 release must never be offered');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].transcode, true, 'HEVC must be transcoded, not remuxed');
+  assert.equal(out[0].remux, false, 'it must never be offered as a direct/remux copy');
 });
 
-test('rejects HEVC named in the title', () => {
+test('HEVC named in the title is kept as a transcode source', () => {
   const out = rankTvSources([{
     hash: 'b'.repeat(40), seeds: 90, filename: 'Show.S01E01.1080p.mp4',
     title: 'Show S01 1080p WEB-DL HEVC-GROUP',
   }]);
-  assert.equal(out.length, 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].transcode, true);
 });
 
 test('falls back to the title for quality when the filename has no resolution', () => {
@@ -485,4 +526,178 @@ test('movie fallback uses the movie endpoint and keeps playable alternatives', a
  assert.match(requested,/\/stream\/movie\/tt1234567\.json$/);
  assert.equal(sources.length,1);
  assert.equal(sources[0].remux,true);
+});
+
+test("movie fallback rejects fan-made videos masquerading as a release", async () => {
+ const {fetchMovieSources}=await import("./tv-api.mjs");
+ clearTvCache();
+ const sources=await fetchMovieSources("tt31349844",{indexUrls:["https://index.test"],retries:0,fetchImpl:async()=>({ok:true,json:async()=>({streams:[{infoHash:"a".repeat(40),title:"Runner 2026 Full Action Movie Fan-Made\\n👤 3",behaviorHints:{filename:"Runner.2026.Fan-Made.640x360.mp4"}}]})})});
+ assert.deepEqual(sources,[]);
+});
+
+// ---- Optional debrid (Real-Debrid et al.) ----
+// Cached debrid results arrive as ready `url` streams with no infohash. They must
+// be surfaced (not dropped by the infohash filter), exempt from the seeds filter
+// (a cached file has no swarm), and ranked above plain torrents.
+
+test('debridSettings: off with no key, on with a valid key, default service realdebrid', () => {
+  assert.equal(debridSettings({}), null);
+  assert.equal(debridSettings({ DEBRID_API_KEY: '  ' }), null);
+  assert.deepEqual(debridSettings({ DEBRID_API_KEY: 'abc' }), { service: 'realdebrid', key: 'abc' });
+  assert.deepEqual(
+    debridSettings({ DEBRID_API_KEY: 'k', DEBRID_SERVICE: 'AllDebrid' }),
+    { service: 'alldebrid', key: 'k' },
+  );
+  assert.equal(debridSettings({ DEBRID_API_KEY: 'k', DEBRID_SERVICE: 'notareal service' }), null);
+});
+
+test('torrentioDebridSegment: empty without debrid, service=key with it', () => {
+  assert.equal(torrentioDebridSegment(null), '');
+  assert.equal(torrentioDebridSegment({ service: 'realdebrid', key: 'abc' }), 'sort=qualitysize|realdebrid=abc');
+  // The key is url-encoded so odd characters cannot break the path segment.
+  assert.match(torrentioDebridSegment({ service: 'realdebrid', key: 'a/b c' }), /realdebrid=a%2Fb%20c$/);
+});
+
+test('indexStreamUrl: injects debrid config for Torrentio only, never Comet', () => {
+  const debrid = { service: 'realdebrid', key: 'K' };
+  const t = indexStreamUrl({ name: 'Torrentio', url: 'https://torrentio.strem.fun' }, 'series', 'tt1:1:1', debrid);
+  assert.equal(t, 'https://torrentio.strem.fun/sort=qualitysize|realdebrid=K/stream/series/tt1:1:1.json');
+  const c = indexStreamUrl({ name: 'Comet', url: 'https://comet.feels.legal' }, 'series', 'tt1:1:1', debrid);
+  assert.equal(c, 'https://comet.feels.legal/stream/series/tt1:1:1.json');
+  // No debrid -> bare url for both.
+  assert.equal(
+    indexStreamUrl({ name: 'Torrentio', url: 'https://torrentio.strem.fun' }, 'movie', 'tt9', null),
+    'https://torrentio.strem.fun/stream/movie/tt9.json',
+  );
+});
+
+test('fetchTvSources surfaces a debrid url stream, marks it, and ranks it first', async () => {
+  clearTvCache();
+  const seen = [];
+  const fake = async (url) => {
+    seen.push(url);
+    return res(streams([
+      // A plain torrent with real seeds...
+      { infoHash: 'b'.repeat(40), behaviorHints: { filename: 'Show.S01E01.1080p.x264.mkv' }, title: 'Show\n👤 40' },
+      // ...and a cached debrid file with NO infohash and NO seeds.
+      { url: 'https://x.download.real-debrid.com/d/ABC/Show.S01E01.1080p.x264.mkv', behaviorHints: { filename: 'Show.S01E01.1080p.x264.mkv' }, title: '[RD+] Show.S01E01.1080p' },
+    ]));
+  };
+  const out = await fetchTvSources('tt1', 1, 1, {
+    fetchImpl: fake,
+    indexUrls: [{ name: 'Torrentio', url: 'https://torrentio.strem.fun' }],
+    debrid: { service: 'realdebrid', key: 'K' },
+  });
+  assert.match(seen[0], /realdebrid=K/, 'the debrid config must reach Torrentio');
+  assert.equal(out.length, 2);
+  assert.equal(out[0].debrid, true, 'the cached source ranks first');
+  assert.ok(out[0].url.startsWith('https://'), 'the debrid source keeps its url');
+  assert.equal(out[0].hash, '', 'a debrid source has no infohash');
+  assert.equal(out[1].hash, 'b'.repeat(40), 'the plain torrent ranks after');
+});
+
+test('a debrid source with zero seeds is NOT dropped by the seeds filter', () => {
+  const ranked = rankTvSources([
+    { url: 'https://x.real-debrid.com/f.mkv', debrid: true, filename: 'A.S01E01.1080p.x264.mkv', title: 'A', seeds: 0 },
+    { hash: 'a'.repeat(40), filename: 'A.S01E01.1080p.x264.mkv', title: 'A 👤 0', seeds: 0 },
+  ]);
+  assert.equal(ranked.length, 1, 'the 0-seed torrent is dropped but the debrid file survives');
+  assert.equal(ranked[0].debrid, true);
+});
+
+// ---- HEVC transcode sources ----
+// The well-seeded copy of many shows (Mirzapur is the anchor case) is HEVC while
+// the H.264 copy is dead. Rather than report "no source", the helper GPU-transcodes
+// the HEVC copy; these tests pin how such sources are surfaced and ranked.
+
+test('isTranscodableTvFile: HEVC containers yes, H.264/codec-less no', () => {
+  assert.ok(isTranscodableTvFile('Show.S01E01.1080p.x265.mkv'));
+  assert.ok(isTranscodableTvFile('Show.S01E01.2160p.HEVC.mp4'));
+  assert.ok(isTranscodableTvFile('Show.S01E01.720p.mkv', 'Show S01 H.265'));
+  assert.ok(!isTranscodableTvFile('Show.S01E01.1080p.x264.mkv'), 'H.264 is played directly, not transcoded');
+  assert.ok(!isTranscodableTvFile('Show.S01E01.1080p.mkv'), 'no codec tag -> left alone, not transcoded');
+  assert.ok(!isTranscodableTvFile('Show.S01E01.x265.srt'), 'a subtitle is not a video');
+});
+
+test('a well-seeded HEVC copy is preferred over a dead H.264 copy (the Mirzapur case)', () => {
+  const out = rankTvSources([
+    { hash: 'a'.repeat(40), seeds: 1, filename: 'M.S01E01.1080p.x264.mkv', title: 'M 👤 1' },
+    { hash: 'b'.repeat(40), seeds: 15, filename: 'M.S01E01.1080p.x265.mkv', title: 'M 👤 15' },
+  ]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].hash, 'b'.repeat(40), 'the 15-seed HEVC outranks the 1-seed H.264');
+  assert.equal(out[0].transcode, true);
+  assert.equal(out[1].transcode, false);
+});
+
+test('a well-seeded H.264 copy is preferred over an equally-seeded HEVC (avoid needless transcode)', () => {
+  const out = rankTvSources([
+    { hash: 'a'.repeat(40), seeds: 50, filename: 'M.S01E01.1080p.x265.mkv', title: 'M 👤 50' },
+    { hash: 'b'.repeat(40), seeds: 50, filename: 'M.S01E01.1080p.x264.mkv', title: 'M 👤 50' },
+  ]);
+  assert.equal(out[0].hash, 'b'.repeat(40), 'same seeds -> the H.264 copy that needs no transcode wins');
+  assert.equal(out[0].transcode, false);
+});
+
+test('a compact healthy HEVC episode beats an oversized H.264 episode (the Chad Powers case)', () => {
+  const out = rankTvSources([
+    { hash: 'a'.repeat(40), seeds: 44, sizeBytes: 1812 * 1024 * 1024, filename: 'Chad.Powers.S01E01.1080p.WEB.h264-ETHEL.mkv', title: 'Chad Powers' },
+    { hash: 'b'.repeat(40), seeds: 48, sizeBytes: 401 * 1024 * 1024, filename: 'Chad.Powers.S01E01.1080p.HEVC.x265-MeGusta.mkv', title: 'Chad Powers' },
+  ]);
+  assert.equal(out[0].hash, 'b'.repeat(40), 'the compact 1080p source should outrank an oversized direct-play file');
+  assert.equal(out[0].transcode, true);
+});
+
+test('a healthy H.264 copy beats a MORE-seeded HEVC (the White Lotus case — avoid needless transcode)', () => {
+  const out = rankTvSources([
+    { hash: 'a'.repeat(40), seeds: 384, filename: 'WL.S03E01.1080p.x265.mkv', title: 'WL 👤 384' },
+    { hash: 'b'.repeat(40), seeds: 227, filename: 'WL.S03E01.1080p.x264.mkv', title: 'WL 👤 227' },
+    { hash: 'c'.repeat(40), seeds: 94, filename: 'WL.S03E01.1080p.mp4', title: 'WL x264 👤 94' },
+  ]);
+  assert.equal(out[0].transcode, false, 'a well-seeded direct copy is tried before any transcode');
+  assert.equal(out[0].hash, 'b'.repeat(40), 'the 227-seed H.264 outranks the 384-seed HEVC');
+  assert.equal(out[out.length - 1].hash, 'a'.repeat(40), 'the HEVC transcode source ranks last here');
+});
+
+test('a right-sized WEB-DL is preferred over a huge BluRay REMUX of the same quality (anti-buffering)', () => {
+  const out = rankTvSources([
+    { hash: 'a'.repeat(40), seeds: 300, filename: 'Show.S01E01.1080p.BluRay.REMUX.AVC.mkv', title: 'Show 👤 300 💾 22 GB' },
+    { hash: 'b'.repeat(40), seeds: 60, filename: 'Show.S01E01.1080p.WEB-DL.x264.mkv', title: 'Show 👤 60 💾 2.4 GB' },
+  ]);
+  assert.equal(out[0].hash, 'b'.repeat(40), 'the 2.4GB WEB-DL beats the 22GB REMUX despite fewer seeds');
+});
+
+test('parses size and preferns the lighter of two similar WEB files', () => {
+  const out = rankTvSources([
+    { hash: 'a'.repeat(40), seeds: 50, filename: 'M.S01E01.1080p.WEB.x264.mkv', title: 'M 👤 50 💾 9 GB' },
+    { hash: 'b'.repeat(40), seeds: 50, filename: 'M.S01E01.1080p.WEB.x264.mkv', title: 'M 👤 50 💾 3 GB' },
+  ]);
+  assert.equal(out[0].hash, 'b'.repeat(40), 'the 3GB copy (under the heavy cap) beats the 9GB one');
+});
+
+test('a debrid source that is HEVC (or bare) is kept and marked transcode, not dropped', () => {
+  const out = rankTvSources([
+    { url: 'https://x.real-debrid.com/a.mkv', debrid: true, filename: 'M.S01E01.1080p.x265.mkv', title: '[RD+] M', seeds: 0 },
+    { url: 'https://x.real-debrid.com/b.mkv', debrid: true, filename: 'M.S01E01.mkv', title: '[RD+] M bare', seeds: 0 },
+  ]);
+  assert.equal(out.length, 2, 'both cached debrid files survive (GPU transcodes any codec)');
+  assert.ok(out.every(s => s.transcode === true), 'each is marked for transcode');
+});
+
+test('AV1 episode files are offered through H.264 transcoding', () => {
+  assert.ok(isTranscodableTvFile('Show.S01E01.1080p.AV1.mkv'));
+  const [source] = rankTvSources([{ hash: 'f'.repeat(40), seeds: 4, filename: 'Show.S01E01.1080p.AV1.mkv', title: 'Show AV1' }]);
+  assert.equal(source.transcode, true);
+  assert.equal(source.quality, '1080p');
+});
+
+test('verified Windsors season-one packs expose selectable 1080p AV1 and H.264 sources', () => {
+  const sources = rankTvSources(supplementalTvSources('tt5692740', 1, 1));
+  assert.equal(sources.length, 2);
+  assert.deepEqual(sources.map((source) => source.quality), ['1080p', '1080p']);
+  assert.equal(sources[0].hash, 'fe1d4208f36e9a1f1c2e771ee5e4e4734d6cf305');
+  assert.equal(sources[0].transcode, true);
+  assert.equal(sources[1].remux, true);
+  assert.deepEqual(supplementalTvSources('tt5692740', 2, 1), []);
+  assert.deepEqual(supplementalTvSources('tt0000000', 1, 1), []);
 });

@@ -61,7 +61,7 @@ test('TV native player fills the screen, hides controls, seeks, pauses, and retu
  } finally {await browser.close();await rm(dir,{recursive:true,force:true});}
 });
 
-test('changing episode discards stale lookup and prefers 1080p on TV', {skip:!process.env.TV_E2E,timeout:30000},async()=>{
+test('ending an episode autoplays the next one, discards stale lookup, and prefers 1080p on TV', {skip:!process.env.TV_E2E,timeout:30000},async()=>{
  const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
  try{
   const page=await browser.newPage({viewport:{width:1920,height:1080}});
@@ -88,7 +88,7 @@ test('changing episode discards stale lookup and prefers 1080p on TV', {skip:!pr
   await page.waitForSelector('.tv-card');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await firstRequest;
   await page.waitForSelector('#tv-next',{state:'visible'});
-  await page.locator('#tv-next').click();
+  await page.locator('#player-video').evaluate(video=>video.dispatchEvent(new Event('ended')));
   await page.waitForFunction(()=>document.getElementById('player-title').textContent.includes('S1E2'));
   releaseFirst();
   await page.waitForTimeout(1200);
@@ -168,7 +168,7 @@ for (const kind of ['movie', 'tv', 'movie-alternate']) test(`111Movies fallback 
   await page.route('https://api.themoviedb.org/**',r=>{const u=r.request().url();let json={results:[movie],total_pages:1};if(u.includes('external_ids'))json={imdb_id:'tt1234567'};else if(u.includes('/season/'))json={episodes:[{episode_number:1,name:'Pilot'}]};else if(u.includes('/tv/9006?'))json={seasons:[{season_number:1,episode_count:1}]};return r.fulfill({json});});
   await page.route('https://111movies.com/**',r=>r.fulfill({contentType:'text/html',body:'<script>location.replace("https://player.vidlove.cc/embed/fallback-fixture")</script>'}));
   await page.route('https://player.vidlove.cc/**',r=>r.fulfill({contentType:'text/html',body:'Unavailable provider fixture'}));
-  await page.route(/\/(?:tv|movie)-torrents\?/,r=>r.fulfill({json:{sources:[{hash:'a'.repeat(40),quality:'720p',seeds:100,filename:'Fixture.S01E01.x264.mkv',title:'Fixture x264',remux:true}]}}));
+  await page.route(/\/(?:tv|movie)-torrents\?/,r=>r.fulfill({json:{sources:[{hash:'a'.repeat(40),quality:'720p',seeds:100,filename:'Fixture.S01E01.x264.mkv',title:'Fixture x264',remux:true,fileIndex:49}]}}));
   await page.route('**/yts?*',r=>r.fulfill({json:{title:movie.title,torrents:kind==='movie-alternate'?[]:[{hash:'a'.repeat(40),quality:'720p',seeds:100,video_codec:'x264'}]}}));
   await page.route('**/subtitles?*',r=>r.fulfill({json:{tracks:[]}}));
   let requested;await page.route('**/hls/start?*',r=>{requested=new URL(r.request().url());return r.fulfill({status:503,json:{error:'Fixture stops after verifying the requested position'}});});
@@ -182,6 +182,7 @@ for (const kind of ['movie', 'tv', 'movie-alternate']) test(`111Movies fallback 
   for(let i=0;i<50&&!requested;i++)await page.waitForTimeout(100);
   assert.ok(requested,'fallback requests built-in HLS playback');
   assert.equal(requested.searchParams.get('t'),'3158');
+  if(kind==='movie-alternate')assert.equal(requested.searchParams.get('file'),'49');
   assert.equal(await page.locator('#player-iframe').getAttribute('data-provider-origin'),null);
   assert.equal(await page.locator(':focus').getAttribute('id'),'tv-play-pause');
  }finally{await browser.close();}

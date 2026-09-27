@@ -18,3 +18,5 @@
 
 # Vercel prebuilt static output (rebuild: npm run build:web)
 /public/
+
+.env*

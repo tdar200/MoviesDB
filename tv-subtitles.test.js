@@ -8,4 +8,6 @@ test('renders timed VTT text safely, with identifiers and cue settings',()=>{
  assert.equal(cueText(cues,2),'Hello & goodbye\nSecond line');
  assert.equal(cueText(cues,3),'Second line');
  assert.equal(cueText(cues,4),'');
+ assert.equal(cueText(cues,3.5,1),'Hello & goodbye\nSecond line');
+ assert.equal(cueText(cues,0.5,-1),'Hello & goodbye');
 });
