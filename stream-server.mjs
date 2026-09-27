@@ -46,7 +46,7 @@ import { createChannelFeed } from './live-channels.mjs';
 import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHeaders } from './live-relay.mjs';
 import { measureTsHeight } from './live-measure.mjs';
 import { createHighflyAdapter } from './live-source-highfly.mjs';
-import { mergeCatalog, createCatalogFeed } from './live-catalog.mjs';
+import { mergeCatalog, createCatalogFeed, resolveTemplates } from './live-catalog.mjs';
 import { probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
@@ -1128,18 +1128,51 @@ function loadChannelLists() {
   } catch { return []; }
 }
 const headerOf = (e, name) => (e.headers && (e.headers[name] || e.headers[name.toLowerCase()])) || '';
-const liveCatalog = createCatalogFeed({
-  entries: mergeCatalog(loadChannelLists()).filter(e => !e.urlTemplate),
+const catalogEntries = mergeCatalog(loadChannelLists());
+// Plex live TV needs a token; an anonymous one is free (no account). Minted at
+// startup and daily; until then Plex channels are simply not listed.
+let livePlexToken = '';
+async function mintPlexToken() {
+  const client = randomBytes(16).toString('hex');
+  const res = await liveFetch(`https://plex.tv/api/v2/users/anonymous?X-Plex-Product=Plex%20Web&X-Plex-Client-Identifier=${client}&X-Plex-Version=4.145.0&X-Plex-Platform=Chrome`, { method: 'POST', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`plex token ${res.status}`);
+  const token = (await res.json()).authToken;
+  if (!token) throw new Error('plex token missing');
+  return token;
+}
+function buildCatalogFeed() { return createCatalogFeed({
+  entries: resolveTemplates(catalogEntries, { plexToken: livePlexToken }),
   // Liveness only: fetch the playlist (a few KB). Resolutions were measured when
   // the lists were built; re-measuring ~1,600 channels every 30 min would pull
   // hundreds of MB per round on this line.
   probe: async e => {
     if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(e.url)) return { status: 'blocked' };
+    // Plex rate-limits bulk requests from one IP (every Plex channel then 429s
+    // for a while, including the one being watched), so it is never bulk-probed.
+    // Its lineup was verified channel by channel when the list was built.
+    if (/(^|\.)plex\.tv$/.test(new URL(e.url).hostname)) return { status: 'ok' };
     const { upstream } = await fetchUpstreamGuarded(e.url, upstreamHeaders(headerOf(e, 'Referer'), headerOf(e, 'Origin')), AbortSignal.timeout(8000));
-    if (!upstream.ok) { try { const c = upstream.body && upstream.body.cancel && upstream.body.cancel(); if (c && c.catch) c.catch(() => {}); } catch { /* closed */ } return { status: 'http-error' }; }
+    if (!upstream.ok) {
+      try { const c = upstream.body && upstream.body.cancel && upstream.body.cancel(); if (c && c.catch) c.catch(() => {}); } catch { /* closed */ }
+      // Rate limited (Plex answers bulk checks with 429): busy, not dead.
+      return { status: upstream.status === 429 ? 'ok' : 'http-error' };
+    }
     return { status: (await upstream.text()).trimStart().startsWith('#EXTM3U') ? 'ok' : 'bad-playlist' };
   },
-});
+}); }
+let liveCatalog = buildCatalogFeed();
+async function refreshPlexToken() {
+  try {
+    livePlexToken = await mintPlexToken();
+    liveCatalog = buildCatalogFeed();
+    console.log(`[live] plex token ok, catalog entries=${liveCatalog.size()}`);
+    refreshCatalog();
+  } catch (err) { console.log(`[live] plex token failed: ${err.message}`); }
+}
+if (catalogEntries.some(e => e.urlTemplate && e.urlTemplate.includes('{plexToken}'))) {
+  setTimeout(refreshPlexToken, 2000).unref();
+  setInterval(refreshPlexToken, 24 * 3600_000).unref();
+}
 function refreshCatalog() {
   const t0 = Date.now();
   liveCatalog.refresh().then(() => {

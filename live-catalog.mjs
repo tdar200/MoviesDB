@@ -106,3 +106,25 @@ export function createCatalogFeed({ entries, probe, now = Date.now, ttlMs = 30 *
     size: () => list.length,
   };
 }
+
+// Some platform channels store a URL template instead of a fixed URL:
+//   {channelId}  the part after "<platform>:" in the entry id
+//   {plexToken}  a free anonymous Plex token the helper mints
+// Anything else (e.g. Pluto's per-viewer session parameters) cannot be filled
+// here and the entry is left out.
+export function resolveTemplates(entries, { plexToken = '' } = {}) {
+  const out = [];
+  for (const e of entries || []) {
+    if (!e.urlTemplate) { out.push(e); continue; }
+    const channelId = String(e.id).includes(':') ? String(e.id).slice(String(e.id).indexOf(':') + 1) : String(e.id);
+    let url = e.urlTemplate.split('{channelId}').join(encodeURIComponent(channelId));
+    if (url.includes('{plexToken}')) {
+      if (!plexToken) continue;
+      url = url.split('{plexToken}').join(encodeURIComponent(plexToken));
+    }
+    if (/\{[A-Za-z]+\}/.test(url)) continue;
+    const { urlTemplate, ...rest } = e;
+    out.push({ ...rest, url });
+  }
+  return out;
+}

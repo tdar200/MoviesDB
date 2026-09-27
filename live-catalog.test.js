@@ -69,3 +69,21 @@ test('UK channels lead their language group, and rows are capped', async () => {
   assert.deepEqual(cats.find(c => c.name === 'News').channels.map(c => c.id), ['gb1', 'uk2', 'us1']);
   assert.equal(cats.find(c => c.name === 'General').channels.length, 100);
 });
+
+test('resolveTemplates fills channel ids and the Plex token, and drops templates it cannot fill', async () => {
+  const { resolveTemplates } = await import('./live-catalog.mjs');
+  const entries = [
+    ch('plex:abc-123', 'Movies', 1080, { urlTemplate: 'https://epg.provider.plex.tv/library/parts/{channelId}.m3u8?X-Plex-Token={plexToken}', url: 'https://epg.provider.plex.tv/library/parts/abc-123.m3u8?X-Plex-Token=OLD' }),
+    ch('samsung:GBBD01', 'News', 1080, { urlTemplate: 'https://jmp2.uk/stvp-{channelId}', url: 'https://expired.example/x.m3u8' }),
+    ch('pluto:6231', 'Kids', 720, { urlTemplate: 'https://stitcher.pluto.tv/v2/stitch/hls/channel/{channelId}/master.m3u8?{stitcherParams}&jwt={sessionToken}' }),
+    ch('static', 'News', 720),
+  ];
+  const withToken = resolveTemplates(entries, { plexToken: 'T0K' });
+  assert.deepEqual(withToken.map(e => [e.id, e.url]), [
+    ['plex:abc-123', 'https://epg.provider.plex.tv/library/parts/abc-123.m3u8?X-Plex-Token=T0K'],
+    ['samsung:GBBD01', 'https://jmp2.uk/stvp-GBBD01'],
+    ['static', 'https://cdn.example/static.m3u8'],
+  ]);
+  assert.ok(withToken.every(e => !e.urlTemplate));
+  assert.deepEqual(resolveTemplates(entries, {}).map(e => e.id), ['samsung:GBBD01', 'static'], 'no Plex token yet -> Plex entries wait');
+});
