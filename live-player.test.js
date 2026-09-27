@@ -225,3 +225,8 @@ test('starts a multi-quality stream at its highest level and assumes a fast link
   assert.equal(h.Hls.last.startLevel, 1);
   assert.equal(h.video.played, 1);
 });
+
+test('playlist timeouts leave room for a slow Nuvio wrapper', () => {
+  assert.ok(LIVE_HLS_CONFIG.manifestLoadingTimeOut >= 15000);
+  assert.ok(LIVE_HLS_CONFIG.levelLoadingTimeOut >= 15000);
+});

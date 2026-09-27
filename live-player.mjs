@@ -10,7 +10,9 @@ export const LIVE_HLS_CONFIG = {
   maxMaxBufferLength: 20,
   liveSyncDurationCount: 3,
   liveMaxLatencyDurationCount: 8,
-  manifestLoadingTimeOut: 8000,
+  // Playlists come through Nuvio's wrapper, which took up to ~8 s at peak.
+  manifestLoadingTimeOut: 15000,
+  levelLoadingTimeOut: 15000,
   // The relay does not rewrite LL-HLS #EXT-X-PART / #EXT-X-PRELOAD-HINT URIs, so
   // low-latency mode would request raw upstream parts; stay on full segments.
   lowLatencyMode: false,

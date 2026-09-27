@@ -118,7 +118,12 @@ const liveHealth = createStreamHealth({
       if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(u)) throw Object.assign(new Error('non-public target'), { name: BLOCKED_TARGET });
       return (await fetchUpstreamGuarded(u, { ...upstreamHeaders(s.referer, s.origin), ...headers }, signal)).upstream;
     },
+    // Nuvio's playlist wrapper took 1.7-7.8 s at peak (27 Sep 2026); 5 s marked
+    // working streams as timed out. 12 s covers the playlist plus first bytes.
+    timeoutMs: 12000,
   }),
+  // One wave for a typical match list, so the longer probe does not add waves.
+  concurrency: 32,
 });
 const LIVE_JSON = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
 const liveJson = (res, status, body) => { res.writeHead(status, LIVE_JSON); res.end(JSON.stringify(body)); };
@@ -1149,7 +1154,7 @@ async function handleLiveHls(req, res, url) {
   const p = liveRelayParams(url);
   if (p.error) { console.log(`[live] 403 ${p.error}`); return liveJson(res, 403, { error: p.error }); }
   const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 8000); // bounds the redirect chain AND the body read
+  const t = setTimeout(() => ac.abort(), 15000); // bounds the redirect chain AND the body read (Nuvio's wrapper can take ~8 s)
   try {
     const { upstream, finalUrl } = await fetchUpstreamGuarded(p.u, upstreamHeaders(p.ref, p.org), ac.signal);
     if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(JSON.stringify({ error: `upstream ${upstream.status}` })); }
