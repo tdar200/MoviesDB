@@ -31,11 +31,12 @@ test('parseNuvioCatalog tolerates metas without cast, description or released', 
   assert.deepEqual(parseNuvioCatalog({}), []);
 });
 
-test('parseNuvioStreams unwraps the /api/manifest proxy URL and pulls headers from behaviorHints', () => {
+test('parseNuvioStreams keeps the /api/manifest wrapper as the playlist URL and pulls headers from behaviorHints', () => {
   const list = parseNuvioStreams(streams);
   assert.ok(list.length >= 2);
   const s = list[0];
-  assert.match(s.url, /^https:\/\/643t8a\.7odxv0l067ka\.net:8443\/hls\/.+\.m3u8\?s=.+&e=\d+$/);
+  assert.match(s.url, /^https:\/\/nuviosports\.xyz\/api\/manifest\?url=/);
+  assert.match(new URL(s.url).searchParams.get('url'), /^https:\/\/643t8a\.7odxv0l067ka\.net:8443\/hls\/.+\.m3u8\?s=.+&e=\d+$/);
   assert.equal(s.referer, 'https://assetrage.net/');
   assert.equal(s.origin, 'https://assetrage.net');
   assert.match(s.userAgent, /Chrome/);
@@ -50,7 +51,7 @@ test('parseNuvioStreams falls back to query params and a plain url when hints ar
     { title: 'X', url: 'https://nuviosports.xyz/api/manifest?url=https%3A%2F%2Fcdn.example%2Fa.m3u8&referer=https%3A%2F%2Fr.example%2F&origin=https%3A%2F%2Fr.example' },
     { title: 'Y\nQuality: 720p', url: 'https://cdn.example/b.m3u8', speedScore: 5 },
   ] });
-  assert.equal(list[0].url, 'https://cdn.example/a.m3u8');
+  assert.equal(list[0].url, 'https://nuviosports.xyz/api/manifest?url=https%3A%2F%2Fcdn.example%2Fa.m3u8&referer=https%3A%2F%2Fr.example%2F&origin=https%3A%2F%2Fr.example');
   assert.equal(list[0].referer, 'https://r.example/');
   assert.equal(list[0].origin, 'https://r.example');
   assert.equal(list[1].url, 'https://cdn.example/b.m3u8');

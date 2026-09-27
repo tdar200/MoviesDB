@@ -3,9 +3,11 @@
 //
 // Catalog:  GET {host}/catalog/tv/nuvio_sports_live/genre=Football.json
 // Streams:  GET {host}/stream/tv/{id}.json
-// Their stream `url` is their own /api/manifest proxy, which does NOT rewrite
-// segment URLs, so we unwrap the upstream m3u8 and relay it ourselves with the
-// Referer/Origin from behaviorHints.proxyHeaders (see live-relay.mjs).
+// Their stream `url` is their own /api/manifest proxy. The playlist must be
+// fetched through Nuvio's /api/manifest wrapper because the inner playlists
+// are bound to Nuvio's resolver IP; the wrapper does NOT rewrite segment URLs,
+// so the helper relay rewrites and proxies segments with Referer/Origin from
+// behaviorHints.proxyHeaders (see live-relay.mjs).
 import { withHostFailover } from './live-sources.mjs';
 import { CHROME_UA } from './live-fixtures.mjs';
 
@@ -60,7 +62,7 @@ export function parseNuvioStreams(json) {
       if (u.pathname.endsWith('/api/manifest') && u.searchParams.get('url')) {
         referer = u.searchParams.get('referer') || '';
         origin = u.searchParams.get('origin') || '';
-        url = u.searchParams.get('url');
+        // Keep url as the wrapper URL; do not unwrap to the inner playlist
       }
     } catch { /* keep as-is */ }
     const hints = (s.behaviorHints && s.behaviorHints.proxyHeaders && s.behaviorHints.proxyHeaders.request) || {};
