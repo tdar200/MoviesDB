@@ -8,8 +8,9 @@ export function installTvRemote() {
   document.body.classList.add('tv-mode');
   installProviderControls();
   const modal = document.getElementById('player-modal');
-  const detailsOverlay = document.querySelector('.tv-details');
-  const detailsOpen = () => !!detailsOverlay && !detailsOverlay.hidden;
+  const detailsOverlays = () => Array.from(document.querySelectorAll('.tv-details'));
+  const openDetailsOverlay = () => detailsOverlays().find(o => !o.hidden) || null;
+  const detailsOpen = () => !!openDetailsOverlay();
   const header = document.querySelector('header');
   document.getElementById('close-modal').textContent = '‹ Back';
   document.getElementById('player-fullscreen').textContent = 'Fullscreen';
@@ -160,7 +161,7 @@ export function installTvRemote() {
   // Restore focus to the card when the details screen closes without starting playback.
   // Deferred a tick so a details->player handoff lets the modal own focus instead.
   let detailsWasOpen = false;
-  if (detailsOverlay) new MutationObserver(() => {
+  const detailsObserver = new MutationObserver(() => {
     const open = detailsOpen();
     if (open === detailsWasOpen) return;
     detailsWasOpen = open;
@@ -168,7 +169,8 @@ export function installTvRemote() {
       if (modalOpen() || detailsOpen()) return;
       focus(lastCardFocus && lastCardFocus.isConnected ? lastCardFocus : homeAnchor());
     }, 0);
-  }).observe(detailsOverlay, { attributes: true, attributeFilter: ['hidden'] });
+  });
+  detailsOverlays().forEach(o => detailsObserver.observe(o, { attributes: true, attributeFilter: ['hidden'] }));
   let modalWasOpen = false;
   const modalOpen = () => visible(modal);
   // Netflix-style anchored rail: the focused card holds a fixed left gutter and the
@@ -244,7 +246,7 @@ export function installTvRemote() {
   const candidates = () => {
     const scope = picker
       || (modalOpen() ? (modal.classList.contains('tv-settings-open') ? modal.querySelector('.player-header') : modal)
-      : (detailsOpen() ? detailsOverlay : document));
+      : (openDetailsOverlay() || document));
     return Array.from(scope.querySelectorAll(selector)).filter(visible);
   };
   new MutationObserver(() => {

@@ -1725,3 +1725,22 @@ main {
 .tv-card-channel .tv-card-logo { object-fit: contain; padding: 24px; background: #202634; }
 .tv-live-empty { margin: 24px 4vw 8px; color: #d3d5df; font-size: 20px; }
 .tv-live-status { margin: 8px 4vw 24px; color: #8d93a8; font-size: 15px; }
+/* Live match details. tv.css owns the overlay shell on the TV; the web page has
+   no .tv-details rules, so it gets a minimal shell here (scoped off TV mode). */
+body:not(.tv-mode) .tv-details-live { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 150; background: #141414; overflow-y: auto; color: #fff; }
+body:not(.tv-mode) .tv-details-live[hidden] { display: none; }
+body:not(.tv-mode) .tv-details-live .tv-details-body { position: relative; max-width: 720px; padding: 40px 24px; }
+body:not(.tv-mode) .tv-details-live .tv-details-play { background: #fff; color: #141414; border: 0; border-radius: 6px; padding: 10px 20px; font-size: 16px; font-weight: bold; cursor: pointer; }
+.tv-live-details-backdrop { position: absolute; top: 0; left: 0; right: 0; height: 100vh; background: radial-gradient(ellipse at top, #24304a, #0e111b 70%); }
+.tv-live-details-teams { display: flex; align-items: center; gap: 24px; margin: 14px 0 8px; }
+.tv-live-details-team { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 120px; }
+.tv-live-details-badge { width: 72px; height: 72px; object-fit: contain; }
+.tv-live-details-name { font-size: 15px; font-weight: bold; text-align: center; }
+.tv-live-details-score { font-size: 36px; font-weight: 800; min-width: 100px; text-align: center; }
+.tv-live-broadcasters { color: #aeb2c8; font-size: 14px; }
+.tv-live-streams { margin-top: 14px; }
+.tv-live-streams-title { font-size: 14px; color: #8ab8ff; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 1px; }
+.tv-live-stream-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.tv-live-stream { background: #262b3a; color: #fff; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 8px 12px; font-size: 14px; cursor: pointer; }
+.tv-live-stream:focus { outline: 2px solid #8ab8ff; }
+.tv-live-nostream { color: #d3d5df; font-size: 15px; margin: 6px 0 10px; }

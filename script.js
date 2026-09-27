@@ -14,6 +14,7 @@ import { dedupeTrackLabels } from './subtitles.js';
 import { IMDB_TOP_250 } from './imdb-top250.js';
 import { EMMY_WINNERS } from './emmy-winners.js';
 import { buildLiveRows, restoreFocusById } from './live-home.mjs';
+import { createLiveDetails } from './live-details.mjs';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -3949,12 +3950,30 @@ const tvDetails = TV_MODE ? createTvDetails({
   isStarred, toggleStar, isDownvoted, toggleDownvote, onSignalChanged,
 }) : null;
 
+// Streams for one match, flattened across every source adapter that listed it.
+// 30 s timeout: /live/streams probes every stream and can take ~16 s cold.
+async function fetchStreamsForMatch(match) {
+  const lists = await Promise.all((match.sources || []).map(s =>
+    fetchLiveJson(`/live/streams?adapter=${encodeURIComponent(s.adapter)}&id=${encodeURIComponent(s.sourceId)}`, 30000)
+      .then(r => (r.streams || []).map(st => ({ ...st, adapter: s.adapter })))
+      .catch(() => [])));
+  return lists.flat();
+}
+const liveDetails = createLiveDetails({
+  fetchStreams: fetchStreamsForMatch,
+  onPlay: (match, streams, index) => { liveDetails.close(); openLivePlayer({ title: match.title, streams, startIndex: index, refresh: () => fetchStreamsForMatch(match) }); },
+});
+// Temporary until Task 12 (the live player) replaces it.
+function openLivePlayer(session) { console.log('[live] play', session.title, session.streams.length); }
+
 // A card opens details first; the hero's Play button still plays immediately.
 function openDetails(movie) {
   if (tvDetails) tvDetails.open(movie);
   else openPlayer(movie);
 }
-if (TV_MODE) document.addEventListener('tv-close-details', () => { if (tvDetails) tvDetails.close(); });
+if (TV_MODE) document.addEventListener('tv-close-details', () => { if (tvDetails) tvDetails.close(); liveDetails.close(); });
+// The web page has no remote handler, so Escape closes the live details there.
+if (!TV_MODE) document.addEventListener('keydown', event => { if (event.key === 'Escape' && liveDetails.isOpen()) liveDetails.close(); });
 
 // A non-default filter or a search means the user wants specific results, not the
 // curated home. Everything else on the Movies tab is the home.
@@ -4113,8 +4132,11 @@ function liveStatusText(matchesRes, channelsRes) {
   return parts.join('   ·   ');
 }
 
-// Replaced by Tasks 11 and 12; kept here so the home is testable on its own.
-let onLiveSelect = card => { console.log('[live] select', card.kind, card.id); };
+// Matches open the details screen; channels play straight away (Task 12's player).
+let onLiveSelect = card => {
+  if (card.kind === 'channel') openLivePlayer({ title: card.title, streams: [{ label: card.title, play: card.raw.play }], startIndex: 0, refresh: async () => [{ label: card.title, play: card.raw.play }] });
+  else liveDetails.open(card.raw);
+};
 
 async function renderLiveHome() {
   stopLiveHomeRefresh();
