@@ -530,3 +530,37 @@ test('TV home keeps loading category rows as focus moves down, up to the last on
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
+
+test('a row whose first page repeats an earlier row still fills its window from later pages', { skip: !process.env.TV_E2E, timeout: 120000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+    const mk = (start, n, rating = 8) => Array.from({ length: n }, (_, i) => ({ id: start + i, name: `Show ${start + i}`, media_type: 'tv', vote_average: rating - i * 0.01, vote_count: 900, popularity: 50, genre_ids: [18], first_air_date: '2020-01-01', overview: 'x', poster_path: null, backdrop_path: null }));
+    const feedIds = new Map();
+    await page.route('https://api.themoviedb.org/**', route => {
+      const url = new URL(route.request().url());
+      const pg = Number(url.searchParams.get('page') || 1);
+      // Top Rated Shows and page 1 of Drama Series are the same 20 shows.
+      if (/\/tv\/top_rated/.test(url.pathname)) return route.fulfill({ json: { results: mk(900000, 20, 9), page: pg, total_pages: 1 } });
+      if (/\/discover\/tv/.test(url.pathname) && url.searchParams.get('with_genres') === '18') {
+        return route.fulfill({ json: { results: pg === 1 ? mk(900000, 20, 9) : mk(910000 + pg * 100, 20, 8.5 - pg * 0.3), page: pg, total_pages: 10 } });
+      }
+      url.searchParams.delete('api_key'); url.searchParams.delete('page');
+      const feed = url.pathname + url.search;
+      if (!feedIds.has(feed)) feedIds.set(feed, 100000 + feedIds.size * 1000);
+      const base = feedIds.get(feed) + (pg - 1) * 50;
+      const results = Array.from({ length: 20 }, (_, i) => ({ id: base + i, title: `Row ${base + i}`, media_type: 'movie', vote_average: 7, vote_count: 500, popularity: 50, genre_ids: [18], release_date: '2020-01-01', overview: 'x', poster_path: null, backdrop_path: null }));
+      return route.fulfill({ json: { results, items: results, cast: [], page: pg, total_pages: 5 } });
+    });
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Drama Series'), null, { timeout: 60000 });
+    const drama = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-tv-row]')].find(x => x.dataset.tvRow === 'Drama Series'); const c = [...r.querySelectorAll('.tv-card')]; return { n: c.length, ids: c.map(x => Number(x.dataset.movieId)), ratings: c.map(x => Number(x.dataset.rating)) }; });
+    assert.ok(drama.n >= 12, `Drama Series shows ${drama.n} cards`);
+    assert.ok(drama.ids.every(id => id >= 910000), 'none of the titles already shown in Top Rated Shows');
+    assert.deepEqual(drama.ratings, [...drama.ratings].sort((a, b) => b - a), 'highest rated first');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});

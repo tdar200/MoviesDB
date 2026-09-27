@@ -4098,6 +4098,7 @@ let lastTrendingSeed = null;
 // front would cost the TV's scarce memory and a burst of TMDB requests.
 const TV_HOME_ROW_LIMIT = 12;
 const TV_HOME_ROW_BATCH = 8;
+const TV_HOME_ROW_PAGES = 3;
 let tvHomeLoadMore = null;
 const TV_HOME_CARD_LIMIT = 12;
 const TV_HOME_RECOMMENDATION_LIMIT = TV_HOME_CARD_LIMIT * 10;
@@ -4133,19 +4134,27 @@ async function renderTvHome(seed) {
   // Append one endless row: paint it AND stamp it so it can page as the user scrolls.
   const appendEndless = (def, items) => {
     if (def.mediaType) items = items.map(it => (it.media_type ? it : { ...it, media_type: def.mediaType }));
-    const shown = dedupeItems(items.slice(0, TV_HOME_CARD_LIMIT), seen);
+    // Dedupe the whole fetch, not just its first 12: a row whose leading titles
+    // already appear above still fills its window from the titles after them.
+    const unique = dedupeItems(items, new Set(seen));
+    const rowSeen = new Set(seen); // what this row must not repeat: earlier rows + its own cards
+    const shown = unique.slice(0, TV_HOME_CARD_LIMIT);
+    // Reserve every fetched title for this row, including the ones it shows only
+    // after a scroll right; otherwise they could also appear in the next row.
+    unique.forEach(it => seen.add(titleKey(it)));
+    shown.forEach(it => rowSeen.add(titleKey(it)));
     const section = appendTvRow(main, { key: def.key, title: def.title, items: shown }, onSelect);
     if (section) {
-      // The rest of page 1 is shown before page 2 is fetched. It used to be dropped:
-      // paging jumped to page 2, so items 13-20 of every row's first page never
-      // appeared, and fast Right presses stalled at card 12 waiting on the network.
-      section.__pageRest = items.slice(TV_HOME_CARD_LIMIT);
+      // The rest of the fetch is shown before the next page is requested. It used to
+      // be dropped: paging jumped to page 2, so items 13-20 of every row's first page
+      // never appeared, and fast Right presses stalled at card 12 waiting on the network.
+      section.__pageRest = unique.slice(TV_HOME_CARD_LIMIT);
       section.dataset.rowUrl = def.url;
       section.dataset.rowPage = '1';
       if (def.mediaType) section.dataset.rowMedia = def.mediaType;
       // Seed with a snapshot of everything shown across rows so far, so paging deep
       // into this rail doesn't reintroduce titles already shown in an earlier row.
-      tvRowSeen.set(section, new Set(seen));
+      tvRowSeen.set(section, rowSeen);
     }
     return section;
   };
@@ -4185,16 +4194,31 @@ async function renderTvHome(seed) {
       const def = defs[nextDef++];
       if (token !== tvHomeToken || !tvHomeIsCurrent()) return; // user navigated away
       let items = [];
+      let pagesLoaded = 1;
       if (def.key === 'trending' && kind === 'all' && seed && seed.length) {
         items = seed.slice(0, 40);
       } else {
-        try {
-          const data = await fetchTmdbJson(def.url);
-          items = (data && (data.results || data.items)) || []; // curated lists use `items`
-        } catch (e) { items = []; }
+        // Rating-sorted rows overlap: the top dramas already sit in Top Rated Shows,
+        // so after cross-row dedupe page 1 can leave a single card. Pull further
+        // pages (up to TV_HOME_ROW_PAGES) until the row has a full window of new titles.
+        for (let page = 1; page <= TV_HOME_ROW_PAGES; page++) {
+          let batch = [];
+          try {
+            const url = page === 1 ? def.url : def.url.replace(/([?&]page=)\d+/, `$1${page}`);
+            const data = await fetchTmdbJson(url);
+            batch = (data && (data.results || data.items)) || []; // curated lists use `items`
+            pagesLoaded = page;
+            if (page >= ((data && data.total_pages) || 1)) page = TV_HOME_ROW_PAGES;
+          } catch (e) { batch = []; }
+          items = items.concat(batch);
+          if (!batch.length || !/[?&]page=\d+/.test(def.url)) break;
+          if (items.filter(it => it && it.id != null && !seen.has(titleKey(it))).length >= TV_HOME_CARD_LIMIT) break;
+          if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
+        }
       }
       if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
-      appendEndless(def, items);
+      const section = appendEndless(def, items);
+      if (section && pagesLoaded > 1) section.dataset.rowPage = String(pagesLoaded);
     }
   };
   let loadingMore = false;
