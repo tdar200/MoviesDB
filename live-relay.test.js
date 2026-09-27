@@ -29,8 +29,9 @@ test('isPublicHttpUrl refuses private, loopback, link-local and non-http targets
   assert.equal(isPublicHttpUrl('http://89.1.2.3:8080/x.m3u8'), true);
   assert.equal(isPublicHttpUrl('http://100.63.255.255/x'), true, 'just before CGNAT');
   assert.equal(isPublicHttpUrl('http://100.128.0.1/x'), true, 'just after CGNAT');
+  assert.equal(isPublicHttpUrl('http://223.255.255.255/x'), true, 'just before multicast');
   assert.equal(isPublicHttpUrl('http://89.1.2.3:8080/x.m3u8', ['https:']), false);
-  for (const bad of ['http://127.0.0.1/x', 'http://localhost/x', 'http://localhost./x', 'http://10.0.0.5/x', 'http://192.168.0.189:8123/x', 'http://172.16.0.1/x', 'http://169.254.1.1/x', 'http://[::1]/x', 'http://[fe80::1]/x', 'http://[fe90::1]/x', 'http://[febf::1]/x', 'http://[fd00::1]/x', 'http://[::ffff:127.0.0.1]/x', 'http://[::7f00:1]/x', 'http://[::ffff:0:127.0.0.1]/x', 'http://[64:ff9b::7f00:1]/x', 'http://100.64.0.1/x', 'http://100.100.100.100/x', 'http://224.0.0.1/x', 'http://255.255.255.255/x', 'ftp://cdn.example/x', 'not a url', '']) {
+  for (const bad of ['http://127.0.0.1/x', 'http://localhost/x', 'http://localhost./x', 'http://10.0.0.5/x', 'http://192.168.0.189:8123/x', 'http://172.16.0.1/x', 'http://169.254.1.1/x', 'http://[::1]/x', 'http://[fe80::1]/x', 'http://[fe90::1]/x', 'http://[febf::1]/x', 'http://[fd00::1]/x', 'http://[::ffff:127.0.0.1]/x', 'http://[::7f00:1]/x', 'http://[::ffff:0:127.0.0.1]/x', 'http://[64:ff9b::7f00:1]/x', 'http://100.64.0.1/x', 'http://100.100.100.100/x', 'http://224.0.0.1/x', 'http://239.255.255.250/x', 'http://255.255.255.255/x', 'ftp://cdn.example/x', 'not a url', '']) {
     assert.equal(isPublicHttpUrl(bad), false, bad);
   }
 });

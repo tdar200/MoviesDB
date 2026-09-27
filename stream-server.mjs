@@ -101,9 +101,12 @@ const resolvingFetch = createResolvingFetch();
 // (local npm start) a per-process random secret still prevents open-proxy use.
 const LIVE_SECRET = HELPER_KEY || randomBytes(16).toString('hex');
 const LIVE_ALLOW_PRIVATE = process.env.LIVE_RELAY_ALLOW_PRIVATE === '1'; // integration test only
-const liveFixtures = createFixturesFeed({ fetchImpl: resolvingFetch });
-const liveSources = createSourceRegistry([createNuvioAdapter({ fetchImpl: resolvingFetch })]);
-const liveChannels = createChannelFeed({ fetchImpl: resolvingFetch });
+// Live traffic uses plain fetch (system resolver), never resolvingFetch: the spec
+// forbids routing around ISP blocks, so there is no public-DNS fallback here.
+const liveFetch = (url, opts) => fetch(url, opts);
+const liveFixtures = createFixturesFeed({ fetchImpl: liveFetch });
+const liveSources = createSourceRegistry([createNuvioAdapter({ fetchImpl: liveFetch })]);
+const liveChannels = createChannelFeed({ fetchImpl: liveFetch });
 // Probe each stream once (2-min cache) so /live/streams drops broken ones and
 // lists playable ones first; see live-health.mjs for the 2026-09-27 measurements.
 const liveHealth = createStreamHealth({
@@ -119,8 +122,8 @@ const liveHealth = createStreamHealth({
 });
 const LIVE_JSON = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
 const liveJson = (res, status, body) => { res.writeHead(status, LIVE_JSON); res.end(JSON.stringify(body)); };
-// Feed modules call fetch with no signal; undici can wait ~300 s and the DNS-fallback
-// path has no timeout at all, so every feed call a route awaits gets a deadline here.
+// Feed modules call fetch with no signal and undici can wait ~300 s, so every feed
+// call a route awaits gets a deadline here.
 // A polling TV must never pile up hung requests.
 const LIVE_FEED_DEADLINE_MS = 8000;
 const LIVE_CHANNELS_DEADLINE_MS = 20000; // first fetch probes ~60 channels, 8 at a time, 4 s each
@@ -1124,11 +1127,9 @@ const liveRelayError = (status, message) => Object.assign(new Error(message), { 
 async function fetchUpstreamGuarded(startUrl, headers, signal) {
   let current = startUrl;
   for (let hop = 0; ; hop++) {
-    const upstream = await resolvingFetch(current, { headers, redirect: 'manual', signal });
+    const upstream = await liveFetch(current, { headers, redirect: 'manual', signal });
     if (upstream.status < 300 || upstream.status >= 400) return { upstream, finalUrl: current };
     try { const c = upstream.body && upstream.body.cancel && upstream.body.cancel(); if (c && c.catch) c.catch(() => {}); } catch { /* already closed */ }
-    // The DNS-fallback response carries no headers, so its redirect cannot be checked.
-    if (!(upstream.headers && upstream.headers.get)) throw liveRelayError(502, `upstream ${upstream.status} redirect without headers`);
     const location = upstream.headers.get('location');
     if (!location) throw liveRelayError(502, `upstream ${upstream.status} without location`);
     if (hop >= LIVE_MAX_REDIRECTS) throw liveRelayError(502, 'too many redirects');
@@ -1183,12 +1184,12 @@ async function handleLiveSeg(req, res, url) {
     clearTimeout(headersTimer);
   }
   if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(); }
-  const headers = { 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'content-type': (upstream.headers && upstream.headers.get && upstream.headers.get('content-type')) || 'video/mp2t' };
-  const len = upstream.headers && upstream.headers.get && upstream.headers.get('content-length');
+  const headers = { 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'content-type': upstream.headers.get('content-type') || 'video/mp2t' };
+  const len = upstream.headers.get('content-length');
   if (len) headers['content-length'] = len;
   res.writeHead(200, headers);
   if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), res).catch(() => { try { res.destroy(); } catch { /* closed */ } });
-  else res.end(Buffer.from(await upstream.arrayBuffer())); // DNS-fallback fetch buffers the body
+  else res.end(); // a null-body success (e.g. 204) is relayed as an empty segment
 }
 
 // GET /transcode?hash=..&s=..&e=..  -> a live H.264 fragmented-MP4 stream of an

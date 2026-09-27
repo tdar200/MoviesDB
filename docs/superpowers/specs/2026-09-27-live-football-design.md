@@ -179,7 +179,8 @@ without network.
     `#EXT-X-MEDIA-SEQUENCE`, `#EXT-X-TARGETDURATION`, discontinuities).
 - `handleLiveHls(req, res, url)`: verifies the signature, fetches the upstream
   playlist with `Referer`, `Origin`, `User-Agent` (from query, defaulting to a
-  Chrome UA), 8 s timeout, through the DNS-fallback fetch. Responds
+  Chrome UA), 8 s timeout, through plain `fetch` on the system resolver (no
+  public-DNS fallback: the Constraints forbid routing around ISP blocks). Responds
   `application/vnd.apple.mpegurl`, `cache-control: no-store`,
   `access-control-allow-origin: *`. Upstream 403 or 5xx passes through as the
   same status so the client can react.

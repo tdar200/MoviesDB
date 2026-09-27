@@ -27,7 +27,8 @@ function isPrivateIPv4(dotted) {
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(dotted)) return true;
   if (/^192\.168\./.test(dotted)) return true;
   if (/^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./.test(dotted)) return true;
-  if (/^(224\.|255\.)/.test(dotted)) return true;
+  if (/^(22[4-9]|23\d)\./.test(dotted)) return true; // 224.0.0.0/4 multicast
+  if (/^255\./.test(dotted)) return true;
   return false;
 }
 
