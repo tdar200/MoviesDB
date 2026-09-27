@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifySegmentBytes, firstMediaUri, probeStream, createStreamHealth } from './live-health.mjs';
+import { classifySegmentBytes, firstMediaUri, probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 
 const bytes = (...xs) => Uint8Array.from(xs);
 const ascii = s => Uint8Array.from(Buffer.from(s, 'latin1'));
@@ -121,4 +121,42 @@ test('createStreamHealth never runs more than `concurrency` probes at once', asy
 test('createStreamHealth treats a throwing probe as error, not a crash', async () => {
   const health = createStreamHealth({ probe: async () => { throw new Error('boom'); } });
   assert.deepEqual((await health.rank([{ url: 'x', rank: 1 }])).map(s => s.health), ['error']);
+});
+
+// Fix round 1: the probe must not reach non-public targets. The helper's
+// fetchUpstream throws an error named BLOCKED_TARGET for those; the probe maps it
+// to 'blocked' and the ranker drops the stream.
+function blockingUpstream(map) {
+  const inner = fakeUpstream(map);
+  return async (url, headers, signal) => {
+    if (url.startsWith('http://192.168.')) { const e = new Error('non-public target'); e.name = BLOCKED_TARGET; throw e; }
+    return inner(url, headers, signal);
+  };
+}
+
+test('probeStream: a segment on a non-public target is blocked', async () => {
+  const fetchUpstream = blockingUpstream({ [S.url]: { status: 200, body: '#EXTM3U\n#EXTINF:4,\nhttp://192.168.0.1/seg.ts\n' } });
+  assert.deepEqual(await probeStream(S, { fetchUpstream }), { status: 'blocked', detail: 'non-public target' });
+});
+
+test('probeStream: a non-public start url is blocked', async () => {
+  const fetchUpstream = blockingUpstream({});
+  assert.deepEqual(await probeStream({ ...S, url: 'http://192.168.0.1/index.m3u8' }, { fetchUpstream }), { status: 'blocked', detail: 'non-public target' });
+});
+
+test('createStreamHealth drops a stream whose probe is blocked', async () => {
+  const health = createStreamHealth({ probe: async s => ({ status: s.url === 'lan' ? 'blocked' : 'ok', detail: '' }) });
+  assert.deepEqual((await health.rank([{ url: 'lan', rank: 9 }, { url: 'pub', rank: 1 }])).map(s => s.url), ['pub']);
+});
+
+test('probeStream cancels the body of a non-ok response', async () => {
+  let cancelled = 0;
+  const body = { cancel: async () => { cancelled++; } };
+  const fetchUpstream = async url => url === S.url
+    ? { ok: true, status: 200, text: async () => '#EXTM3U\n#EXTINF:4,\nhttps://cdn.example/1.ts\n' }
+    : { ok: false, status: 403, body, text: async () => '', arrayBuffer: async () => new ArrayBuffer(0) };
+  assert.deepEqual(await probeStream(S, { fetchUpstream }), { status: 'http-error', detail: 'segment 403' });
+  const pl403 = async () => ({ ok: false, status: 404, body, text: async () => '' });
+  assert.deepEqual(await probeStream(S, { fetchUpstream: pl403 }), { status: 'http-error', detail: 'playlist 404' });
+  assert.equal(cancelled, 2);
 });

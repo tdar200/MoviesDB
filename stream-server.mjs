@@ -44,7 +44,7 @@ import { createNuvioAdapter } from './live-source-nuvio.mjs';
 import { selectTodayFixtures, joinFixtures, sortMatches } from './live-match.mjs';
 import { createChannelFeed } from './live-channels.mjs';
 import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHeaders } from './live-relay.mjs';
-import { probeStream, createStreamHealth } from './live-health.mjs';
+import { probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
   fileTrackId, embeddedTrackId, externalTrackId, stremioTrackId, ytsSubtitleTrackId, parseTrackId,
@@ -108,7 +108,13 @@ const liveChannels = createChannelFeed({ fetchImpl: resolvingFetch });
 // lists playable ones first; see live-health.mjs for the 2026-09-27 measurements.
 const liveHealth = createStreamHealth({
   probe: s => probeStream(s, {
-    fetchUpstream: (u, headers, signal) => fetchUpstreamGuarded(u, { ...upstreamHeaders(s.referer, s.origin), ...headers }, signal).then(r => r.upstream),
+    // Every probe URL (the stream url from Nuvio, and variant/segment URLs from
+    // untrusted playlist text) gets the same public-target check as liveRelayParams
+    // before any request; fetchUpstreamGuarded itself only guards redirect hops.
+    fetchUpstream: async (u, headers, signal) => {
+      if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(u)) throw Object.assign(new Error('non-public target'), { name: BLOCKED_TARGET });
+      return (await fetchUpstreamGuarded(u, { ...upstreamHeaders(s.referer, s.origin), ...headers }, signal)).upstream;
+    },
   }),
 });
 const LIVE_JSON = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };

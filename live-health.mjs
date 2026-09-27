@@ -7,6 +7,11 @@
 // deadline lets /live/streams drop the broken ones and put working ones first,
 // instead of the TV's recover cascade discovering it 30 s at a time.
 
+// The helper's fetchUpstream throws an Error with this name for a URL it refuses
+// to fetch (non-public target: LAN, loopback, ...). The name is the contract, so
+// this module needs nothing from stream-server.mjs.
+export const BLOCKED_TARGET = 'LiveBlockedTarget';
+
 export function classifySegmentBytes(b) {
   if (!b || !b.length) return 'unknown';
   const s = Buffer.from(b.subarray(0, 12)).toString('latin1');
@@ -54,6 +59,11 @@ async function readFirstBytes(res, n = 16) {
   return new Uint8Array(await res.arrayBuffer()).subarray(0, n);
 }
 
+// undici holds the connection until a body is consumed or cancelled.
+function discardBody(res) {
+  try { const c = res.body && res.body.cancel && res.body.cancel(); if (c && c.catch) c.catch(() => {}); } catch { /* already closed */ }
+}
+
 class ProbeResult extends Error {
   constructor(status, detail) { super(detail); this.result = { status, detail }; }
 }
@@ -64,7 +74,7 @@ export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = 
   const headers = headersFor(stream);
   const getPlaylist = async (url, what) => {
     const res = await fetchUpstream(url, headers, ac.signal);
-    if (!res.ok) throw new ProbeResult('http-error', `${what} ${res.status}`);
+    if (!res.ok) { discardBody(res); throw new ProbeResult('http-error', `${what} ${res.status}`); }
     const text = await res.text();
     if (!text.trimStart().startsWith('#EXTM3U')) throw new ProbeResult('bad-playlist', 'not a playlist');
     return text;
@@ -82,13 +92,14 @@ export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = 
     if (/#EXT-X-MAP:/.test(text)) return { status: 'ok', detail: 'fmp4-map' };
     const segUrl = new URL(first.uri, url).href;
     const seg = await fetchUpstream(segUrl, headers, ac.signal);
-    if (!seg.ok) return { status: 'http-error', detail: `segment ${seg.status}` };
+    if (!seg.ok) { discardBody(seg); return { status: 'http-error', detail: `segment ${seg.status}` }; }
     const kind = classifySegmentBytes(await readFirstBytes(seg));
     if (kind === 'ts' || kind === 'fmp4' || kind === 'id3') return { status: 'ok', detail: kind };
     if (kind === 'wrapped') return { status: 'wrapped', detail: 'wrapped' };
     return { status: 'error', detail: `segment ${kind}` };
   } catch (err) {
     if (err instanceof ProbeResult) return err.result;
+    if (err && err.name === BLOCKED_TARGET) return { status: 'blocked', detail: 'non-public target' };
     if (ac.signal.aborted || err.name === 'AbortError' || err.name === 'TimeoutError') return { status: 'timeout', detail: 'timeout' };
     return { status: 'error', detail: String(err.message || err) };
   } finally {
@@ -96,7 +107,7 @@ export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = 
   }
 }
 
-const DROP = new Set(['wrapped', 'http-error', 'bad-playlist']);
+const DROP = new Set(['wrapped', 'http-error', 'bad-playlist', 'blocked']);
 
 export function createStreamHealth({ probe, now = Date.now, ttlMs = 120000, concurrency = 16 } = {}) {
   const cache = new Map(); // url -> { at, status }
