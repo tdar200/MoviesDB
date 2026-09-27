@@ -108,10 +108,14 @@ export function createTvPlayer(modal, video, playButton) {
         modal.classList.remove('tv-settings-open'); reveal(); settings.focus(); return true;
       }
       if (back) return false;
-      if (isLive() && ([412, 417].includes(event.keyCode) || ['MediaRewind', 'MediaFastForward', 'ArrowLeft', 'ArrowRight'].includes(key))) { reveal(); playButton.focus(); return true; }
+      // Live has nothing to seek: media rewind/fast-forward only reveal the HUD.
+      if (isLive() && ([412, 417].includes(event.keyCode) || ['MediaRewind', 'MediaFastForward'].includes(key))) { reveal(); playButton.focus(); return true; }
       if ([412,417].includes(event.keyCode) || ['MediaRewind','MediaFastForward'].includes(key)) { seek(event.keyCode === 412 || key === 'MediaRewind' ? -10 : 30); reveal(); progress.focus(); return true; }
       if (modal.classList.contains('tv-settings-open')) return false;
       const hidden = modal.classList.contains('tv-hud-hidden');
+      // Live: Left/Right are captured (reveal, no seek) only on the same terms as the
+      // on-demand seek below, so with the HUD up they move focus to Retry/settings.
+      if (isLive() && (hidden || document.activeElement === progress) && ['ArrowLeft','ArrowRight'].includes(key)) { reveal(); playButton.focus(); return true; }
       if ((hidden || document.activeElement === progress) && ['ArrowLeft','ArrowRight'].includes(key)) {
         seek(key === 'ArrowLeft' ? -10 : 30); reveal(); progress.focus(); return true;
       }

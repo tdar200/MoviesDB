@@ -3374,6 +3374,7 @@ async function processAndDisplayMovies(movies, isSearch = false) {
       if (token !== gridEnrichToken) return;                       // superseded render
       if (currentApp !== 'movies' || isWatchedMode || isFavoritesMode) return;
       if (tabRecommended.classList.contains('active')) return;     // rec page owns #main
+      if (tvMediaKind === 'live') return;                          // Live home owns #main
       const scrollY = window.scrollY;
       filteredMovies = sortMovies(filtered, stats);
       displayedCount = 0;

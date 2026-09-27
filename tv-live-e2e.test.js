@@ -98,3 +98,61 @@ test('Live tab: rows, details, stream picker, hls.js playback, Back, focus survi
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// Every segment 404s, so the player gives up with the Retry message; Retry (and the
+// settings button next to Play) must be reachable with the remote's arrow keys.
+test('Live: after every stream fails, Retry is reachable with the arrows and restarts playback', { skip: !process.env.TV_E2E }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    const now = Date.now();
+    const matches = [
+      { id: 'espn:1', title: 'Arsenal vs Chelsea', league: 'Premier League', kickoff: new Date(now - 40 * 60_000).toISOString(), state: 'in', clock: "40'", home: { name: 'Arsenal', logo: null, score: 1 }, away: { name: 'Chelsea', logo: null, score: 0 }, broadcasters: ['Sky Sports'], sources: [{ adapter: 'nuvio', sourceId: 's1' }], hasStream: true, priority: 1, poster: null },
+    ];
+    const playlist = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:0',
+      ...[0, 1, 2, 3].flatMap(i => ['#EXTINF:2.0,', `/live/seg?u=seg${i}.ts&s=sig&ref=&org=&key=k`]), '#EXT-X-ENDLIST', ''].join('\n');
+    let hlsRequests = 0;
+    await page.route('**/live/matches**', r => r.fulfill({ json: { matches, status: { fixtures: 'ok', sources: { nuvio: 'ok' } }, generatedAt: new Date(now).toISOString() } }));
+    await page.route('**/live/channels**', r => r.fulfill({ json: { channels: [], stale: false, fetchedAt: new Date(now).toISOString() } }));
+    await page.route('**/live/streams**', r => r.fulfill({ json: { streams: [{ label: 'Stream One', language: 'English', quality: 'HD', rank: 9, health: 'ok', play: '/live/hls?u=one&s=sig&ref=&org=' }] } }));
+    await page.route('**/live/hls**', r => { hlsRequests++; r.fulfill({ contentType: 'application/vnd.apple.mpegurl', headers: { 'access-control-allow-origin': '*' }, body: playlist }); });
+    await page.route('**/live/seg**', r => r.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: '' }));
+    await page.route('https://api.themoviedb.org/**', r => r.fulfill({ json: { results: [], page: 1, total_pages: 1, total_results: 0 } }));
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?helperkey=k&helper=${encodeURIComponent(process.env.TV_TEST_URL || 'http://127.0.0.1:8123')}`);
+    await page.waitForSelector('.tv-kind-tab[data-kind="live"]');
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator(':focus').getAttribute('data-kind'), 'live');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('[data-tv-row="Live now"] .tv-card-live');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'espn:1');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#tv-live-play');
+    assert.equal(await page.locator(':focus').getAttribute('id'), 'tv-live-play');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#player-modal', { state: 'visible' });
+    await page.waitForFunction(() => /No working stream yet\. Press Retry, or pick a channel\./.test(document.getElementById('yts-status').textContent), null, { timeout: 60000 });
+    await page.waitForSelector('#tv-retry', { state: 'visible' });
+    const before = hlsRequests;
+    assert.ok(before >= 1);
+    // Keyboard only. The failure may have revealed the HUD already (focus on Play); if
+    // it auto-hid meanwhile, the first ArrowRight reveals it and focuses Play. Either
+    // way Play -> Playback options -> Retry is within 4 presses (seek buttons hidden).
+    let reached = false;
+    for (let i = 0; i < 4 && !reached; i++) {
+      await page.keyboard.press('ArrowRight');
+      assert.equal(await page.evaluate(() => document.getElementById('player-modal').classList.contains('tv-hud-hidden')), false, 'HUD revealed');
+      reached = await page.evaluate(() => document.activeElement && document.activeElement.id === 'tv-retry');
+    }
+    assert.ok(reached, `#tv-retry not reachable within 4 ArrowRight presses (focus: ${await page.evaluate(() => document.activeElement && (document.activeElement.id || document.activeElement.tagName))})`);
+    await page.keyboard.press('Enter');
+    const deadline = Date.now() + 10000;
+    while (hlsRequests <= before && Date.now() < deadline) await page.waitForTimeout(100);
+    assert.ok(hlsRequests > before, 'Retry made a new /live/hls request');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
