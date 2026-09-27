@@ -3967,10 +3967,11 @@ const tvDetails = TV_MODE ? createTvDetails({
 }) : null;
 
 // Streams for one match, flattened across every source adapter that listed it.
-// 30 s timeout: /live/streams probes every stream and can take ~16 s cold.
+// 70 s timeout: Nuvio can take up to ~45 s to list streams at peak, then the
+// helper probes every stream (~10 s more).
 async function fetchStreamsForMatch(match) {
   const lists = await Promise.all((match.sources || []).map(s =>
-    fetchLiveJson(`/live/streams?adapter=${encodeURIComponent(s.adapter)}&id=${encodeURIComponent(s.sourceId)}`, 30000)
+    fetchLiveJson(`/live/streams?adapter=${encodeURIComponent(s.adapter)}&id=${encodeURIComponent(s.sourceId)}`, 70000)
       .then(r => (r.streams || []).map(st => ({ ...st, adapter: s.adapter })))
       .catch(() => [])));
   return lists.flat();

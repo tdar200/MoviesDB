@@ -81,17 +81,38 @@ export function parseNuvioStreams(json) {
   }).filter(s => /^https?:\/\//.test(s.url));
 }
 
-export function createNuvioAdapter({ fetchImpl = fetch, hosts = NUVIO_HOSTS } = {}) {
+// The catalog is polled every minute by the TV. Nuvio is slow at peak (catalog
+// > 8 s, streams 5-37 s measured 27 Sep 2026), so the catalog is cached for 60 s
+// and the last good list (up to 30 min old) is served when a fetch fails or
+// stalls, instead of every match flipping to "no stream" for one poll.
+const CATALOG_TTL_MS = 60_000;
+const CATALOG_STALE_MAX_MS = 30 * 60_000;
+
+export function createNuvioAdapter({ fetchImpl = fetch, hosts = NUVIO_HOSTS, now = Date.now, catalogTimeoutMs = 10_000 } = {}) {
   const run = withHostFailover(hosts);
-  const getJson = path => run(async host => {
-    const res = await fetchImpl(host + path, { headers: { Accept: 'application/json', 'User-Agent': CHROME_UA } });
+  const getJson = (path, timeoutMs) => run(async host => {
+    const opts = { headers: { Accept: 'application/json', 'User-Agent': CHROME_UA } };
+    if (timeoutMs) opts.signal = AbortSignal.timeout(timeoutMs);
+    const res = await fetchImpl(host + path, opts);
     if (!res.ok) throw new Error(`Nuvio ${res.status}`);
     return res.json();
   });
+  let lastGood = null; // { at, list }
+  async function listMatches() {
+    if (lastGood && now() - lastGood.at < CATALOG_TTL_MS) return lastGood.list;
+    try {
+      const list = parseNuvioCatalog(await getJson('/catalog/tv/nuvio_sports_live/genre=Football.json', catalogTimeoutMs));
+      lastGood = { at: now(), list };
+      return list;
+    } catch (err) {
+      if (lastGood && now() - lastGood.at < CATALOG_STALE_MAX_MS) return lastGood.list;
+      throw err;
+    }
+  }
   return {
     name: 'nuvio',
     hosts,
-    listMatches: () => getJson('/catalog/tv/nuvio_sports_live/genre=Football.json').then(parseNuvioCatalog),
+    listMatches,
     streamsFor: id => getJson(`/stream/tv/${encodeURIComponent(id)}.json`).then(parseNuvioStreams),
   };
 }

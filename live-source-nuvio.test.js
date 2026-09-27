@@ -82,3 +82,34 @@ test('createNuvioAdapter hits the football catalog and the per-id stream list, f
   await assert.rejects(() => adapter.streamsFor('nope'), /Nuvio 404/);
   assert.deepEqual(NUVIO_HOSTS, ['https://nuviosports.xyz']);
 });
+
+test('listMatches caches the catalog for 60 s and serves the last good list when Nuvio fails or stalls', async () => {
+  let clock = 0; let calls = 0; let mode = 'ok';
+  const fetchImpl = async (url, opts) => {
+    calls++;
+    if (mode === 'fail') throw new TypeError('fetch failed');
+    if (mode === 'http') return { ok: false, status: 502, json: async () => ({}) };
+    if (mode === 'hang') return new Promise((_, reject) => opts.signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'TimeoutError'; reject(e); }));
+    return { ok: true, status: 200, json: async () => catalog };
+  };
+  const adapter = createNuvioAdapter({ fetchImpl, now: () => clock, catalogTimeoutMs: 30 });
+  const first = await adapter.listMatches();
+  assert.ok(first.length >= 2);
+  clock = 30_000; await adapter.listMatches();
+  assert.equal(calls, 1, 'served from cache inside 60 s');
+  clock = 61_000; mode = 'fail';
+  assert.deepEqual(await adapter.listMatches(), first, 'network error -> last good list');
+  mode = 'http'; clock = 130_000;
+  assert.deepEqual(await adapter.listMatches(), first, 'HTTP error -> last good list');
+  mode = 'hang'; clock = 200_000;
+  const t0 = Date.now();
+  assert.deepEqual(await adapter.listMatches(), first, 'stalled catalog -> last good list after the timeout');
+  assert.ok(Date.now() - t0 < 1000);
+  clock = 200_000 + 31 * 60_000; mode = 'fail';
+  await assert.rejects(() => adapter.listMatches(), /fetch failed/, 'a list older than 30 min is not served');
+});
+
+test('listMatches with no cached list propagates the failure', async () => {
+  const adapter = createNuvioAdapter({ fetchImpl: async () => { throw new TypeError('fetch failed'); } });
+  await assert.rejects(() => adapter.listMatches(), /fetch failed/);
+});

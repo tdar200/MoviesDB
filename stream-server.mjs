@@ -127,6 +127,11 @@ const liveJson = (res, status, body) => { res.writeHead(status, LIVE_JSON); res.
 // A polling TV must never pile up hung requests.
 const LIVE_FEED_DEADLINE_MS = 8000;
 const LIVE_CHANNELS_DEADLINE_MS = 20000; // first fetch probes ~60 channels, 8 at a time, 4 s each
+// Nuvio resolves streams on demand; measured 5-37 s per match at peak (27 Sep 2026).
+const LIVE_STREAMS_DEADLINE_MS = 45000;
+// Source catalogs: the Nuvio adapter gives up after 10 s and serves its last good
+// list, so 12 s leaves it room while staying inside the TV's 15 s budget.
+const LIVE_SOURCES_DEADLINE_MS = 12000;
 function withDeadline(promise, ms, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -1059,7 +1064,7 @@ async function handleLiveMatches(res) {
   const fixturesP = Promise.all([localDate(now), localDate(now, 1)].map(d => withDeadline(liveFixtures.fetchFixtures(d), LIVE_FEED_DEADLINE_MS, `espn ${d}`)))
     .then(lists => selectTodayFixtures(lists, now))
     .catch(err => { status.fixtures = 'error: ' + String(err.message || err); return []; });
-  const sourcesP = Promise.all(liveSources.list().map(a => withDeadline(a.listMatches(), LIVE_FEED_DEADLINE_MS, a.name)
+  const sourcesP = Promise.all(liveSources.list().map(a => withDeadline(a.listMatches(), LIVE_SOURCES_DEADLINE_MS, a.name)
     .then(list => { status.sources[a.name] = 'ok'; return list.map(m => ({ ...m, adapter: a.name })); })
     .catch(err => { status.sources[a.name] = 'error: ' + String(err.message || err); return []; })))
     .then(r => r.flat());
@@ -1074,7 +1079,7 @@ async function handleLiveStreams(res, url) {
   const id = url.searchParams.get('id') || '';
   if (!adapter || !id) return liveJson(res, 404, { error: 'unknown adapter or id' });
   try {
-    const streams = await withDeadline(adapter.streamsFor(id), LIVE_FEED_DEADLINE_MS, `${adapter.name} streams`);
+    const streams = await withDeadline(adapter.streamsFor(id), LIVE_STREAMS_DEADLINE_MS, `${adapter.name} streams`);
     const ranked = await liveHealth.rank(streams);
     const counts = ranked.reduce((acc, s) => { acc[s.health] = (acc[s.health] || 0) + 1; return acc; }, {});
     console.log(`[live] streams ${adapter.name}:${id.slice(0, 40)} total=${streams.length} kept=${ranked.length} ${JSON.stringify(counts)}`);
