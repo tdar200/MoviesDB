@@ -104,7 +104,7 @@ export function sortItemsByRating(items = []) {
 
 export function orderRowItems(row = {}) {
   const items = Array.isArray(row.items) ? row.items : [];
-  return row.key === 'continue' ? items : sortItemsByRating(items);
+  return row.key === 'continue' || row.noSort === true ? items : sortItemsByRating(items);
 }
 
 // Filter one row's items against a shared `seen` set, mutating it. Used to dedupe

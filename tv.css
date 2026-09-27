@@ -203,3 +203,16 @@ body.tv-mode { background: #22254b; }
 /* Remaining red accents from the old theme, recoloured blue. */
 .tv-mode .tv-season-chip.active { background: #2f6fed; }
 .tv-mode .tv-progress-fill { background: #6ea8ff; }
+
+/* Live football cards */
+.tv-card-live .tv-card-visual { height: 12vw; min-height: 150px; max-height: 235px; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at top, #24304a, #141826 70%); }
+.tv-live-teams { display: flex; align-items: center; justify-content: center; gap: 22px; width: 100%; padding: 0 16px; }
+.tv-live-badge { width: 72px; height: 72px; object-fit: contain; filter: drop-shadow(0 4px 10px rgba(0,0,0,.5)); }
+.tv-live-badge-missing { width: 72px; height: 72px; border-radius: 50%; background: rgba(255,255,255,.08); }
+.tv-live-score { font-size: 34px; font-weight: 800; letter-spacing: 1px; color: #fff; min-width: 90px; text-align: center; }
+.tv-card-onair .tv-card-badge { background: #d81f26; color: #fff; }
+.tv-card-nostream { opacity: .55; }
+.tv-card-nostream .tv-card-cta { color: #aeb2c8; }
+.tv-card-channel .tv-card-logo { object-fit: contain; padding: 24px; background: #202634; }
+.tv-live-empty { margin: 24px 4vw 8px; color: #d3d5df; font-size: 20px; }
+.tv-live-status { margin: 8px 4vw 24px; color: #8d93a8; font-size: 15px; }

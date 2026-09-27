@@ -1,4 +1,5 @@
 import { orderRowItems } from './tv-rows.mjs';
+import { createLiveCard } from './live-ui.js';
 
 // TV presentation shares the existing catalogue, preferences, and player.
 // Cards open a details screen (onSelect); the hero can also play directly (onPlay).
@@ -24,6 +25,7 @@ function element(tag, className, text) {
 }
 
 export function createTvCard(movie, onSelect) {
+  if (movie.live) return createLiveCard(movie, onSelect);
   const card = element('button', 'tv-card');
   card.type = 'button';
   card.dataset.movieId = movie.id;
@@ -36,7 +38,8 @@ export function createTvCard(movie, onSelect) {
   image.alt = '';
   image.loading = 'lazy';
   image.decoding = 'async';
-  if (movie.backdrop_path || movie.poster_path) image.src = art + 'w500' + (movie.backdrop_path || movie.poster_path);
+  if (movie.image_url) image.src = movie.image_url;
+  else if (movie.backdrop_path || movie.poster_path) image.src = art + 'w500' + (movie.backdrop_path || movie.poster_path);
   image.onerror = () => { card.classList.add('tv-card-noart'); };
   visual.append(image);
   if (score) visual.append(element('span', 'tv-card-badge', `★ ${score}`));

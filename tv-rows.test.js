@@ -167,3 +167,9 @@ test('a full assembly puts signal rows first and never repeats a title', () => {
   // 100 is in Continue Watching, so Popular shows only 101.
   assert.deepEqual(assembled[1].items.map(i => i.id), [101]);
 });
+
+test('orderRowItems leaves rows flagged noSort in their given order', () => {
+  const items = [{ id: 1, vote_average: 1 }, { id: 2, vote_average: 9 }];
+  assert.deepEqual(orderRowItems({ key: 'today', noSort: true, items }).map(i => i.id), [1, 2]);
+  assert.deepEqual(orderRowItems({ key: 'today', items }).map(i => i.id), [2, 1]);
+});
