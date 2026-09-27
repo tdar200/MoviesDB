@@ -1,0 +1,108 @@
+// live-catalog.mjs — the Channels tab: vetted free live channels grouped by
+// category. The lists in channels/*.json were built by measuring every stream
+// (true resolution via ffprobe) and keeping only official or broadcaster-run
+// streams reachable from the UK without workarounds. At runtime the helper
+// re-probes them in the background and serves only the ones that are alive.
+import { isDeniedHost } from './live-channels.mjs';
+import { isPublicHttpUrl } from './live-relay.mjs';
+
+export const CATEGORY_ORDER = [
+  'News', 'General', 'Entertainment', 'Movies', 'Series', 'Documentary', 'Kids', 'Music', 'Sports',
+  'Comedy', 'Classic TV', 'Lifestyle', 'Food', 'Travel & Outdoor', 'Education & Science', 'Business',
+  'Religious', 'Weather', 'Shopping',
+];
+
+// Merge several vetted lists: official streams only, public http(s) hosts that
+// are not known restream hosts, one entry per id and per url (sharpest wins).
+// Row order within a category: the owner's languages first (English, then Urdu,
+// Punjabi, Hindi, Arabic), then everything else; resolution breaks ties.
+const LANGUAGE_ORDER = ['en', 'ur', 'pa', 'hi', 'ar'];
+function langRank(e) {
+  const i = LANGUAGE_ORDER.indexOf(String(e.language || '').toLowerCase().slice(0, 2));
+  return i < 0 ? LANGUAGE_ORDER.length : i;
+}
+const isUk = e => /^(gb|uk)$/i.test(String(e.country || ''));
+
+export function mergeCatalog(lists) {
+  const byId = new Map();
+  for (const list of lists || []) {
+    for (const raw of list || []) {
+      if (!raw || !raw.id || !raw.url || raw.official !== true) continue;
+      if (!isPublicHttpUrl(raw.url) || isDeniedHost(raw.url)) continue;
+      const e = { ...raw, category: CATEGORY_ORDER.includes(raw.category) ? raw.category : 'General', height: Number(raw.height) || 0 };
+      const prev = byId.get(e.id);
+      if (!prev || e.height > prev.height) byId.set(e.id, e);
+    }
+  }
+  const byUrl = new Map();
+  for (const e of byId.values()) {
+    const prev = byUrl.get(e.url);
+    if (!prev || e.height > prev.height) byUrl.set(e.url, e);
+  }
+  // The same channel often appears in several lists under different ids
+  // (e.g. a Pluto channel via iptv-org and via the platform's own list).
+  const byName = new Map();
+  for (const e of byUrl.values()) {
+    const key = e.category + '|' + String(e.name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const prev = byName.get(key);
+    if (!prev || e.height > prev.height) byName.set(key, e);
+  }
+  return Array.from(byName.values());
+}
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+export function createCatalogFeed({ entries, probe, now = Date.now, ttlMs = 30 * 60_000, concurrency = 16, rowLimit = 100 }) {
+  const list = entries.slice();
+  let alive = null; // Map id -> measured height, after the first full probe
+  let lastAt = 0;
+  let inFlight = null;
+
+  async function refresh() {
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      const results = await mapLimit(list, concurrency, async e => {
+        try { return await probe(e); } catch { return { status: 'error' }; }
+      });
+      const next = new Map();
+      results.forEach((r, i) => { if (r && r.status === 'ok') next.set(list[i].id, r.height || 0); });
+      alive = next;
+      lastAt = now();
+    })().finally(() => { inFlight = null; });
+    return inFlight;
+  }
+
+  function current() {
+    // Before the first probe completes, serve the stored list (it was vetted).
+    if (!alive) return list.map(e => ({ ...e }));
+    return list.filter(e => alive.has(e.id)).map(e => ({ ...e, height: alive.get(e.id) || e.height }));
+  }
+
+  function categories() {
+    const groups = new Map();
+    for (const e of current()) {
+      if (!groups.has(e.category)) groups.set(e.category, []);
+      groups.get(e.category).push(e);
+    }
+    return CATEGORY_ORDER.filter(c => groups.has(c)).map(name => ({
+      name,
+      channels: groups.get(name)
+        .sort((a, b) => langRank(a) - langRank(b) || (isUk(b) - isUk(a)) || b.height - a.height || String(a.name).localeCompare(String(b.name)))
+        .slice(0, rowLimit),
+    }));
+  }
+
+  return {
+    refresh,
+    categories,
+    get: id => current().find(e => e.id === id) || null,
+    stale: () => !alive || now() - lastAt > ttlMs,
+    size: () => list.length,
+  };
+}

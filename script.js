@@ -13,7 +13,7 @@ import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentF
 import { dedupeTrackLabels } from './subtitles.js';
 import { IMDB_TOP_250 } from './imdb-top250.js';
 import { EMMY_WINNERS } from './emmy-winners.js';
-import { buildLiveRows, restoreFocusById, findCurrentMatch } from './live-home.mjs';
+import { buildLiveRows, restoreFocusById, findCurrentMatch, channelToCard } from './live-home.mjs';
 import { createLiveDetails } from './live-details.mjs';
 import { createLivePlayer } from './live-player.mjs';
 
@@ -3374,7 +3374,7 @@ async function processAndDisplayMovies(movies, isSearch = false) {
       if (token !== gridEnrichToken) return;                       // superseded render
       if (currentApp !== 'movies' || isWatchedMode || isFavoritesMode) return;
       if (tabRecommended.classList.contains('active')) return;     // rec page owns #main
-      if (tvMediaKind === 'live') return;                          // Live home owns #main
+      if (isLiveKind(tvMediaKind)) return;                          // Live home owns #main
       const scrollY = window.scrollY;
       filteredMovies = sortMovies(filtered, stats);
       displayedCount = 0;
@@ -3620,7 +3620,7 @@ async function renderRecommendationsRow() {
   // Only show on the Movies home/browse view. Callers fire late (end of loadTrending,
   // debounced signal changes) — re-check ownership here rather than trusting them: the
   // rec page in particular must not get a duplicate pipeline run + injected teaser row.
-  if (!browseGridOwnsMain() || tvMediaKind === 'live') return;
+  if (!browseGridOwnsMain() || isLiveKind(tvMediaKind)) return;
 
   const items = buildSignalItems();
   if (items.basket.length === 0 && items.watched.length === 0 && items.seen.length === 0) return;
@@ -4037,12 +4037,15 @@ const LIVE_HOME_REFRESH_MS = 60_000;
 let liveHomeTimer = null;
 function stopLiveHomeRefresh() { clearTimeout(liveHomeTimer); liveHomeTimer = null; }
 
+// 'live' (football) and 'channels' (the category channel grid) share the live
+// home machinery: its guards, 60 s refresh, focus restore and player.
+function isLiveKind(kind) { return kind === 'live' || kind === 'channels'; }
 let tvMediaKind = 'all';
 function setTvMediaKind(kind) {
-  tvMediaKind = (kind === 'movie' || kind === 'tv' || kind === 'live') ? kind : 'all';
+  tvMediaKind = (kind === 'movie' || kind === 'tv' || isLiveKind(kind)) ? kind : 'all';
   document.querySelectorAll('.tv-kind-tab').forEach(b => b.classList.toggle('active', b.dataset.kind === tvMediaKind));
   window.scrollTo(0, 0);
-  if (tvMediaKind === 'live') { setLoading(false); renderLiveHome(); }
+  if (isLiveKind(tvMediaKind)) { setLoading(false); renderLiveHome(); }
   else { stopLiveHomeRefresh(); renderTvHome(lastTrendingSeed); }
 }
 if (TV_MODE) window.__setTvMediaKind = setTvMediaKind; // called by the injected top nav in tv-remote.js
@@ -4053,7 +4056,7 @@ if (TV_MODE) window.__setTvMediaKind = setTvMediaKind; // called by the injected
 // read as "filtered" (which would swap the curated home for a flat results grid).
 function effectiveMediaType() {
   if (currentFilters.mediaType && currentFilters.mediaType !== 'all') return currentFilters.mediaType;
-  return TV_MODE && tvMediaKind !== 'all' && tvMediaKind !== 'live' ? tvMediaKind : 'all';
+  return TV_MODE && tvMediaKind !== 'all' && !isLiveKind(tvMediaKind) ? tvMediaKind : 'all';
 }
 
 let tvHomeToken = 0;
@@ -4066,7 +4069,7 @@ async function renderTvHome(seed) {
   if (seed && seed.length) lastTrendingSeed = seed;
   // Late callers (a trending load resolving, a basket toggle) re-render "the home";
   // while the Live kind is selected that home is the live one, not the TMDB rows.
-  if (tvMediaKind === 'live') return renderLiveHome();
+  if (isLiveKind(tvMediaKind)) return renderLiveHome();
   installTvEndlessRows();
   const token = ++tvHomeToken;
   const onSelect = openDetails;
@@ -4148,7 +4151,7 @@ async function renderTvHome(seed) {
 // /live/channels is the probed iptv-org list). Re-rendered every 60 s while the
 // Live home is on screen and nothing is open on top of it; focus is restored to
 // the same card by id so the remote never drops to <body>.
-const liveHomeCurrent = () => tvMediaKind === 'live' && (!TV_MODE || tvHomeIsCurrent());
+const liveHomeCurrent = () => isLiveKind(tvMediaKind) && (!TV_MODE || tvHomeIsCurrent());
 // Is the Live home (its rows, or its loading/empty placeholder) what #main shows now?
 function liveHomeOwnsMain() {
   return liveHomeCurrent() && !!main.querySelector('.tv-card-live, .tv-live-empty, .tv-live-status');
@@ -4183,25 +4186,35 @@ let onLiveSelect = card => {
 async function renderLiveHome() {
   stopLiveHomeRefresh();
   const token = ++tvHomeToken;
-  if (liveHomeCurrent() && !liveHomeOwnsMain()) { main.textContent = ''; main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: 'Loading live football…' })); }
-  const [matchesRes, channelsRes] = await Promise.all([
-    fetchLiveJson('/live/matches').catch(error => ({ error })),
-    // /live/channels can take ~20 s on a cold cache (it probes every stream).
-    fetchLiveJson('/live/channels', 40000).catch(error => ({ error })),
-  ]);
+  const channelsMode = tvMediaKind === 'channels';
+  if (liveHomeCurrent() && !liveHomeOwnsMain()) { main.textContent = ''; main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: channelsMode ? 'Loading channels…' : 'Loading live football…' })); }
+  let matchesRes = {}, channelsRes = {}, catalogRes = {};
+  if (channelsMode) {
+    catalogRes = await fetchLiveJson('/live/catalog', 20000).catch(error => ({ error }));
+  } else {
+    [matchesRes, channelsRes] = await Promise.all([
+      fetchLiveJson('/live/matches').catch(error => ({ error })),
+      // /live/channels can take ~20 s on a cold cache (it probes every stream).
+      fetchLiveJson('/live/channels', 40000).catch(error => ({ error })),
+    ]);
+  }
   if (token !== tvHomeToken || !liveHomeCurrent()) return;
   const now = Date.now();
-  const rows = buildLiveRows(matchesRes.matches || [], channelsRes.channels || [], now);
+  // Channels tab: one row per category, sharpest first (the helper orders them).
+  const rows = channelsMode
+    ? (catalogRes.categories || []).map(c => ({ key: 'cat-' + c.name, title: c.name, items: (c.channels || []).map(channelToCard), noSort: true }))
+    : buildLiveRows(matchesRes.matches || [], channelsRes.channels || [], now);
   // Read focus NOW, not before the fetch: the old rows stayed on screen for up to
   // 25 s and the user may have moved (or left the rows for the kind nav).
   const focusedCard = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.tv-card') : null;
   const focusedId = (focusedCard && focusedCard.dataset.movieId) || '';
   main.textContent = '';
-  if (!rows.some(r => r.key === 'live-now' || r.key === 'today')) {
-    main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: matchesRes.error ? 'Could not reach the stream helper.' : 'No football with a free stream right now.' }));
+  if (channelsMode ? !rows.length : !rows.some(r => r.key === 'live-now' || r.key === 'today')) {
+    const failed = channelsMode ? catalogRes.error : matchesRes.error;
+    main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: failed ? 'Could not reach the stream helper.' : (channelsMode ? 'No channels are reachable right now.' : 'No football with a free stream right now.') }));
   }
   for (const row of rows) appendTvRow(main, row, card => onLiveSelect(card));
-  const status = liveStatusText(matchesRes, channelsRes);
+  const status = channelsMode ? '' : liveStatusText(matchesRes, channelsRes);
   if (status) main.append(Object.assign(document.createElement('p'), { className: 'tv-live-status', textContent: status }));
   // Repaint, but never pull focus back to a card while the player or a details
   // overlay (e.g. the live stream picker) sits on top and owns focus.
@@ -5370,7 +5383,7 @@ if (tabLive && !TV_MODE) {
   document.querySelectorAll('.app-tabs .app-tab').forEach(b => {
     if (b !== tabLive) b.addEventListener('click', () => {
       tabLive.classList.remove('active');
-      if (tvMediaKind === 'live') { tvMediaKind = 'all'; stopLiveHomeRefresh(); }
+      if (isLiveKind(tvMediaKind)) { tvMediaKind = 'all'; stopLiveHomeRefresh(); }
     });
   });
   tabLive.addEventListener('click', () => {

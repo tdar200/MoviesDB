@@ -37,7 +37,7 @@ export function installTvRemote() {
   // in the DOM (hidden) because the rest of the app wires to them by id.
   const kindNav = document.createElement('div');
   kindNav.className = 'tv-kind-nav';
-  [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV'], ['live', 'Live']].forEach(([kind, label], i) => {
+  [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV'], ['live', 'Live'], ['channels', 'Channels']].forEach(([kind, label], i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'app-tab tv-kind-tab' + (i === 0 ? ' active' : '');

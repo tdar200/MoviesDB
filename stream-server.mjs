@@ -21,7 +21,7 @@ import { parseByteRange } from './http-range.js';
 import { HlsSessions } from './hls-session.mjs';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, statfsSync } from 'node:fs';
+import { existsSync, mkdirSync, statfsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { tmpdir, networkInterfaces } from 'node:os';
 import { join, extname, normalize } from 'node:path';
@@ -46,6 +46,7 @@ import { createChannelFeed } from './live-channels.mjs';
 import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHeaders } from './live-relay.mjs';
 import { measureTsHeight } from './live-measure.mjs';
 import { createHighflyAdapter } from './live-source-highfly.mjs';
+import { mergeCatalog, createCatalogFeed } from './live-catalog.mjs';
 import { probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
@@ -1115,6 +1116,52 @@ async function handleLiveStreams(res, url) {
   } catch (err) { liveJson(res, isLiveTimeout(err) ? 504 : 502, { error: String(err.message || err) }); }
 }
 
+// Channels tab: vetted lists in channels/*.json (official free streams, measured).
+// Entries that need a per-session URL (urlTemplate) are skipped until minting is
+// implemented. Probed in the background at startup and every 30 min; the route
+// never waits on probing.
+function loadChannelLists() {
+  const dir = join(ROOT, 'channels');
+  try {
+    return readdirSync(dir).filter(f => f.endsWith('.json') && !f.includes('excluded'))
+      .map(f => { try { return JSON.parse(readFileSync(join(dir, f), 'utf8')); } catch (err) { console.log(`[live] catalog ${f}: ${err.message}`); return []; } });
+  } catch { return []; }
+}
+const headerOf = (e, name) => (e.headers && (e.headers[name] || e.headers[name.toLowerCase()])) || '';
+const liveCatalog = createCatalogFeed({
+  entries: mergeCatalog(loadChannelLists()).filter(e => !e.urlTemplate),
+  // Liveness only: fetch the playlist (a few KB). Resolutions were measured when
+  // the lists were built; re-measuring ~1,600 channels every 30 min would pull
+  // hundreds of MB per round on this line.
+  probe: async e => {
+    if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(e.url)) return { status: 'blocked' };
+    const { upstream } = await fetchUpstreamGuarded(e.url, upstreamHeaders(headerOf(e, 'Referer'), headerOf(e, 'Origin')), AbortSignal.timeout(8000));
+    if (!upstream.ok) { try { const c = upstream.body && upstream.body.cancel && upstream.body.cancel(); if (c && c.catch) c.catch(() => {}); } catch { /* closed */ } return { status: 'http-error' }; }
+    return { status: (await upstream.text()).trimStart().startsWith('#EXTM3U') ? 'ok' : 'bad-playlist' };
+  },
+});
+function refreshCatalog() {
+  const t0 = Date.now();
+  liveCatalog.refresh().then(() => {
+    const cats = liveCatalog.categories();
+    console.log(`[live] catalog alive=${cats.reduce((n, c) => n + c.channels.length, 0)}/${liveCatalog.size()} in ${Math.round((Date.now() - t0) / 1000)} s`);
+  }).catch(err => console.log(`[live] catalog refresh failed: ${err.message}`));
+}
+if (liveCatalog.size()) {
+  setTimeout(refreshCatalog, 5000).unref();
+  setInterval(refreshCatalog, 30 * 60_000).unref();
+}
+
+function handleLiveCatalog(res) {
+  liveJson(res, 200, { categories: liveCatalog.categories().map(c => ({
+    name: c.name,
+    channels: c.channels.map(e => ({
+      id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0, language: e.language || '', country: e.country || '',
+      play: relayPath('hls', { u: e.url, ref: headerOf(e, 'Referer'), org: headerOf(e, 'Origin') }, LIVE_SECRET),
+    })),
+  })) });
+}
+
 async function handleLiveChannels(res) {
   let feed;
   try { feed = await withDeadline(liveChannels.fetchChannels(), LIVE_CHANNELS_DEADLINE_MS, 'channels'); }
@@ -1443,6 +1490,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/live/fixtures') return await handleLiveFixtures(res, url);
     if (url.pathname === '/live/matches') return await handleLiveMatches(res);
     if (url.pathname === '/live/streams') return await handleLiveStreams(res, url);
+    if (url.pathname === '/live/catalog') return handleLiveCatalog(res);
     if (url.pathname === '/live/channels') return await handleLiveChannels(res);
     if (url.pathname === '/live/hls') return await handleLiveHls(req, res, url);
     if (url.pathname === '/live/seg') return await handleLiveSeg(req, res, url);
