@@ -55,3 +55,14 @@ export function buildLiveRows(matches, channels, nowMs) {
   ];
   return rows.filter(r => r.items.length);
 }
+
+// After a 60 s refresh re-renders the rows, put focus back on the same card so
+// the remote does not fall to <body>. Ids come from data-movie-id.
+export function restoreFocusById(id) {
+  if (!id || typeof document === 'undefined') return false;
+  const safe = String(id).replace(/["\\]/g, '\\$&');
+  const card = document.querySelector(`.tv-card[data-movie-id="${safe}"]`);
+  if (!card) return false;
+  card.focus({ preventScroll: true });
+  return true;
+}

@@ -31,12 +31,12 @@ export function installTvRemote() {
     if (on) (Array.from(header.querySelectorAll('.filter-select')).find(visible) || Array.from(header.querySelectorAll('input[type="search"]')).find(visible))?.focus();
   };
 
-  // Top nav: All / Movies / TV. Replaces the old view tabs (Recommended/Watched/
+  // Top nav: All / Movies / TV / Live. Replaces the old view tabs (Recommended/Watched/
   // My List/YouTube), whose content now lives as rows on the home. The old tabs stay
   // in the DOM (hidden) because the rest of the app wires to them by id.
   const kindNav = document.createElement('div');
   kindNav.className = 'tv-kind-nav';
-  [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV']].forEach(([kind, label], i) => {
+  [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV'], ['live', 'Live']].forEach(([kind, label], i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'app-tab tv-kind-tab' + (i === 0 ? ' active' : '');

@@ -63,3 +63,16 @@ test('buildLiveRows splits live / today / channels, keeps order, drops empty row
   ]);
   assert.deepEqual(buildLiveRows([], [], now), []);
 });
+
+test('restoreFocusById focuses the card with that id and reports whether it found one', async () => {
+  const { restoreFocusById } = await import('./live-home.mjs');
+  const prev = globalThis.document;
+  let focused = null;
+  globalThis.document = { querySelector: sel => sel === '.tv-card[data-movie-id="espn:1"]' ? { focus(o) { focused = o; } } : null };
+  try {
+    assert.equal(restoreFocusById('espn:1'), true);
+    assert.deepEqual(focused, { preventScroll: true });
+    assert.equal(restoreFocusById('missing'), false);
+    assert.equal(restoreFocusById(''), false);
+  } finally { if (prev === undefined) delete globalThis.document; else globalThis.document = prev; }
+});
