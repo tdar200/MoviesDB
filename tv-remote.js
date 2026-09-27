@@ -160,6 +160,15 @@ export function installTvRemote() {
   }, true);
   // Restore focus to the card when the details screen closes without starting playback.
   // Deferred a tick so a details->player handoff lets the modal own focus instead.
+  // The card that opened the details; if a background repaint (e.g. the Live
+  // home refresh) replaced it meanwhile, find its replacement by id.
+  const cardToRestore = () => {
+    if (!lastCardFocus) return null;
+    if (lastCardFocus.isConnected) return lastCardFocus;
+    const id = lastCardFocus.dataset && lastCardFocus.dataset.movieId;
+    if (!id) return null;
+    return Array.from(document.querySelectorAll('.tv-card')).find(c => c.dataset.movieId === id) || null;
+  };
   let detailsWasOpen = false;
   const detailsObserver = new MutationObserver(() => {
     const open = detailsOpen();
@@ -167,7 +176,7 @@ export function installTvRemote() {
     detailsWasOpen = open;
     if (!open) setTimeout(() => {
       if (modalOpen() || detailsOpen()) return;
-      focus(lastCardFocus && lastCardFocus.isConnected ? lastCardFocus : homeAnchor());
+      focus(cardToRestore() || homeAnchor());
     }, 0);
   });
   detailsOverlays().forEach(o => detailsObserver.observe(o, { attributes: true, attributeFilter: ['hidden'] }));

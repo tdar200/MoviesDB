@@ -31,7 +31,14 @@ test('live details renders the match, lists streams, focuses Play, and plays the
     assert.equal(details.el.hidden, true);
     assert.ok(details.el.classList.contains('tv-details') && details.el.classList.contains('tv-details-live'));
     assert.ok(doc.body.children.includes(details.el));
-    await details.open(match);
+    const opening = details.open(match);
+    // Focus is inside the overlay from the first frame, before streams arrive.
+    const loading = details.el.querySelector('#tv-live-loading');
+    assert.ok(loading, 'loading placeholder rendered');
+    assert.equal(loading.tag, 'button');
+    assert.equal(doc.activeElement, loading);
+    await opening;
+    assert.equal(details.el.querySelector('#tv-live-loading'), null);
     assert.equal(details.isOpen(), true);
     assert.equal(details.el.querySelector('.tv-details-title').textContent, 'Arsenal vs Chelsea');
     assert.match(details.el.querySelector('.tv-details-meta').textContent, /Premier League/);
@@ -67,7 +74,10 @@ test('live details with no streams shows the wait message and a Refresh that re-
     assert.match(details.el.querySelector('.tv-live-nostream').textContent, /No stream yet/);
     const refresh = details.el.querySelector('#tv-live-refresh');
     assert.equal(doc.activeElement, refresh);
-    await refresh.listeners.click();
+    const refreshing = refresh.listeners.click();
+    assert.equal(refresh.disabled, true, 'Refresh is disabled while its fetch is in flight');
+    assert.equal(doc.activeElement, details.el.querySelector('#tv-live-loading'));
+    await refreshing;
     assert.equal(calls, 2);
     assert.ok(details.el.querySelector('#tv-live-play'));
   } finally { if (prev === undefined) delete globalThis.document; else globalThis.document = prev; }

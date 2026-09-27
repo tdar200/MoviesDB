@@ -4181,7 +4181,9 @@ async function renderLiveHome() {
   for (const row of rows) appendTvRow(main, row, card => onLiveSelect(card));
   const status = liveStatusText(matchesRes, channelsRes);
   if (status) main.append(Object.assign(document.createElement('p'), { className: 'tv-live-status', textContent: status }));
-  if (focusedId) restoreFocusById(focusedId);
+  // Repaint, but never pull focus back to a card while the player or a details
+  // overlay (e.g. the live stream picker) sits on top and owns focus.
+  if (focusedId && !playerModalOpen && !document.querySelector('.tv-details:not([hidden])')) restoreFocusById(focusedId);
   // Refresh tick: bail if the user left the Live home; while the player or a
   // details panel is open on top, re-check later instead of repainting under it.
   const tick = () => {

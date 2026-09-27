@@ -34,7 +34,7 @@ export function createLiveDetails({ fetchStreams, onPlay, now = Date.now }) {
       const refresh = el('button', 'tv-details-play', '↻  Refresh');
       refresh.id = 'tv-live-refresh';
       refresh.type = 'button';
-      refresh.addEventListener('click', () => load(match, t));
+      refresh.addEventListener('click', () => { if (refresh.disabled) return; refresh.disabled = true; return load(match, t); });
       host.append(refresh);
       refresh.focus();
       return;
@@ -57,9 +57,17 @@ export function createLiveDetails({ fetchStreams, onPlay, now = Date.now }) {
   }
 
   async function load(match, t) {
+    if (t !== token) return;
     const host = body.querySelector('.tv-live-streams');
     host.textContent = '';
-    host.append(el('p', 'tv-live-nostream', 'Finding streams…'));
+    // A focusable placeholder: the lookup can take 15-30 s, and focus must be
+    // inside the overlay meanwhile, not on the (hidden) home card behind it.
+    const loading = el('button', 'tv-live-loading', 'Finding streams…');
+    loading.id = 'tv-live-loading';
+    loading.type = 'button';
+    loading.disabled = false;
+    host.append(loading);
+    loading.focus();
     let streams = [];
     try { streams = (await fetchStreams(match)) || []; } catch { streams = []; }
     // The helper already sorts ok-first; a client re-sort by rank must never lift
