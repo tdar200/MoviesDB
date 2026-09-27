@@ -11,6 +11,9 @@ export const LIVE_HLS_CONFIG = {
   liveSyncDurationCount: 3,
   liveMaxLatencyDurationCount: 8,
   manifestLoadingTimeOut: 8000,
+  // The relay does not rewrite LL-HLS #EXT-X-PART / #EXT-X-PRELOAD-HINT URIs, so
+  // low-latency mode would request raw upstream parts; stay on full segments.
+  lowLatencyMode: false,
   // Live: one quick retry per fragment, so a dead segment CDN surfaces in seconds
   // (hls.js 1.7 policy; the legacy fragLoadingTimeOut is ignored once this is set).
   fragLoadPolicy: {

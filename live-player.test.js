@@ -42,6 +42,7 @@ test('LIVE_HLS_CONFIG keeps a small live buffer', () => {
   assert.equal(LIVE_HLS_CONFIG.maxBufferLength, 10);
   assert.equal(LIVE_HLS_CONFIG.liveSyncDurationCount, 3);
   assert.equal(LIVE_HLS_CONFIG.liveMaxLatencyDurationCount, 8);
+  assert.equal(LIVE_HLS_CONFIG.lowLatencyMode, false, 'relay does not rewrite LL-HLS part URIs');
   const frag = LIVE_HLS_CONFIG.fragLoadPolicy.default;
   assert.equal(frag.maxTimeToFirstByteMs, 8000);
   assert.equal(frag.maxLoadTimeMs, 15000);

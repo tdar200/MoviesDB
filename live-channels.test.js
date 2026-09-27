@@ -86,3 +86,20 @@ test('createChannelFeed downloads, filters, probes, caches for the TTL and serve
   const c = await empty.fetchChannels();
   assert.deepEqual(c, { channels: [], stale: true, fetchedAt: null });
 });
+
+test('createChannelFeed treats private, loopback and multicast channel URLs as dead without probing them', async () => {
+  const m3u = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="beIN.a",beIN Sports 1', 'https://bein.example/a.m3u8',
+    '#EXTINF:-1 tvg-id="beIN.b",beIN Sports 2', 'http://192.168.0.1/b.m3u8',
+    '#EXTINF:-1 tvg-id="beIN.c",beIN Sports 3', 'http://127.0.0.1:8123/c.m3u8',
+    '#EXTINF:-1 tvg-id="beIN.d",beIN Sports 4', 'http://239.255.255.250/d.m3u8',
+    '#EXTINF:-1 tvg-id="beIN.e",beIN Sports 5', 'rtmp://bein.example/e',
+  ].join('\n');
+  const probed = [];
+  const probe = async url => { probed.push(url); return true; };
+  const feed = createChannelFeed({ fetchImpl: async () => ({ ok: true, status: 200, text: async () => m3u }), probe, now: () => 0 });
+  const { channels } = await feed.fetchChannels();
+  assert.deepEqual(probed, ['https://bein.example/a.m3u8']);
+  assert.deepEqual(channels.map(c => c.id), ['beIN.a']);
+});

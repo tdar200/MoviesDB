@@ -6,6 +6,7 @@
 // list is served (marked stale) when the download itself fails.
 import { createHash } from 'node:crypto';
 import { CHROME_UA } from './live-fixtures.mjs';
+import { isPublicHttpUrl } from './live-relay.mjs';
 
 export const SPORTS_M3U_URL = 'https://iptv-org.github.io/iptv/categories/sports.m3u';
 
@@ -87,7 +88,9 @@ export function createChannelFeed({ fetchImpl = fetch, probe = probeHls, now = D
       const res = await fetchImpl(SPORTS_M3U_URL, { headers: { 'User-Agent': CHROME_UA } });
       if (!res.ok) throw new Error(`iptv-org ${res.status}`);
       const candidates = filterFootballChannels(parseM3u(await res.text()));
-      const alive = await mapLimit(candidates, 8, async ch => (await probe(ch.url, fetchImpl)) ? ch : null);
+      // A playlist entry pointing at a private/loopback/multicast target is treated
+      // as dead without any request: the probe must not become an SSRF vector.
+      const alive = await mapLimit(candidates, 8, async ch => (isPublicHttpUrl(ch.url) && await probe(ch.url, fetchImpl)) ? ch : null);
       const channels = alive.filter(Boolean).map(ch => ({ id: channelId(ch), name: ch.name, logo: ch.logo || null, url: ch.url }));
       cache = { at: now(), channels };
       return { channels, stale: false, fetchedAt: new Date(cache.at).toISOString() };

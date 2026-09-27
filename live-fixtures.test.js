@@ -86,3 +86,12 @@ test('createFixturesFeed uses the 10 minute TTL when nothing is live and throws 
   const bad = createFixturesFeed({ fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({}) }) });
   await assert.rejects(() => bad.fetchFixtures('2026-09-27'), /ESPN 403/);
 });
+
+test('an unparseable event date yields kickoff null and is filtered out without dropping the day', async () => {
+  const bad = { ...byState('pre'), id: 'bad1', date: 'not-a-date' };
+  assert.equal(normaliseEspnEvent(bad).kickoff, null);
+  const feed = createFixturesFeed({ fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ events: [...sample.events, bad] }) }), now: () => 0 });
+  const list = await feed.fetchFixtures('2026-09-27');
+  assert.equal(list.length, sample.events.length);
+  assert.equal(list.some(f => f.id === 'espn:bad1'), false);
+});

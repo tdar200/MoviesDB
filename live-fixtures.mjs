@@ -71,7 +71,10 @@ export function normaliseEspnEvent(event) {
   const names = new Set();
   for (const b of comp.broadcasts || []) for (const n of b.names || []) if (n) names.add(n);
   for (const g of comp.geoBroadcasts || []) { const n = g.media && g.media.shortName; if (n) names.add(n); }
-  const kickoff = event.date ? new Date(event.date).toISOString().replace(/\.000Z$/, 'Z') : null;
+  // One unparseable date must not throw (toISOString on an Invalid Date) and drop
+  // the whole day; that event just gets no kickoff and is filtered out.
+  const kickoffMs = event.date ? Date.parse(event.date) : NaN;
+  const kickoff = Number.isFinite(kickoffMs) ? new Date(kickoffMs).toISOString().replace(/\.000Z$/, 'Z') : null;
   return {
     id: `espn:${event.id}`,
     league: leagueFromUid(event.uid),
