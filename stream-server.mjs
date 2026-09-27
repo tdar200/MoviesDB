@@ -20,7 +20,7 @@ import { CONFIG } from './config.js';
 import { parseByteRange } from './http-range.js';
 import { HlsSessions } from './hls-session.mjs';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, statfsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { tmpdir, networkInterfaces } from 'node:os';
@@ -36,6 +36,14 @@ import { pieceWindow } from './stream-window.mjs';
 import { helperRequestAllowed } from './helper-auth.js';
 import { clampReadyTimeout, deferFailedSources, rememberSourceFailure } from './tv-fallback.js';
 import { lanBaseUrl } from './lan-info.mjs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { createFixturesFeed } from './live-fixtures.mjs';
+import { createSourceRegistry } from './live-sources.mjs';
+import { createNuvioAdapter } from './live-source-nuvio.mjs';
+import { selectTodayFixtures, joinFixtures, sortMatches } from './live-match.mjs';
+import { createChannelFeed } from './live-channels.mjs';
+import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHeaders } from './live-relay.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
   fileTrackId, embeddedTrackId, externalTrackId, stremioTrackId, ytsSubtitleTrackId, parseTrackId,
@@ -87,27 +95,22 @@ const TRANSCODE_GPU_DECODE = TRANSCODE_ENCODER.includes('nvenc') && process.env.
 // directly-fetchable URL so ffmpeg (which uses plain system DNS) can read it.
 const resolvingFetch = createResolvingFetch();
 
+// Live football (see docs/superpowers/specs/2026-09-27-live-football-design.md).
+// The relay only accepts upstream URLs signed with this secret; with no HELPER_KEY
+// (local npm start) a per-process random secret still prevents open-proxy use.
+const LIVE_SECRET = HELPER_KEY || randomBytes(16).toString('hex');
+const LIVE_ALLOW_PRIVATE = process.env.LIVE_RELAY_ALLOW_PRIVATE === '1'; // integration test only
+const liveFixtures = createFixturesFeed({ fetchImpl: resolvingFetch });
+const liveSources = createSourceRegistry([createNuvioAdapter({ fetchImpl: resolvingFetch })]);
+const liveChannels = createChannelFeed({ fetchImpl: resolvingFetch });
+const LIVE_JSON = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
+const liveJson = (res, status, body) => { res.writeHead(status, LIVE_JSON); res.end(JSON.stringify(body)); };
+const localDate = (ms, dayOffset = 0) => { const d = new Date(ms + dayOffset * 86_400_000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
 // Only https, only public hosts: `src` is fetched server-side, so block the
 // obvious SSRF targets even though the endpoint already requires the access key.
 function isSafeDebridUrl(raw) {
-  let u;
-  try { u = new URL(raw); } catch { return false; }
-  if (u.protocol !== 'https:') return false;
-  // URL.hostname strips the [] from an IPv6 literal, so match the bare address.
-  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (h === 'localhost' || h.endsWith('.localhost')) return false;
-  // IPv4 private/loopback/link-local/unspecified.
-  if (/^(127\.|10\.|169\.254\.|0\.)/.test(h)) return false;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
-  if (/^192\.168\./.test(h)) return false;
-  // IPv6 loopback (::1), unspecified (::), link-local (fe80::), ULA (fc00::/fd00::),
-  // and IPv4-mapped forms of the above (::ffff:127.0.0.1 / ::ffff:169.254.x).
-  if (h === '::1' || h === '::' || /^fe80:/.test(h) || /^f[cd][0-9a-f]{2}:/.test(h)) return false;
-  if (/^::ffff:/.test(h)) {
-    const v4 = h.replace('::ffff:', '');
-    if (/^(127\.|10\.|169\.254\.|0\.|192\.168\.)/.test(v4) || /^172\.(1[6-9]|2\d|3[01])\./.test(v4)) return false;
-  }
-  return true;
+  return isPublicHttpUrl(raw, ['https:']);
 }
 
 async function resolveDebridInput(src, signal) {
@@ -1013,6 +1016,89 @@ async function handleDebridProxy(req, res, url) {
   }
 }
 
+async function handleLiveFixtures(res, url) {
+  const date = url.searchParams.get('date') || localDate(Date.now());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return liveJson(res, 400, { error: 'date must be YYYY-MM-DD' });
+  try { liveJson(res, 200, { fixtures: await liveFixtures.fetchFixtures(date) }); }
+  catch (err) { liveJson(res, 502, { error: String(err.message || err) }); }
+}
+
+async function handleLiveMatches(res) {
+  const now = Date.now();
+  const status = { fixtures: 'ok', sources: {} };
+  const fixturesP = Promise.all([localDate(now), localDate(now, 1)].map(d => liveFixtures.fetchFixtures(d)))
+    .then(lists => selectTodayFixtures(lists, now))
+    .catch(err => { status.fixtures = 'error: ' + String(err.message || err); return []; });
+  const sourcesP = Promise.all(liveSources.list().map(a => a.listMatches()
+    .then(list => { status.sources[a.name] = 'ok'; return list.map(m => ({ ...m, adapter: a.name })); })
+    .catch(err => { status.sources[a.name] = 'error: ' + String(err.message || err); return []; })))
+    .then(r => r.flat());
+  const [fixtures, sourceMatches] = await Promise.all([fixturesP, sourcesP]);
+  const matches = sortMatches(joinFixtures(fixtures, sourceMatches, { now }));
+  console.log(`[live] fixtures=${status.fixtures} ${Object.entries(status.sources).map(([k, v]) => `${k}=${v}`).join(' ')} matches=${matches.length} withStream=${matches.filter(m => m.hasStream).length}`);
+  liveJson(res, 200, { matches, status, generatedAt: new Date(now).toISOString() });
+}
+
+async function handleLiveStreams(res, url) {
+  const adapter = liveSources.get(url.searchParams.get('adapter') || '');
+  const id = url.searchParams.get('id') || '';
+  if (!adapter || !id) return liveJson(res, 404, { error: 'unknown adapter or id' });
+  try {
+    const streams = await adapter.streamsFor(id);
+    // The client never sees upstream URLs or headers; only signed relay paths.
+    liveJson(res, 200, { streams: streams.sort((a, b) => (b.rank || 0) - (a.rank || 0)).map(s => ({
+      label: s.label, language: s.language, quality: s.quality, rank: s.rank,
+      play: relayPath('hls', { u: s.url, ref: s.referer, org: s.origin }, LIVE_SECRET),
+    })) });
+  } catch (err) { liveJson(res, 502, { error: String(err.message || err) }); }
+}
+
+async function handleLiveChannels(res) {
+  const { channels, stale, fetchedAt } = await liveChannels.fetchChannels();
+  console.log(`[live] channels=${channels.length} stale=${stale}`);
+  liveJson(res, 200, { channels: channels.map(c => ({ id: c.id, name: c.name, logo: c.logo, play: relayPath('hls', { u: c.url, ref: '', org: '' }, LIVE_SECRET) })), stale, fetchedAt });
+}
+
+function liveRelayParams(url) {
+  const p = { u: url.searchParams.get('u') || '', ref: url.searchParams.get('ref') || '', org: url.searchParams.get('org') || '', s: url.searchParams.get('s') || '' };
+  if (!verifyUpstream(p, LIVE_SECRET)) return { error: 'bad relay signature' };
+  if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(p.u)) return { error: 'upstream not allowed' };
+  return p;
+}
+
+async function handleLiveHls(req, res, url) {
+  const p = liveRelayParams(url);
+  if (p.error) { console.log(`[live] 403 ${p.error}`); return liveJson(res, 403, { error: p.error }); }
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 8000);
+  let upstream;
+  try { upstream = await resolvingFetch(p.u, { headers: upstreamHeaders(p.ref, p.org), redirect: 'follow', signal: ac.signal }); }
+  catch (err) { clearTimeout(t); return liveJson(res, 502, { error: String(err.message || err) }); }
+  clearTimeout(t);
+  if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(JSON.stringify({ error: `upstream ${upstream.status}` })); }
+  const text = await upstream.text();
+  const body = rewritePlaylist(text, { playlistUrl: upstream.url || p.u, relayBase: '', ref: p.ref, org: p.org, secret: LIVE_SECRET, key: url.searchParams.get('key') || '' });
+  res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+  res.end(body);
+}
+
+async function handleLiveSeg(req, res, url) {
+  const p = liveRelayParams(url);
+  if (p.error) return liveJson(res, 403, { error: p.error });
+  const ac = new AbortController();
+  req.on('close', () => ac.abort());
+  let upstream;
+  try { upstream = await resolvingFetch(p.u, { headers: upstreamHeaders(p.ref, p.org), redirect: 'follow', signal: ac.signal }); }
+  catch (err) { if (!res.headersSent) liveJson(res, 502, { error: String(err.message || err) }); return; }
+  if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(); }
+  const headers = { 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'content-type': (upstream.headers && upstream.headers.get && upstream.headers.get('content-type')) || 'video/mp2t' };
+  const len = upstream.headers && upstream.headers.get && upstream.headers.get('content-length');
+  if (len) headers['content-length'] = len;
+  res.writeHead(200, headers);
+  if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), res).catch(() => { try { res.destroy(); } catch { /* closed */ } });
+  else res.end(Buffer.from(await upstream.arrayBuffer())); // DNS-fallback fetch buffers the body
+}
+
 // GET /transcode?hash=..&s=..&e=..  -> a live H.264 fragmented-MP4 stream of an
 // HEVC source, GPU-transcoded. Progressive MP4 plays in plain <video> on both the
 // TV and a desktop browser (unlike HLS, which desktop Chrome can't play natively).
@@ -1116,6 +1202,10 @@ function handleStreamStatus(res, url) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (req.method === 'OPTIONS' && url.pathname.startsWith('/live/')) {
+    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS', 'access-control-allow-headers': '*', 'access-control-max-age': '600' });
+    return res.end();
+  }
   try {
     if (!helperRequestAllowed({ pathname: url.pathname, searchParams: url.searchParams, requiredKey: HELPER_KEY })) {
       // Log WHICH key was refused (prefix only). Rotating HELPER_KEY leaves the old
@@ -1228,6 +1318,12 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/stream') return await handleStream(req, res, url);
     if (url.pathname === '/transcode') return await handleTranscode(req, res, url);
     if (url.pathname === '/debrid-proxy') return await handleDebridProxy(req, res, url);
+    if (url.pathname === '/live/fixtures') return await handleLiveFixtures(res, url);
+    if (url.pathname === '/live/matches') return await handleLiveMatches(res);
+    if (url.pathname === '/live/streams') return await handleLiveStreams(res, url);
+    if (url.pathname === '/live/channels') return await handleLiveChannels(res);
+    if (url.pathname === '/live/hls') return await handleLiveHls(req, res, url);
+    if (url.pathname === '/live/seg') return await handleLiveSeg(req, res, url);
     if (url.pathname === '/stream-status') return handleStreamStatus(res, url);
     if (url.pathname === '/stream-stop') {
       destroyTorrent((url.searchParams.get('hash') || '').toLowerCase().trim());
