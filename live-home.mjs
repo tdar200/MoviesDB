@@ -79,3 +79,14 @@ export function restoreFocusById(id) {
   card.focus({ preventScroll: true });
   return true;
 }
+
+// Sources rename matches mid-game (Nuvio switched Denmark v Wales from a "ts_"
+// to a "wf_" id during the 27 Sep 2026 match). Before asking for streams again,
+// look the match up in the current list: same id first, then same title.
+export function findCurrentMatch(matches, match) {
+  const list = matches || [];
+  for (let i = 0; i < list.length; i++) if (list[i] && list[i].id === match.id) return list[i];
+  const title = String(match.title || '').toLowerCase();
+  for (let i = 0; i < list.length; i++) if (list[i] && String(list[i].title || '').toLowerCase() === title) return list[i];
+  return match;
+}

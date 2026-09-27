@@ -94,3 +94,15 @@ test('buildLiveRows keeps streamed matches, keeps stream-less ones only for top 
   assert.equal(today.key, 'today');
   assert.deepEqual(today.items.map(i => i.id), many.slice(0, 60).map(m => m.id));
 });
+
+test('findCurrentMatch re-resolves a match after the source renames it', async () => {
+  const { findCurrentMatch } = await import('./live-home.mjs');
+  const old = { id: 'espn:1', title: 'Denmark vs Wales', sources: [{ adapter: 'nuvio', sourceId: 'nuvio_sport_ts_wales-v-denmark' }] };
+  const fresh = { id: 'espn:1', title: 'Denmark vs Wales', sources: [{ adapter: 'nuvio', sourceId: 'nuvio_sport_wf_401861070' }] };
+  assert.equal(findCurrentMatch([{ id: 'espn:2', title: 'X vs Y' }, fresh], old), fresh, 'same id wins');
+  const srcOld = { id: 'src:nuvio:old_slug', title: 'Renate vs Treviso', sources: [] };
+  const srcNew = { id: 'src:nuvio:new_slug', title: 'Renate vs Treviso', sources: [{ adapter: 'nuvio', sourceId: 'new_slug' }] };
+  assert.equal(findCurrentMatch([srcNew], srcOld), srcNew, 'same title when a source-only match changes id');
+  assert.equal(findCurrentMatch([{ id: 'espn:9', title: 'Other' }], old), old, 'gone from the list: keep the original');
+  assert.equal(findCurrentMatch(null, old), old);
+});

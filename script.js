@@ -13,7 +13,7 @@ import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentF
 import { dedupeTrackLabels } from './subtitles.js';
 import { IMDB_TOP_250 } from './imdb-top250.js';
 import { EMMY_WINNERS } from './emmy-winners.js';
-import { buildLiveRows, restoreFocusById } from './live-home.mjs';
+import { buildLiveRows, restoreFocusById, findCurrentMatch } from './live-home.mjs';
 import { createLiveDetails } from './live-details.mjs';
 import { createLivePlayer } from './live-player.mjs';
 
@@ -3969,6 +3969,11 @@ const tvDetails = TV_MODE ? createTvDetails({
 // Streams for one match, flattened across every source adapter that listed it.
 // 70 s timeout: Nuvio can take up to ~45 s to list streams at peak, then the
 // helper probes every stream (~10 s more).
+// Re-resolve against the current match list first: sources rename matches
+// mid-game, and the old id then lists no streams.
+async function currentMatch(match) {
+  try { return findCurrentMatch((await fetchLiveJson('/live/matches')).matches, match); } catch (e) { return match; }
+}
 async function fetchStreamsForMatch(match) {
   const lists = await Promise.all((match.sources || []).map(s =>
     fetchLiveJson(`/live/streams?adapter=${encodeURIComponent(s.adapter)}&id=${encodeURIComponent(s.sourceId)}`, 70000)
@@ -3977,8 +3982,8 @@ async function fetchStreamsForMatch(match) {
   return lists.flat();
 }
 const liveDetails = createLiveDetails({
-  fetchStreams: fetchStreamsForMatch,
-  onPlay: (match, streams, index) => { liveDetails.close(); openLivePlayer({ title: match.title, streams, startIndex: index, refresh: () => fetchStreamsForMatch(match) }); },
+  fetchStreams: async match => fetchStreamsForMatch(await currentMatch(match)),
+  onPlay: (match, streams, index) => { liveDetails.close(); openLivePlayer({ title: match.title, streams, startIndex: index, refresh: async () => fetchStreamsForMatch(await currentMatch(match)) }); },
 });
 const livePlayer = createLivePlayer({
   video: playerVideo, modal: playerModal, helperUrl,
