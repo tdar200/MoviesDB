@@ -1,0 +1,1990 @@
+{
+ "leagues": [
+  {
+   "logos": []
+  }
+ ],
+ "events": [
+  {
+   "id": "401861067",
+   "uid": "s:600~l:2395~e:401861067",
+   "date": "2026-09-27T13:00Z",
+   "name": "Azerbaijan at Lithuania",
+   "shortName": "AZE @ LTU",
+   "season": {
+    "year": 2026,
+    "type": 14105,
+    "slug": "league-phase"
+   },
+   "competitions": [
+    {
+     "id": "401861067",
+     "uid": "s:600~l:2395~e:401861067~c:401861067",
+     "date": "2026-09-27T13:00Z",
+     "startDate": "2026-09-27T13:00Z",
+     "attendance": 0,
+     "timeValid": true,
+     "recent": true,
+     "status": {
+      "clock": 0,
+      "displayClock": "0'",
+      "type": {
+       "id": "1",
+       "name": "STATUS_SCHEDULED",
+       "state": "pre",
+       "completed": false,
+       "description": "Scheduled",
+       "detail": "Sun, September 27th at 9:00 AM EDT",
+       "shortDetail": "Scheduled"
+      }
+     },
+     "venue": {
+      "id": "4793",
+      "fullName": "S. Darius and S. Gireno Stadium",
+      "address": {
+       "city": "Kaunas",
+       "country": "Lithuania"
+      }
+     },
+     "format": {
+      "regulation": {
+       "periods": 2
+      }
+     },
+     "altGameNote": "UEFA Nations League, Group D2",
+     "group": {
+      "groupId": "14",
+      "name": "Group D2",
+      "abbreviation": "Group D2"
+     },
+     "notes": [],
+     "geoBroadcasts": [
+      {
+       "type": {
+        "id": "1",
+        "shortName": "TV"
+       },
+       "market": {
+        "id": "1",
+        "type": "National"
+       },
+       "media": {
+        "shortName": "FS2"
+       },
+       "lang": "en",
+       "region": "us"
+      }
+     ],
+     "broadcasts": [
+      {
+       "market": "national",
+       "names": [
+        "FS2"
+       ]
+      }
+     ],
+     "broadcast": "",
+     "competitors": [
+      {
+       "id": "460",
+       "uid": "s:600~t:460",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "WLWLD",
+       "score": "0",
+       "records": [
+        {
+         "name": "All Splits",
+         "type": "total",
+         "summary": "1-0-0",
+         "abbreviation": "Total"
+        }
+       ],
+       "team": {
+        "id": "460",
+        "uid": "s:600~t:460",
+        "abbreviation": "LTU",
+        "displayName": "Lithuania",
+        "shortDisplayName": "Lithuania",
+        "name": "Lithuania",
+        "location": "Lithuania",
+        "color": "ffe400",
+        "alternateColor": "DE2918",
+        "isActive": true,
+        "logo": "https://a.espncdn.com/i/teamlogos/countries/500/ltu.png",
+        "links": [
+         {
+          "rel": [
+           "clubhouse",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/_/id/460/lithuania",
+          "text": "Clubhouse",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/stats/_/id/460/lithuania",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:460&section=stats",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/fixtures/_/id/460/lithuania",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:460&section=scores",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/squad/_/id/460/lithuania",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:460&section=squad",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         }
+        ],
+        "venue": {
+         "id": "4793"
+        }
+       },
+       "statistics": [
+        {
+         "name": "appearances",
+         "abbreviation": "APP",
+         "displayValue": "0"
+        },
+        {
+         "name": "foulsCommitted",
+         "abbreviation": "FC",
+         "displayValue": "0"
+        },
+        {
+         "name": "wonCorners",
+         "abbreviation": "CW",
+         "displayValue": "0"
+        },
+        {
+         "name": "goalAssists",
+         "abbreviation": "A",
+         "displayValue": "0"
+        },
+        {
+         "name": "possessionPct",
+         "abbreviation": "PP",
+         "displayValue": "0"
+        },
+        {
+         "name": "shotAssists",
+         "abbreviation": "SHAST",
+         "displayValue": "0"
+        },
+        {
+         "name": "shotsOnTarget",
+         "abbreviation": "SOG",
+         "displayValue": "0"
+        },
+        {
+         "name": "totalGoals",
+         "abbreviation": "G",
+         "displayValue": "0"
+        },
+        {
+         "name": "totalShots",
+         "abbreviation": "SHOT",
+         "displayValue": "0"
+        }
+       ],
+       "leaders": [
+        {
+         "name": "goals",
+         "displayName": "Goals",
+         "shortDisplayName": "Goals",
+         "abbreviation": "G",
+         "leaders": [
+          {
+           "displayValue": "1",
+           "value": 1,
+           "athlete": {
+            "id": "398040",
+            "displayName": "Lukas Michelbrink",
+            "shortName": "L. Michelbrink",
+            "fullName": "Lukas Michelbrink",
+            "active": true,
+            "team": {
+             "id": "460"
+            },
+            "links": [
+             {
+              "rel": [
+               "playercard",
+               "desktop",
+               "athlete"
+              ],
+              "href": "https://www.espn.com/soccer/player/_/id/398040/lukas-michelbrink",
+              "isHidden": false
+             }
+            ],
+            "position": {
+             "abbreviation": "M"
+            }
+           },
+           "team": {
+            "id": "460"
+           }
+          }
+         ]
+        },
+        {
+         "name": "goalsLeaders",
+         "displayName": "Goals",
+         "shortDisplayName": "Goals",
+         "abbreviation": "G",
+         "leaders": [
+          {
+           "displayValue": "1",
+           "value": 1,
+           "athlete": {
+            "id": "398040",
+            "displayName": "Lukas Michelbrink",
+            "shortName": "L. Michelbrink",
+            "fullName": "Lukas Michelbrink",
+            "active": true,
+            "team": {
+             "id": "460"
+            },
+            "links": [
+             {
+              "rel": [
+               "playercard",
+               "desktop",
+               "athlete"
+              ],
+              "href": "https://www.espn.com/soccer/player/_/id/398040/lukas-michelbrink",
+              "isHidden": false
+             }
+            ],
+            "position": {
+             "abbreviation": "M"
+            }
+           },
+           "team": {
+            "id": "460"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "id": "581",
+       "uid": "s:600~t:581",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": false,
+       "form": "WWLWW",
+       "score": "0",
+       "records": [
+        {
+         "name": "All Splits",
+         "type": "total",
+         "summary": "0-0-0",
+         "abbreviation": "Total"
+        }
+       ],
+       "team": {
+        "id": "581",
+        "uid": "s:600~t:581",
+        "abbreviation": "AZE",
+        "displayName": "Azerbaijan",
+        "shortDisplayName": "Azerbaijan",
+        "name": "Azerbaijan",
+        "location": "Azerbaijan",
+        "color": "2D4AB0",
+        "alternateColor": "ffffff",
+        "isActive": true,
+        "logo": "https://a.espncdn.com/i/teamlogos/countries/500/aze.png",
+        "links": [
+         {
+          "rel": [
+           "clubhouse",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/_/id/581/azerbaijan",
+          "text": "Clubhouse",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/stats/_/id/581/azerbaijan",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:581&section=stats",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/fixtures/_/id/581/azerbaijan",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:581&section=scores",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/squad/_/id/581/azerbaijan",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:581&section=squad",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         }
+        ],
+        "venue": {
+         "id": "10745"
+        }
+       },
+       "statistics": [
+        {
+         "name": "appearances",
+         "abbreviation": "APP",
+         "displayValue": "0"
+        },
+        {
+         "name": "foulsCommitted",
+         "abbreviation": "FC",
+         "displayValue": "0"
+        },
+        {
+         "name": "wonCorners",
+         "abbreviation": "CW",
+         "displayValue": "0"
+        },
+        {
+         "name": "goalAssists",
+         "abbreviation": "A",
+         "displayValue": "0"
+        },
+        {
+         "name": "possessionPct",
+         "abbreviation": "PP",
+         "displayValue": "0"
+        },
+        {
+         "name": "shotAssists",
+         "abbreviation": "SHAST",
+         "displayValue": "0"
+        },
+        {
+         "name": "shotsOnTarget",
+         "abbreviation": "SOG",
+         "displayValue": "0"
+        },
+        {
+         "name": "totalGoals",
+         "abbreviation": "G",
+         "displayValue": "0"
+        },
+        {
+         "name": "totalShots",
+         "abbreviation": "SHOT",
+         "displayValue": "0"
+        }
+       ]
+      }
+     ],
+     "details": [],
+     "odds": [
+      {
+       "overUnder": 1.5,
+       "link": {
+        "language": "en-US",
+        "rel": [
+         "game",
+         "desktop",
+         "bets"
+        ],
+        "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750",
+        "text": "Game",
+        "shortText": "Game",
+        "isExternal": true,
+        "isPremium": false,
+        "isHidden": false
+       },
+       "provider": {
+        "id": "100",
+        "name": "DraftKings",
+        "priority": 1,
+        "displayName": "DraftKings",
+        "logos": [
+         {
+          "href": "https://a.espncdn.com/i/betting/Draftkings_Light.svg",
+          "rel": [
+           "light"
+          ]
+         },
+         {
+          "href": "https://a.espncdn.com/i/betting/Draftkings_Dark.svg",
+          "rel": [
+           "dark"
+          ]
+         }
+        ]
+       },
+       "drawOdds": {
+        "moneyLine": 185,
+        "link": {
+         "language": "en-US",
+         "rel": [
+          "draw",
+          "desktop",
+          "bets",
+          "draftkings"
+         ],
+         "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0ML86464606_2",
+         "text": "Draw Bet",
+         "shortText": "Draw Bet",
+         "isExternal": true,
+         "isPremium": false,
+         "isHidden": false
+        }
+       },
+       "total": {
+        "displayName": "Total",
+        "shortDisplayName": "Total",
+        "over": {
+         "open": {
+          "line": "o2.5",
+          "odds": "+155"
+         },
+         "close": {
+          "line": "o1.5",
+          "odds": "-170",
+          "link": {
+           "rel": [
+            "over",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0OU86464612O150_1",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "uefa.nations",
+             "sport": "soccer",
+             "gameId": 401861067,
+             "betSide": "over",
+             "betType": "straight",
+             "betDetails": "Over:1.5"
+            }
+           }
+          }
+         }
+        },
+        "under": {
+         "open": {
+          "line": "u2.5",
+          "odds": "-200"
+         },
+         "close": {
+          "line": "u1.5",
+          "odds": "+135",
+          "link": {
+           "rel": [
+            "under",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0OU86464612U150_3",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "uefa.nations",
+             "sport": "soccer",
+             "gameId": 401861067,
+             "betSide": "under",
+             "betType": "straight",
+             "betDetails": "Under:1.5"
+            }
+           }
+          }
+         }
+        }
+       },
+       "pointSpread": {
+        "displayName": "Spread",
+        "shortDisplayName": "Spread",
+        "home": {
+         "open": {
+          "line": "-0.5",
+          "odds": "+135"
+         },
+         "close": {
+          "line": "-0.5",
+          "odds": "+110",
+          "link": {
+           "rel": [
+            "homeSpread",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0HC86464617N50_1",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "uefa.nations",
+             "sport": "soccer",
+             "gameId": 401861067,
+             "betSide": "home",
+             "betType": "straight",
+             "betDetails": "Spread:LTU-0.5"
+            }
+           }
+          }
+         }
+        },
+        "away": {
+         "open": {
+          "line": "+0.5",
+          "odds": "-190"
+         },
+         "close": {
+          "line": "+0.5",
+          "odds": "-155",
+          "link": {
+           "rel": [
+            "awaySpread",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0HC86464617P50_3",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "uefa.nations",
+             "sport": "soccer",
+             "gameId": 401861067,
+             "betSide": "away",
+             "betType": "straight",
+             "betDetails": "Spread:AZE+0.5"
+            }
+           }
+          }
+         }
+        }
+       },
+       "moneyline": {
+        "displayName": "Moneyline",
+        "shortDisplayName": "ML",
+        "home": {
+         "open": {
+          "odds": "+140"
+         },
+         "close": {
+          "odds": "+120",
+          "link": {
+           "rel": [
+            "home",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0ML86464606_1",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "uefa.nations",
+             "sport": "soccer",
+             "gameId": 401861067,
+             "betSide": "home",
+             "betType": "straight"
+            }
+           }
+          }
+         }
+        },
+        "away": {
+         "open": {
+          "odds": "+210"
+         },
+         "close": {
+          "odds": "+265",
+          "link": {
+           "rel": [
+            "away",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0ML86464606_3",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "uefa.nations",
+             "sport": "soccer",
+             "gameId": 401861067,
+             "betSide": "away",
+             "betType": "straight"
+            }
+           }
+          }
+         }
+        },
+        "draw": {
+         "open": {
+          "odds": "+195"
+         },
+         "close": {
+          "odds": "+185",
+          "link": {
+           "rel": [
+            "draw",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34725750%3Foutcomes%3D0ML86464606_2",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "uefa.nations",
+             "sport": "soccer",
+             "gameId": 401861067,
+             "betSide": "draw",
+             "betType": "straight"
+            }
+           }
+          }
+         }
+        }
+       },
+       "details": "LTU +120"
+      }
+     ],
+     "wasSuspended": false,
+     "playByPlayAvailable": true,
+     "playByPlayAthletes": true
+    }
+   ],
+   "status": {
+    "clock": 0,
+    "displayClock": "0'",
+    "type": {
+     "id": "1",
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false,
+     "description": "Scheduled",
+     "detail": "Sun, September 27th at 9:00 AM EDT",
+     "shortDetail": "Scheduled"
+    }
+   },
+   "venue": {
+    "displayName": "S. Darius and S. Gireno Stadium"
+   },
+   "links": [
+    {
+     "language": "en-US",
+     "rel": [
+      "summary",
+      "desktop",
+      "event"
+     ],
+     "href": "https://www.espn.com/soccer/match/_/gameId/401861067/azerbaijan-lithuania",
+     "text": "Summary",
+     "shortText": "Summary",
+     "isExternal": false,
+     "isPremium": false,
+     "isHidden": false
+    },
+    {
+     "language": "en-US",
+     "rel": [
+      "stats",
+      "desktop",
+      "event"
+     ],
+     "href": "https://www.espn.com/soccer/matchstats/_/gameId/401861067",
+     "text": "Statistics",
+     "shortText": "Statistics",
+     "isExternal": false,
+     "isPremium": false,
+     "isHidden": false
+    }
+   ]
+  },
+  {
+   "id": "401924630",
+   "uid": "s:600~l:3922~e:401924630",
+   "date": "2026-09-27T04:00Z",
+   "name": "Tahiti at Cook Islands",
+   "shortName": "TAH @ COK",
+   "season": {
+    "year": 2026,
+    "type": 13708,
+    "slug": "2026-international-friendly"
+   },
+   "competitions": [
+    {
+     "id": "401924630",
+     "uid": "s:600~l:3922~e:401924630~c:401924630",
+     "date": "2026-09-27T04:00Z",
+     "startDate": "2026-09-27T04:00Z",
+     "attendance": 0,
+     "timeValid": true,
+     "recent": false,
+     "status": {
+      "clock": 5400,
+      "displayClock": "90'",
+      "period": 2,
+      "type": {
+       "id": "28",
+       "name": "STATUS_FULL_TIME",
+       "state": "post",
+       "completed": true,
+       "description": "Full Time",
+       "detail": "FT",
+       "shortDetail": "FT"
+      }
+     },
+     "venue": {
+      "id": "11810",
+      "fullName": "Cook Islands Football Association Academy",
+      "address": {
+       "city": "Matavera",
+       "country": "Cook Islands"
+      }
+     },
+     "format": {
+      "regulation": {
+       "periods": 2
+      }
+     },
+     "altGameNote": "Men's International Friendly",
+     "notes": [],
+     "geoBroadcasts": [],
+     "broadcasts": [],
+     "broadcast": "",
+     "competitors": [
+      {
+       "id": "4884",
+       "uid": "s:600~t:4884",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "DLLLL",
+       "score": "1",
+       "team": {
+        "id": "4884",
+        "uid": "s:600~t:4884",
+        "abbreviation": "COK",
+        "displayName": "Cook Islands",
+        "shortDisplayName": "Cook Isl",
+        "name": "Cook Islands",
+        "location": "Cook Islands",
+        "color": "00205B",
+        "alternateColor": "EF3340",
+        "isActive": true,
+        "logo": "https://a.espncdn.com/i/teamlogos/countries/500/cok.png",
+        "links": [
+         {
+          "rel": [
+           "clubhouse",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/_/id/4884/cook-islands",
+          "text": "Clubhouse",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/stats/_/id/4884/cook-islands",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:4884&section=stats",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/fixtures/_/id/4884/cook-islands",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:4884&section=scores",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/squad/_/id/4884/cook-islands",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:4884&section=squad",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         }
+        ],
+        "venue": {
+         "id": "11810"
+        }
+       },
+       "statistics": []
+      },
+      {
+       "id": "4863",
+       "uid": "s:600~t:4863",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": true,
+       "form": "DLWWL",
+       "score": "3",
+       "team": {
+        "id": "4863",
+        "uid": "s:600~t:4863",
+        "abbreviation": "TAH",
+        "displayName": "Tahiti",
+        "shortDisplayName": "Tahiti",
+        "name": "Tahiti",
+        "location": "Tahiti",
+        "isActive": true,
+        "logo": "https://a.espncdn.com/i/teamlogos/countries/500/tah.png",
+        "links": [
+         {
+          "rel": [
+           "clubhouse",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/_/id/4863/tahiti",
+          "text": "Clubhouse",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/stats/_/id/4863/tahiti",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:4863&section=stats",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/fixtures/_/id/4863/tahiti",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:4863&section=scores",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/squad/_/id/4863/tahiti",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:4863&section=squad",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         }
+        ]
+       },
+       "statistics": []
+      }
+     ],
+     "details": [],
+     "odds": [
+      null
+     ],
+     "wasSuspended": false,
+     "playByPlayAvailable": true,
+     "playByPlayAthletes": true
+    }
+   ],
+   "status": {
+    "clock": 5400,
+    "displayClock": "90'",
+    "period": 2,
+    "type": {
+     "id": "28",
+     "name": "STATUS_FULL_TIME",
+     "state": "post",
+     "completed": true,
+     "description": "Full Time",
+     "detail": "FT",
+     "shortDetail": "FT"
+    }
+   },
+   "venue": {
+    "displayName": "Cook Islands Football Association Academy"
+   },
+   "links": [
+    {
+     "language": "en-US",
+     "rel": [
+      "summary",
+      "desktop",
+      "event"
+     ],
+     "href": "https://www.espn.com/soccer/match/_/gameId/401924630/tahiti-cook-islands",
+     "text": "Summary",
+     "shortText": "Summary",
+     "isExternal": false,
+     "isPremium": false,
+     "isHidden": false
+    },
+    {
+     "language": "en-US",
+     "rel": [
+      "stats",
+      "desktop",
+      "event"
+     ],
+     "href": "https://www.espn.com/soccer/matchstats/_/gameId/401924630",
+     "text": "Statistics",
+     "shortText": "Statistics",
+     "isExternal": false,
+     "isPremium": false,
+     "isHidden": false
+    }
+   ]
+  },
+  {
+   "id": "401914142",
+   "uid": "s:600~l:3922~e:401914142",
+   "date": "2026-09-27T11:35Z",
+   "name": "New Zealand at China",
+   "shortName": "NZL @ CHN",
+   "season": {
+    "year": 2026,
+    "type": 13708,
+    "slug": "2026-international-friendly"
+   },
+   "competitions": [
+    {
+     "id": "401914142",
+     "uid": "s:600~l:3922~e:401914142~c:401914142",
+     "date": "2026-09-27T11:35Z",
+     "startDate": "2026-09-27T11:35Z",
+     "attendance": 0,
+     "timeValid": true,
+     "recent": true,
+     "status": {
+      "clock": 3660,
+      "displayClock": "61'",
+      "period": 2,
+      "type": {
+       "id": "26",
+       "name": "STATUS_SECOND_HALF",
+       "state": "in",
+       "completed": false,
+       "description": "Second Half",
+       "detail": "61'",
+       "shortDetail": "61'"
+      }
+     },
+     "venue": {
+      "id": "10284",
+      "fullName": "Chongqing Longxing Football Stadium",
+      "address": {
+       "city": "Chongqing",
+       "country": "China PR"
+      }
+     },
+     "format": {
+      "regulation": {
+       "periods": 2
+      }
+     },
+     "altGameNote": "Men's International Friendly",
+     "notes": [],
+     "geoBroadcasts": [],
+     "broadcasts": [],
+     "broadcast": "",
+     "competitors": [
+      {
+       "id": "658",
+       "uid": "s:600~t:658",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "WDWLW",
+       "score": "0",
+       "team": {
+        "id": "658",
+        "uid": "s:600~t:658",
+        "abbreviation": "CHN",
+        "displayName": "China",
+        "shortDisplayName": "China",
+        "name": "China",
+        "location": "China",
+        "color": "dd342c",
+        "alternateColor": "ffe533",
+        "isActive": true,
+        "logo": "https://a.espncdn.com/i/teamlogos/countries/500/chn.png",
+        "links": [
+         {
+          "rel": [
+           "clubhouse",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/_/id/658/china",
+          "text": "Clubhouse",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/stats/_/id/658/china",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:658&section=stats",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/fixtures/_/id/658/china",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:658&section=scores",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/squad/_/id/658/china",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:658&section=squad",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         }
+        ],
+        "venue": {
+         "id": "10284"
+        }
+       },
+       "statistics": [
+        {
+         "name": "appearances",
+         "abbreviation": "APP",
+         "displayValue": "0"
+        },
+        {
+         "name": "foulsCommitted",
+         "abbreviation": "FC",
+         "displayValue": "9"
+        },
+        {
+         "name": "wonCorners",
+         "abbreviation": "CW",
+         "displayValue": "3"
+        },
+        {
+         "name": "goalAssists",
+         "abbreviation": "A",
+         "displayValue": "0"
+        },
+        {
+         "name": "possessionPct",
+         "abbreviation": "PP",
+         "displayValue": "41.1"
+        },
+        {
+         "name": "shotAssists",
+         "abbreviation": "SHAST",
+         "displayValue": "6"
+        },
+        {
+         "name": "shotsOnTarget",
+         "abbreviation": "SOG",
+         "displayValue": "2"
+        },
+        {
+         "name": "totalGoals",
+         "abbreviation": "G",
+         "displayValue": "0"
+        },
+        {
+         "name": "totalShots",
+         "abbreviation": "SHOT",
+         "displayValue": "7"
+        }
+       ]
+      },
+      {
+       "id": "2666",
+       "uid": "s:600~t:2666",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": false,
+       "form": "DLLDL",
+       "score": "2",
+       "team": {
+        "id": "2666",
+        "uid": "s:600~t:2666",
+        "abbreviation": "NZL",
+        "displayName": "New Zealand",
+        "shortDisplayName": "New Zealand",
+        "name": "New Zealand",
+        "location": "New Zealand",
+        "color": "000000",
+        "alternateColor": "ffffff",
+        "isActive": true,
+        "logo": "https://a.espncdn.com/i/teamlogos/countries/500/nzl.png",
+        "links": [
+         {
+          "rel": [
+           "clubhouse",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/_/id/2666/new-zealand",
+          "text": "Clubhouse",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/stats/_/id/2666/new-zealand",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "stats",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:2666&section=stats",
+          "text": "Stats",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/fixtures/_/id/2666/new-zealand",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "schedule",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:2666&section=scores",
+          "text": "Fixtures",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "desktop",
+           "team"
+          ],
+          "href": "https://www.espn.com/soccer/team/squad/_/id/2666/new-zealand",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         },
+         {
+          "rel": [
+           "squad",
+           "sportscenter",
+           "app",
+           "team"
+          ],
+          "href": "sportscenter://x-callback-url/showClubhouse?uid=s:600~t:2666&section=squad",
+          "text": "Squad",
+          "isExternal": false,
+          "isPremium": false,
+          "isHidden": false
+         }
+        ],
+        "venue": {
+         "id": "6652"
+        }
+       },
+       "statistics": [
+        {
+         "name": "appearances",
+         "abbreviation": "APP",
+         "displayValue": "0"
+        },
+        {
+         "name": "foulsCommitted",
+         "abbreviation": "FC",
+         "displayValue": "6"
+        },
+        {
+         "name": "wonCorners",
+         "abbreviation": "CW",
+         "displayValue": "3"
+        },
+        {
+         "name": "goalAssists",
+         "abbreviation": "A",
+         "displayValue": "2"
+        },
+        {
+         "name": "possessionPct",
+         "abbreviation": "PP",
+         "displayValue": "58.9"
+        },
+        {
+         "name": "shotAssists",
+         "abbreviation": "SHAST",
+         "displayValue": "8"
+        },
+        {
+         "name": "shotsOnTarget",
+         "abbreviation": "SOG",
+         "displayValue": "4"
+        },
+        {
+         "name": "totalGoals",
+         "abbreviation": "G",
+         "displayValue": "2"
+        },
+        {
+         "name": "totalShots",
+         "abbreviation": "SHOT",
+         "displayValue": "8"
+        }
+       ]
+      }
+     ],
+     "details": [
+      {
+       "type": {
+        "id": "70",
+        "text": "Goal"
+       },
+       "clock": {
+        "value": 192,
+        "displayValue": "4'"
+       },
+       "team": {
+        "id": "2666"
+       },
+       "scoreValue": 1,
+       "scoringPlay": true,
+       "redCard": false,
+       "yellowCard": false,
+       "penaltyKick": false,
+       "ownGoal": false,
+       "shootout": false,
+       "athletesInvolved": [
+        {
+         "id": "367427",
+         "displayName": "Tyler Bindon",
+         "shortName": "T. Bindon",
+         "fullName": "Tyler Bindon",
+         "jersey": "4",
+         "team": {
+          "id": "2666"
+         },
+         "links": [
+          {
+           "rel": [
+            "playercard",
+            "desktop",
+            "athlete"
+           ],
+           "href": "https://www.espn.com/soccer/player/_/id/367427/tyler-bindon",
+           "isHidden": false
+          }
+         ],
+         "position": "CD-L"
+        }
+       ]
+      },
+      {
+       "type": {
+        "id": "70",
+        "text": "Goal"
+       },
+       "clock": {
+        "value": 1687,
+        "displayValue": "29'"
+       },
+       "team": {
+        "id": "2666"
+       },
+       "scoreValue": 1,
+       "scoringPlay": true,
+       "redCard": false,
+       "yellowCard": false,
+       "penaltyKick": false,
+       "ownGoal": false,
+       "shootout": false,
+       "athletesInvolved": [
+        {
+         "id": "277113",
+         "displayName": "Ben Waine",
+         "shortName": "B. Waine",
+         "fullName": "Ben Waine",
+         "jersey": "18",
+         "team": {
+          "id": "2666"
+         },
+         "links": [
+          {
+           "rel": [
+            "playercard",
+            "desktop",
+            "athlete"
+           ],
+           "href": "https://www.espn.com/soccer/player/_/id/277113/ben-waine",
+           "isHidden": false
+          }
+         ],
+         "position": "F"
+        }
+       ]
+      },
+      {
+       "type": {
+        "id": "94",
+        "text": "Yellow Card"
+       },
+       "clock": {
+        "value": 1955,
+        "displayValue": "33'"
+       },
+       "team": {
+        "id": "2666"
+       },
+       "scoreValue": 0,
+       "scoringPlay": false,
+       "redCard": false,
+       "yellowCard": true,
+       "penaltyKick": false,
+       "ownGoal": false,
+       "shootout": false,
+       "athletesInvolved": [
+        {
+         "id": "266555",
+         "displayName": "Elijah Just",
+         "shortName": "E. Just",
+         "fullName": "Elijah Just",
+         "jersey": "11",
+         "team": {
+          "id": "2666"
+         },
+         "links": [
+          {
+           "rel": [
+            "playercard",
+            "desktop",
+            "athlete"
+           ],
+           "href": "https://www.espn.com/soccer/player/_/id/266555/elijah-just",
+           "isHidden": false
+          }
+         ],
+         "position": "AM-R"
+        }
+       ]
+      }
+     ],
+     "odds": [
+      {
+       "overUnder": 2.5,
+       "link": {
+        "language": "en-US",
+        "rel": [
+         "game",
+         "desktop",
+         "bets"
+        ],
+        "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116",
+        "text": "Game",
+        "shortText": "Game",
+        "isExternal": true,
+        "isPremium": false,
+        "isHidden": false
+       },
+       "provider": {
+        "id": "100",
+        "name": "DraftKings",
+        "priority": 1
+       },
+       "drawOdds": {
+        "moneyLine": 240,
+        "link": {
+         "language": "en-US",
+         "rel": [
+          "draw",
+          "desktop",
+          "bets",
+          "draftkings"
+         ],
+         "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0ML86484989_2",
+         "text": "Draw Bet",
+         "shortText": "Draw Bet",
+         "isExternal": true,
+         "isPremium": false,
+         "isHidden": false
+        }
+       },
+       "total": {
+        "displayName": "Total",
+        "shortDisplayName": "Total",
+        "over": {
+         "open": {
+          "line": "o2.5",
+          "odds": "-105"
+         },
+         "close": {
+          "line": "o2.5",
+          "odds": "+125"
+         },
+         "current": {
+          "line": "o2.5",
+          "odds": "-259",
+          "link": {
+           "rel": [
+            "over",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0OU86485023O250_1",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "fifa.friendly",
+             "sport": "soccer",
+             "gameId": 401914142,
+             "betSide": "over",
+             "betType": "straight",
+             "betDetails": "Over:2.5"
+            }
+           }
+          }
+         }
+        },
+        "under": {
+         "open": {
+          "line": "u2.5",
+          "odds": "-135"
+         },
+         "close": {
+          "line": "u2.5",
+          "odds": "-165"
+         },
+         "current": {
+          "line": "u2.5",
+          "odds": "+173",
+          "link": {
+           "rel": [
+            "under",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0OU86485023U250_3",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "fifa.friendly",
+             "sport": "soccer",
+             "gameId": 401914142,
+             "betSide": "under",
+             "betType": "straight",
+             "betDetails": "Under:2.5"
+            }
+           }
+          }
+         }
+        }
+       },
+       "pointSpread": {
+        "displayName": "Spread",
+        "shortDisplayName": "Spread",
+        "home": {
+         "open": {
+          "line": "+0.5",
+          "odds": "-190"
+         },
+         "close": {
+          "line": "+0.5",
+          "odds": "-130"
+         },
+         "current": {
+          "line": "+2.5",
+          "odds": "-255",
+          "link": {
+           "rel": [
+            "homeSpread",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0HC86485024P250_1",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "fifa.friendly",
+             "sport": "soccer",
+             "gameId": 401914142,
+             "betSide": "home",
+             "betType": "straight",
+             "betDetails": "Spread:CHN+2.5"
+            }
+           }
+          }
+         }
+        },
+        "away": {
+         "open": {
+          "line": "-0.5",
+          "odds": "+130"
+         },
+         "close": {
+          "line": "-0.5",
+          "odds": "-110"
+         },
+         "current": {
+          "line": "-2.5",
+          "odds": "+170",
+          "link": {
+           "rel": [
+            "awaySpread",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0HC86485024N250_3",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "fifa.friendly",
+             "sport": "soccer",
+             "gameId": 401914142,
+             "betSide": "away",
+             "betType": "straight",
+             "betDetails": "Spread:NZL-2.5"
+            }
+           }
+          }
+         }
+        }
+       },
+       "moneyline": {
+        "displayName": "Moneyline",
+        "shortDisplayName": "ML",
+        "home": {
+         "open": {
+          "odds": "+165"
+         },
+         "close": {
+          "odds": "+280"
+         },
+         "current": {
+          "odds": "+4000",
+          "link": {
+           "rel": [
+            "home",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0ML86485018_1",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "fifa.friendly",
+             "sport": "soccer",
+             "gameId": 401914142,
+             "betSide": "home",
+             "betType": "straight"
+            }
+           }
+          }
+         }
+        },
+        "away": {
+         "open": {
+          "odds": "+145"
+         },
+         "close": {
+          "odds": "+100"
+         },
+         "current": {
+          "odds": "-3000",
+          "link": {
+           "rel": [
+            "away",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0ML86485018_3",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "fifa.friendly",
+             "sport": "soccer",
+             "gameId": 401914142,
+             "betSide": "away",
+             "betType": "straight"
+            }
+           }
+          }
+         }
+        },
+        "draw": {
+         "open": {
+          "odds": "+260"
+         },
+         "close": {
+          "odds": "+240"
+         },
+         "current": {
+          "odds": "+1200",
+          "link": {
+           "rel": [
+            "draw",
+            "bets"
+           ],
+           "href": "https://sportsbook.draftkings.com/gateway?s=__s__&wpcid=__wpcid__&wpsrc=413&wpcn=ESPN&wpscn=Widget&wpcrn=BetSlipDeepLink&wpscid=__wpscid__&wpcrid=xx&preurl=https%3A%2F%2Fsportsbook.draftkings.com%2Fevent%2F34733116%3Foutcomes%3D0ML86485018_2",
+           "tracking": {
+            "campaign": "betting-integrations",
+            "tags": {
+             "league": "fifa.friendly",
+             "sport": "soccer",
+             "gameId": 401914142,
+             "betSide": "draw",
+             "betType": "straight"
+            }
+           }
+          }
+         }
+        }
+       },
+       "details": "NZL +100"
+      }
+     ],
+     "wasSuspended": false,
+     "playByPlayAvailable": true,
+     "playByPlayAthletes": true
+    }
+   ],
+   "status": {
+    "clock": 3660,
+    "displayClock": "61'",
+    "period": 2,
+    "type": {
+     "id": "26",
+     "name": "STATUS_SECOND_HALF",
+     "state": "in",
+     "completed": false,
+     "description": "Second Half",
+     "detail": "61'",
+     "shortDetail": "61'"
+    }
+   },
+   "venue": {
+    "displayName": "Chongqing Longxing Football Stadium"
+   },
+   "links": [
+    {
+     "language": "en-US",
+     "rel": [
+      "live",
+      "desktop",
+      "event"
+     ],
+     "href": "https://www.espn.com/soccer/match/_/gameId/401914142",
+     "text": "Gamecast",
+     "shortText": "Live",
+     "isExternal": false,
+     "isPremium": false,
+     "isHidden": false
+    },
+    {
+     "language": "en-US",
+     "rel": [
+      "stats",
+      "desktop",
+      "event"
+     ],
+     "href": "https://www.espn.com/soccer/matchstats/_/gameId/401914142",
+     "text": "Statistics",
+     "shortText": "Statistics",
+     "isExternal": false,
+     "isPremium": false,
+     "isHidden": false
+    }
+   ]
+  }
+ ]
+}
