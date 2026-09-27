@@ -39,41 +39,42 @@ const AWARD_ROWS = [
 ];
 
 // Extra browse rows for the All tab only: [key, title, type, discover params].
-// Thresholds are per row because world-cinema feeds have far fewer votes.
+// All run highest-rated first; the vote floors are per row because world-cinema
+// feeds have far fewer votes (Urdu dramas barely have any on TMDB).
 const ALL_EXTRA_ROWS = [
-  ['xg12', 'Adventure', 'movie', 'with_genres=12&vote_count.gte=200'],
-  ['xg10751', 'Family Movies', 'movie', 'with_genres=10751&vote_count.gte=200'],
-  ['xg36', 'History', 'movie', 'with_genres=36&vote_count.gte=200'],
-  ['xg10752', 'War Movies', 'movie', 'with_genres=10752&vote_count.gte=200'],
-  ['xg37', 'Westerns', 'movie', 'with_genres=37&vote_count.gte=100'],
-  ['xg10402', 'Music & Musicals', 'movie', 'with_genres=10402&vote_count.gte=100'],
+  ['xg12', 'Adventure', 'movie', 'with_genres=12&vote_count.gte=500'],
+  ['xg10751', 'Family Movies', 'movie', 'with_genres=10751&vote_count.gte=500'],
+  ['xg36', 'History', 'movie', 'with_genres=36&vote_count.gte=500'],
+  ['xg10752', 'War Movies', 'movie', 'with_genres=10752&vote_count.gte=500'],
+  ['xg37', 'Westerns', 'movie', 'with_genres=37&vote_count.gte=300'],
+  ['xg10402', 'Music & Musicals', 'movie', 'with_genres=10402&vote_count.gte=300'],
   ['xtg10759', 'Action & Adventure Series', 'tv', 'with_genres=10759&vote_count.gte=200'],
   ['xtg9648', 'Mystery Series', 'tv', 'with_genres=9648&vote_count.gte=200'],
   ['xtg16', 'Animated Series', 'tv', 'with_genres=16&vote_count.gte=200'],
-  ['xtg10764', 'Reality TV', 'tv', 'with_genres=10764&vote_count.gte=20'],
+  ['xtg10764', 'Reality TV', 'tv', 'with_genres=10764&vote_count.gte=50'],
   ['xtg10762', 'Kids TV', 'tv', 'with_genres=10762&vote_count.gte=50'],
   ['xtg10768', 'War & Politics Series', 'tv', 'with_genres=10768&vote_count.gte=50'],
-  ['xk10051', 'Heist Movies', 'movie', 'with_keywords=10051&vote_count.gte=100'],
-  ['xk9672', 'Based on a True Story', 'movie', 'with_keywords=9672&vote_count.gte=200'],
-  ['xk9882', 'Space', 'movie', 'with_keywords=9882&vote_count.gte=100'],
-  ['xk4565', 'Dystopian Worlds', 'movie', 'with_keywords=4565&vote_count.gte=100'],
-  ['xk10714', 'Serial Killers', 'movie', 'with_keywords=10714&vote_count.gte=100'],
-  ['xk779', 'Martial Arts', 'movie', 'with_keywords=779&vote_count.gte=100'],
-  ['xk470', 'Spies', 'movie', 'with_keywords=470&vote_count.gte=100'],
-  ['xk10349', 'Survival', 'movie', 'with_keywords=10349&vote_count.gte=100'],
-  ['xk6075', 'Sports Movies', 'movie', 'with_keywords=6075&vote_count.gte=100'],
-  ['xk12190', 'Cyberpunk', 'movie', 'with_keywords=12190&vote_count.gte=50'],
-  ['xk10854', 'Time Loops', 'movie', 'with_keywords=10854&vote_count.gte=50'],
-  ['xk207317', 'Christmas Movies', 'movie', 'with_keywords=207317&vote_count.gte=100'],
-  ['xlhi', 'Bollywood', 'movie', 'with_original_language=hi&vote_count.gte=50'],
-  ['xlko', 'Korean Dramas', 'tv', 'with_original_language=ko&with_genres=18&vote_count.gte=50'],
+  ['xk10051', 'Heist Movies', 'movie', 'with_keywords=10051&vote_count.gte=300'],
+  ['xk9672', 'Based on a True Story', 'movie', 'with_keywords=9672&vote_count.gte=500'],
+  ['xk9882', 'Space', 'movie', 'with_keywords=9882&vote_count.gte=300'],
+  ['xk4565', 'Dystopian Worlds', 'movie', 'with_keywords=4565&vote_count.gte=300'],
+  ['xk10714', 'Serial Killers', 'movie', 'with_keywords=10714&vote_count.gte=300'],
+  ['xk779', 'Martial Arts', 'movie', 'with_keywords=779&vote_count.gte=300'],
+  ['xk470', 'Spies', 'movie', 'with_keywords=470&vote_count.gte=300'],
+  ['xk10349', 'Survival', 'movie', 'with_keywords=10349&vote_count.gte=300'],
+  ['xk6075', 'Sports Movies', 'movie', 'with_keywords=6075&vote_count.gte=300'],
+  ['xk12190', 'Cyberpunk', 'movie', 'with_keywords=12190&vote_count.gte=100'],
+  ['xk10854', 'Time Loops', 'movie', 'with_keywords=10854&vote_count.gte=100'],
+  ['xk207317', 'Christmas Movies', 'movie', 'with_keywords=207317&vote_count.gte=300'],
+  ['xlhi', 'Bollywood', 'movie', 'with_original_language=hi&vote_count.gte=100'],
+  ['xlko', 'Korean Dramas', 'tv', 'with_original_language=ko&with_genres=18&vote_count.gte=100'],
   ['xlja', 'Anime Series', 'tv', 'with_original_language=ja&with_genres=16&vote_count.gte=100'],
-  ['xlur', 'Pakistani Dramas', 'tv', 'with_original_language=ur&vote_count.gte=1'],
-  ['xcgb', 'British TV', 'tv', 'with_origin_country=GB&vote_count.gte=100'],
-  ['xles', 'Spanish-Language Films', 'movie', 'with_original_language=es&vote_count.gte=200'],
-  ['xd80', '80s Classics', 'movie', 'primary_release_date.gte=1980-01-01&primary_release_date.lte=1989-12-31&vote_count.gte=500'],
-  ['xd90', '90s Classics', 'movie', 'primary_release_date.gte=1990-01-01&primary_release_date.lte=1999-12-31&vote_count.gte=500'],
-  ['xgems', 'Hidden Gems', 'movie', 'vote_average.gte=7.5&vote_count.gte=150&vote_count.lte=1500'],
+  ['xlur', 'Pakistani Dramas', 'tv', 'with_original_language=ur&vote_count.gte=3'],
+  ['xcgb', 'British TV', 'tv', 'with_origin_country=GB&vote_count.gte=200'],
+  ['xles', 'Spanish-Language Films', 'movie', 'with_original_language=es&vote_count.gte=300'],
+  ['xd80', '80s Classics', 'movie', 'primary_release_date.gte=1980-01-01&primary_release_date.lte=1989-12-31&vote_count.gte=1000'],
+  ['xd90', '90s Classics', 'movie', 'primary_release_date.gte=1990-01-01&primary_release_date.lte=1999-12-31&vote_count.gte=1000'],
+  ['xgems', 'Hidden Gems', 'movie', 'vote_average.gte=7.5&vote_count.gte=300&vote_count.lte=2000'],
 ];
 
 // The curated, media-kind-aware home. `kind` is 'all' | 'movie' | 'tv'. Every row
@@ -87,7 +88,9 @@ export function catalogRowDefs(apiKey, base = TMDB_BASE, kind = 'all') {
   const newRow = type === 'tv'
     ? { key: 'now_playing', title: 'New Episodes', url: `${base}/tv/on_the_air?${q}&page=1`, mediaType }
     : { key: 'now_playing', title: 'New Releases', url: `${base}/movie/now_playing?${q}&page=1`, mediaType };
-  const disc = (extra) => `${base}/discover/${type}?${q}&sort_by=popularity.desc&vote_count.gte=200&${extra}&page=1`;
+  // Category rows run highest-rated first. The vote floor keeps a title rated 10
+  // by three people from leading a row; series get a lower floor (fewer votes).
+  const disc = (extra) => `${base}/discover/${type}?${q}&sort_by=vote_average.desc&vote_count.gte=${type === 'tv' ? 200 : 500}&${extra}&page=1`;
   const rows = [
     { key: 'trending', title: 'Trending This Week', url: `${base}/trending/${trendingScope}/week?${q}&page=1`, ...(kind === 'all' ? {} : { mediaType }) },
     { key: 'popular', title: kind === 'tv' ? 'Popular Shows' : 'Popular Movies', url: `${base}/${type}/popular?${q}&page=1`, mediaType },
@@ -104,7 +107,7 @@ export function catalogRowDefs(apiKey, base = TMDB_BASE, kind = 'all') {
       { key: 'tv_top', title: 'Top Rated Shows', url: `${base}/tv/top_rated?${q}&page=1`, mediaType: 'tv' },
     );
     [[18, 'Drama Series'], [35, 'Comedy Series'], [80, 'Crime Series'], [10765, 'Sci-Fi & Fantasy Series'], [99, 'Documentary Series']].forEach(([id, name]) =>
-      rows.push({ key: `tvg${id}`, title: name, url: `${base}/discover/tv?${q}&sort_by=popularity.desc&vote_count.gte=200&with_genres=${id}&page=1`, mediaType: 'tv' }));
+      rows.push({ key: `tvg${id}`, title: name, url: `${base}/discover/tv?${q}&sort_by=vote_average.desc&vote_count.gte=200&with_genres=${id}&page=1`, mediaType: 'tv' }));
   }
   // Award/prestige rows (curated lists — film awards). Skipped under the TV tab
   // since these lists are movies; shown under All and Movies. `list: true` tells the
@@ -114,7 +117,7 @@ export function catalogRowDefs(apiKey, base = TMDB_BASE, kind = 'all') {
   (type === 'tv' ? TV_GENRE_ROWS : MOVIE_GENRE_ROWS).forEach(([id, name]) =>
     rows.push({ key: `g${id}`, title: name, url: disc(`with_genres=${id}`), mediaType }));
   if (kind === 'all') ALL_EXTRA_ROWS.forEach(([key, title, t, params]) =>
-    rows.push({ key, title, url: `${base}/discover/${t}?${q}&sort_by=popularity.desc&${params}&page=1`, mediaType: t }));
+    rows.push({ key, title, url: `${base}/discover/${t}?${q}&sort_by=vote_average.desc&${params}&page=1`, mediaType: t }));
   THEME_ROWS.forEach(([id, name]) =>
     rows.push({ key: `k${id}`, title: name, url: disc(`with_keywords=${id}`), mediaType }));
   PROVIDER_ROWS.forEach(([id, name]) =>

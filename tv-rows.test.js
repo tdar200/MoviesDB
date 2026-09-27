@@ -201,3 +201,15 @@ test('All tab carries at least 20 extra category rows, each a distinct discover 
   assert.equal(catalogRowDefs('KEY', undefined, 'movie').some(d => d.key.startsWith('x')), false);
   assert.equal(catalogRowDefs('KEY', undefined, 'tv').some(d => d.key.startsWith('x')), false);
 });
+
+test('category rows are fetched highest-rated first, with a vote floor so obscure 10/10s do not lead', () => {
+  for (const kind of ['all', 'movie', 'tv']) {
+    for (const d of catalogRowDefs('KEY', 'https://api.themoviedb.org/3', kind).filter(r => /\/discover\//.test(r.url))) {
+      const q = new URL(d.url).searchParams;
+      assert.equal(q.get('sort_by'), 'vote_average.desc', `${kind}: ${d.title}`);
+      assert.ok(Number(q.get('vote_count.gte')) >= 3, `${kind}: ${d.title} has a vote floor`);
+    }
+  }
+  const adventure = catalogRowDefs('KEY', undefined, 'all').find(d => d.title === 'Adventure');
+  assert.ok(Number(new URL(adventure.url).searchParams.get('vote_count.gte')) >= 500);
+});
