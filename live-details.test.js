@@ -96,3 +96,23 @@ test('live details ignores a stale stream response after close or a newer open',
     assert.equal(details.el.querySelector('.tv-live-stream'), null);
   } finally { if (prev === undefined) delete globalThis.document; else globalThis.document = prev; }
 });
+
+test('live details lists working streams sharpest first, then by speed rank', async () => {
+  const prev = globalThis.document; const doc = fakeDocument(); globalThis.document = doc;
+  try {
+    const { createLiveDetails } = await import('./live-details.mjs');
+    const streams = [
+      { label: 'Fast SD', quality: '480p', height: 480, rank: 99, health: 'ok', play: '/1' },
+      { label: 'Sharp', quality: '1080p', height: 1080, rank: 10, health: 'ok', play: '/2' },
+      { label: 'Dead 4K', quality: '2160p', height: 2160, rank: 100, health: 'timeout', play: '/3' },
+      { label: 'HD fast', quality: '720p', height: 720, rank: 60, health: 'ok', play: '/4' },
+    ];
+    const details = createLiveDetails({ fetchStreams: async () => streams, onPlay: () => {} });
+    await details.open(match);
+    const labels = details.el.querySelectorAll('.tv-live-stream').map(b => b.textContent);
+    assert.match(labels[0], /^Sharp/);
+    assert.match(labels[1], /^HD fast/);
+    assert.match(labels[2], /^Fast SD/);
+    assert.match(labels[3], /^Dead 4K.*may not work/);
+  } finally { if (prev === undefined) delete globalThis.document; else globalThis.document = prev; }
+});

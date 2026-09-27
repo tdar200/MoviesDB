@@ -1085,7 +1085,7 @@ async function handleLiveStreams(res, url) {
     console.log(`[live] streams ${adapter.name}:${id.slice(0, 40)} total=${streams.length} kept=${ranked.length} ${JSON.stringify(counts)}`);
     // The client never sees upstream URLs or headers; only signed relay paths.
     liveJson(res, 200, { streams: ranked.map(s => ({
-      label: s.label, language: s.language, quality: s.quality, rank: s.rank, health: s.health,
+      label: s.label, language: s.language, quality: s.height ? `${s.height}p` : s.quality, height: s.height || 0, rank: s.rank, health: s.health,
       play: relayPath('hls', { u: s.url, ref: s.referer, org: s.origin }, LIVE_SECRET),
     })) });
   } catch (err) { liveJson(res, isLiveTimeout(err) ? 504 : 502, { error: String(err.message || err) }); }

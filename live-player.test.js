@@ -214,3 +214,14 @@ test('fragment failures after the first frame are left to hls.js and the stall w
   await settle();
   assert.equal(loads(h).length, 1);
 });
+
+test('starts a multi-quality stream at its highest level and assumes a fast link', async () => {
+  const h = harness();
+  await h.player.play({ title: 't', streams: [{ label: 's1', play: '/a' }], refresh: async () => [] });
+  assert.ok(LIVE_HLS_CONFIG.abrEwmaDefaultEstimate >= 5_000_000, 'ABR starts from a fast-link estimate');
+  const levels = [{ height: 540, bitrate: 700000 }, { height: 1080, bitrate: 8000000 }, { height: 720, bitrate: 3000000 }];
+  h.Hls.last.levels = levels;
+  h.Hls.last.emit('mp', { levels });
+  assert.equal(h.Hls.last.startLevel, 1);
+  assert.equal(h.video.played, 1);
+});

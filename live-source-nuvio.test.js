@@ -113,3 +113,27 @@ test('listMatches with no cached list propagates the failure', async () => {
   const adapter = createNuvioAdapter({ fetchImpl: async () => { throw new TypeError('fetch failed'); } });
   await assert.rejects(() => adapter.listMatches(), /fetch failed/);
 });
+
+test('qualityHeight reads resolutions, p-labels and HD/SD words', async () => {
+  const { qualityHeight } = await import('./live-source-nuvio.mjs');
+  assert.equal(qualityHeight('1920x1080'), 1080);
+  assert.equal(qualityHeight('1280x720'), 720);
+  assert.equal(qualityHeight('720p'), 720);
+  assert.equal(qualityHeight('4K'), 2160);
+  assert.equal(qualityHeight('FHD'), 1080);
+  assert.equal(qualityHeight('Full HD'), 1080);
+  assert.equal(qualityHeight('HD'), 720);
+  assert.equal(qualityHeight('SD'), 480);
+  assert.equal(qualityHeight(''), 0);
+  assert.equal(qualityHeight(null), 0);
+});
+
+test('parseNuvioStreams reports a height per stream from resolution or the title', () => {
+  const list = parseNuvioStreams({ streams: [
+    { title: 'A', url: 'https://cdn.example/a.m3u8', resolution: '1920x1080' },
+    { title: 'B\nQuality: 720p', url: 'https://cdn.example/b.m3u8' },
+    { title: 'C', url: 'https://cdn.example/c.m3u8', resolution: 'SD' },
+    { title: 'D', url: 'https://cdn.example/d.m3u8' },
+  ] });
+  assert.deepEqual(list.map(s => s.height), [1080, 720, 480, 0]);
+});

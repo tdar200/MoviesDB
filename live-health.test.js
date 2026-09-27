@@ -160,3 +160,25 @@ test('probeStream cancels the body of a non-ok response', async () => {
   assert.deepEqual(await probeStream(S, { fetchUpstream: pl403 }), { status: 'http-error', detail: 'playlist 404' });
   assert.equal(cancelled, 2);
 });
+
+test('probeStream reports the best variant height of a master playlist', async () => {
+  const fetchUpstream = fakeUpstream({
+    [S.url]: { status: 200, body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=700000,RESOLUTION=960x540\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080\nhigh.m3u8\n' },
+    'https://nuviosports.xyz/api/low.m3u8': { status: 200, body: '#EXTM3U\n#EXTINF:4,\nhttps://cdn.example/1.ts\n' },
+    'https://cdn.example/1.ts': { status: 200, body: [0x47] },
+  });
+  assert.deepEqual(await probeStream(S, { fetchUpstream }), { status: 'ok', detail: 'ts', height: 1080 });
+});
+
+test('createStreamHealth ranks working streams by height, then rank; probe height beats a lower label', async () => {
+  const probeResults = { a: { status: 'ok', height: 0 }, b: { status: 'ok', height: 1080 }, c: { status: 'ok', height: 0 }, d: { status: 'timeout' }, e: { status: 'ok', height: 0 } };
+  const health = createStreamHealth({ probe: async s => ({ ...probeResults[s.url], detail: 'x' }) });
+  const out = await health.rank([
+    { url: 'a', rank: 99, height: 480 },   // fast but SD
+    { url: 'b', rank: 10, height: 720 },   // labelled HD, master says 1080
+    { url: 'c', rank: 50, height: 720 },
+    { url: 'd', rank: 100, height: 1080 }, // best label but dead: stays after working ones
+    { url: 'e', rank: 60, height: 720 },
+  ]);
+  assert.deepEqual(out.map(s => [s.url, s.height, s.health]), [['b', 1080, 'ok'], ['e', 720, 'ok'], ['c', 720, 'ok'], ['a', 480, 'ok'], ['d', 1080, 'timeout']]);
+});

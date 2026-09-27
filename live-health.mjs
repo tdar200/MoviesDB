@@ -68,6 +68,15 @@ class ProbeResult extends Error {
   constructor(status, detail) { super(detail); this.result = { status, detail }; }
 }
 
+// Tallest RESOLUTION advertised by a master playlist (0 for a media playlist).
+export function maxVariantHeight(text) {
+  let max = 0;
+  const re = /#EXT-X-STREAM-INF:[^\n]*RESOLUTION=\d+x(\d+)/g;
+  let m;
+  while ((m = re.exec(String(text || '')))) max = Math.max(max, Number(m[1]));
+  return max;
+}
+
 export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
@@ -83,18 +92,20 @@ export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = 
     let url = stream.url;
     let text = await getPlaylist(url, 'playlist');
     let first = firstMediaUri(text);
+    const height = maxVariantHeight(text);
+    const ok = detail => (height ? { status: 'ok', detail, height } : { status: 'ok', detail });
     if (first && first.isVariant) {
       url = new URL(first.uri, url).href;
       text = await getPlaylist(url, 'variant');
       first = firstMediaUri(text);
     }
     if (!first) return { status: 'bad-playlist', detail: 'no media uri' };
-    if (/#EXT-X-MAP:/.test(text)) return { status: 'ok', detail: 'fmp4-map' };
+    if (/#EXT-X-MAP:/.test(text)) return ok('fmp4-map');
     const segUrl = new URL(first.uri, url).href;
     const seg = await fetchUpstream(segUrl, headers, ac.signal);
     if (!seg.ok) { discardBody(seg); return { status: 'http-error', detail: `segment ${seg.status}` }; }
     const kind = classifySegmentBytes(await readFirstBytes(seg));
-    if (kind === 'ts' || kind === 'fmp4' || kind === 'id3') return { status: 'ok', detail: kind };
+    if (kind === 'ts' || kind === 'fmp4' || kind === 'id3') return ok(kind);
     if (kind === 'wrapped') return { status: 'wrapped', detail: 'wrapped' };
     return { status: 'error', detail: `segment ${kind}` };
   } catch (err) {
@@ -110,14 +121,15 @@ export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = 
 const DROP = new Set(['wrapped', 'http-error', 'bad-playlist', 'blocked']);
 
 export function createStreamHealth({ probe, now = Date.now, ttlMs = 120000, concurrency = 16 } = {}) {
-  const cache = new Map(); // url -> { at, status }
+  const cache = new Map(); // url -> { at, status, height }
   async function statusOf(stream) {
     const hit = cache.get(stream.url);
-    if (hit && now() - hit.at < ttlMs) return hit.status;
-    let status;
-    try { status = (await probe(stream)).status; } catch { status = 'error'; }
-    cache.set(stream.url, { at: now(), status });
-    return status;
+    if (hit && now() - hit.at < ttlMs) return hit;
+    let result;
+    try { const r = await probe(stream); result = { status: r.status, height: r.height || 0 }; } catch { result = { status: 'error', height: 0 }; }
+    const entry = { at: now(), status: result.status, height: result.height };
+    cache.set(stream.url, entry);
+    return entry;
   }
   async function rank(streams) {
     const list = streams || [];
@@ -125,9 +137,12 @@ export function createStreamHealth({ probe, now = Date.now, ttlMs = 120000, conc
     let next = 0;
     const worker = async () => { while (next < list.length) { const i = next++; out[i] = await statusOf(list[i]); } };
     await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, worker));
-    const kept = list.map((s, i) => ({ ...s, health: out[i] })).filter(s => !DROP.has(s.health));
+    // Working streams first, then the sharpest (probe's master-playlist height
+    // wins over Nuvio's label), then Nuvio's speed rank.
+    const kept = list.map((s, i) => ({ ...s, health: out[i].status, height: Math.max(s.height || 0, out[i].height || 0) }))
+      .filter(s => !DROP.has(s.health));
     const group = h => (h === 'ok' ? 0 : 1);
-    return kept.sort((a, b) => group(a.health) - group(b.health) || (b.rank || 0) - (a.rank || 0));
+    return kept.sort((a, b) => group(a.health) - group(b.health) || (b.height || 0) - (a.height || 0) || (b.rank || 0) - (a.rank || 0));
   }
   return { rank };
 }

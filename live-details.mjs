@@ -73,7 +73,7 @@ export function createLiveDetails({ fetchStreams, onPlay, now = Date.now }) {
     // The helper already sorts ok-first; a client re-sort by rank must never lift
     // a timeout/error stream above an ok one.
     const healthKey = s => (s.health && s.health !== 'ok' ? 1 : 0);
-    renderStreams(match, streams.slice().sort((a, b) => healthKey(a) - healthKey(b) || (b.rank || 0) - (a.rank || 0)), t);
+    renderStreams(match, streams.slice().sort((a, b) => healthKey(a) - healthKey(b) || (b.height || 0) - (a.height || 0) || (b.rank || 0) - (a.rank || 0)), t);
   }
 
   async function open(match) {

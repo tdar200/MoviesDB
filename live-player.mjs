@@ -24,6 +24,9 @@ export const LIVE_HLS_CONFIG = {
       errorRetry: { maxNumRetry: 1, retryDelayMs: 500, maxRetryDelayMs: 1000 },
     },
   },
+  // Prefer quality: assume a fast link (LAN to the helper) so ABR does not start
+  // low and climb; it still steps down if segments arrive too slowly.
+  abrEwmaDefaultEstimate: 8_000_000,
   enableWorker: false, // webOS: keep it on the main thread
 };
 
@@ -83,7 +86,18 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
       hls = new Hls(LIVE_HLS_CONFIG);
       const details = Hls.ErrorDetails || {};
       const fragFailures = [details.FRAG_LOAD_ERROR || 'fragLoadError', details.FRAG_LOAD_TIMEOUT || 'fragLoadTimeOut'];
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { if (gen !== generation) return; setStatus(null); video.play().catch(() => {}); });
+      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        if (gen !== generation) return;
+        // Multi-quality stream: start at the highest level instead of the lowest.
+        const levels = (data && data.levels) || hls.levels || [];
+        if (levels.length > 1) {
+          let best = 0;
+          levels.forEach((l, i) => { if ((l.height || 0) * 1e9 + (l.bitrate || 0) > (levels[best].height || 0) * 1e9 + (levels[best].bitrate || 0)) best = i; });
+          hls.startLevel = best;
+        }
+        setStatus(null);
+        video.play().catch(() => {});
+      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data || gen !== generation) return;
         if (!data.fatal) {

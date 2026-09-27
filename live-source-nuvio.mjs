@@ -52,6 +52,21 @@ export function parseNuvioCatalog(json) {
   });
 }
 
+// Vertical resolution from Nuvio's quality hints: "1920x1080", "720p", "4K",
+// "FHD", "HD", "SD". 0 when unknown. Used to prefer the sharpest stream.
+export function qualityHeight(text) {
+  const s = String(text || '').toLowerCase();
+  let m = /(\d{3,4})\s*x\s*(\d{3,4})/.exec(s);
+  if (m) return Number(m[2]);
+  m = /(\d{3,4})\s*p\b/.exec(s);
+  if (m) return Number(m[1]);
+  if (/\b(4k|uhd|2160)\b/.test(s)) return 2160;
+  if (/\b(fhd|full\s*hd)\b/.test(s)) return 1080;
+  if (/\bhd\b/.test(s)) return 720;
+  if (/\bsd\b/.test(s)) return 480;
+  return 0;
+}
+
 export function parseNuvioStreams(json) {
   const list = (json && json.streams) || [];
   return list.map(s => {
@@ -76,6 +91,7 @@ export function parseNuvioStreams(json) {
       label: lines[0] || 'Stream',
       language: s.language || '',
       quality: s.resolution || (q ? q[1] : ''),
+      height: qualityHeight(s.resolution) || qualityHeight(q ? q[1] : '') || qualityHeight(lines.join(' ')),
       rank: Number.isFinite(Number(s.speedScore)) ? Number(s.speedScore) : (Number(s.score) || 0),
     };
   }).filter(s => /^https?:\/\//.test(s.url));
