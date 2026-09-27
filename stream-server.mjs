@@ -105,6 +105,19 @@ const liveSources = createSourceRegistry([createNuvioAdapter({ fetchImpl: resolv
 const liveChannels = createChannelFeed({ fetchImpl: resolvingFetch });
 const LIVE_JSON = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
 const liveJson = (res, status, body) => { res.writeHead(status, LIVE_JSON); res.end(JSON.stringify(body)); };
+// Feed modules call fetch with no signal; undici can wait ~300 s and the DNS-fallback
+// path has no timeout at all, so every feed call a route awaits gets a deadline here.
+// A polling TV must never pile up hung requests.
+const LIVE_FEED_DEADLINE_MS = 8000;
+const LIVE_CHANNELS_DEADLINE_MS = 20000; // first fetch probes ~60 channels, 8 at a time, 4 s each
+function withDeadline(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'LIVE_TIMEOUT', label })), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+const isLiveTimeout = err => err && err.code === 'LIVE_TIMEOUT';
 const localDate = (ms, dayOffset = 0) => { const d = new Date(ms + dayOffset * 86_400_000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 // Only https, only public hosts: `src` is fetched server-side, so block the
@@ -1019,17 +1032,17 @@ async function handleDebridProxy(req, res, url) {
 async function handleLiveFixtures(res, url) {
   const date = url.searchParams.get('date') || localDate(Date.now());
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return liveJson(res, 400, { error: 'date must be YYYY-MM-DD' });
-  try { liveJson(res, 200, { fixtures: await liveFixtures.fetchFixtures(date) }); }
-  catch (err) { liveJson(res, 502, { error: String(err.message || err) }); }
+  try { liveJson(res, 200, { fixtures: await withDeadline(liveFixtures.fetchFixtures(date), LIVE_FEED_DEADLINE_MS, `espn ${date}`) }); }
+  catch (err) { liveJson(res, isLiveTimeout(err) ? 504 : 502, { error: String(err.message || err) }); }
 }
 
 async function handleLiveMatches(res) {
   const now = Date.now();
   const status = { fixtures: 'ok', sources: {} };
-  const fixturesP = Promise.all([localDate(now), localDate(now, 1)].map(d => liveFixtures.fetchFixtures(d)))
+  const fixturesP = Promise.all([localDate(now), localDate(now, 1)].map(d => withDeadline(liveFixtures.fetchFixtures(d), LIVE_FEED_DEADLINE_MS, `espn ${d}`)))
     .then(lists => selectTodayFixtures(lists, now))
     .catch(err => { status.fixtures = 'error: ' + String(err.message || err); return []; });
-  const sourcesP = Promise.all(liveSources.list().map(a => a.listMatches()
+  const sourcesP = Promise.all(liveSources.list().map(a => withDeadline(a.listMatches(), LIVE_FEED_DEADLINE_MS, a.name)
     .then(list => { status.sources[a.name] = 'ok'; return list.map(m => ({ ...m, adapter: a.name })); })
     .catch(err => { status.sources[a.name] = 'error: ' + String(err.message || err); return []; })))
     .then(r => r.flat());
@@ -1044,17 +1057,23 @@ async function handleLiveStreams(res, url) {
   const id = url.searchParams.get('id') || '';
   if (!adapter || !id) return liveJson(res, 404, { error: 'unknown adapter or id' });
   try {
-    const streams = await adapter.streamsFor(id);
+    const streams = await withDeadline(adapter.streamsFor(id), LIVE_FEED_DEADLINE_MS, `${adapter.name} streams`);
     // The client never sees upstream URLs or headers; only signed relay paths.
     liveJson(res, 200, { streams: streams.sort((a, b) => (b.rank || 0) - (a.rank || 0)).map(s => ({
       label: s.label, language: s.language, quality: s.quality, rank: s.rank,
       play: relayPath('hls', { u: s.url, ref: s.referer, org: s.origin }, LIVE_SECRET),
     })) });
-  } catch (err) { liveJson(res, 502, { error: String(err.message || err) }); }
+  } catch (err) { liveJson(res, isLiveTimeout(err) ? 504 : 502, { error: String(err.message || err) }); }
 }
 
 async function handleLiveChannels(res) {
-  const { channels, stale, fetchedAt } = await liveChannels.fetchChannels();
+  let feed;
+  try { feed = await withDeadline(liveChannels.fetchChannels(), LIVE_CHANNELS_DEADLINE_MS, 'channels'); }
+  catch (err) {
+    console.log(`[live] channels ${isLiveTimeout(err) ? 'timeout' : 'error: ' + String(err.message || err)}`);
+    return liveJson(res, 200, { channels: [], stale: true, fetchedAt: null, error: isLiveTimeout(err) ? 'timeout' : String(err.message || err) });
+  }
+  const { channels, stale, fetchedAt } = feed;
   console.log(`[live] channels=${channels.length} stale=${stale}`);
   liveJson(res, 200, { channels: channels.map(c => ({ id: c.id, name: c.name, logo: c.logo, play: relayPath('hls', { u: c.url, ref: '', org: '' }, LIVE_SECRET) })), stale, fetchedAt });
 }
@@ -1066,20 +1085,61 @@ function liveRelayParams(url) {
   return p;
 }
 
+// Redirect hops are checked separately from the signed start URL: a CDN we do not
+// control could 302 a signed public URL to a LAN address. Public targets are always
+// fine; with LIVE_RELAY_ALLOW_PRIVATE (integration test only) loopback 127/8 is also
+// allowed, but RFC1918, link-local and CGNAT targets are refused even then.
+function liveRedirectTargetAllowed(raw) {
+  if (isPublicHttpUrl(raw)) return true;
+  if (!LIVE_ALLOW_PRIVATE) return false;
+  try {
+    const u = new URL(raw);
+    return (u.protocol === 'http:' || u.protocol === 'https:') && /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(u.hostname);
+  } catch { return false; }
+}
+
+const LIVE_MAX_REDIRECTS = 5;
+const liveRelayError = (status, message) => Object.assign(new Error(message), { status });
+
+// Fetch an upstream with manual redirects, re-checking every hop against the guard.
+// Resolves { upstream, finalUrl }; rejects with err.status 403 (disallowed hop) or
+// 502 (too many hops, unusable redirect, network error).
+async function fetchUpstreamGuarded(startUrl, headers, signal) {
+  let current = startUrl;
+  for (let hop = 0; ; hop++) {
+    const upstream = await resolvingFetch(current, { headers, redirect: 'manual', signal });
+    if (upstream.status < 300 || upstream.status >= 400) return { upstream, finalUrl: current };
+    try { const c = upstream.body && upstream.body.cancel && upstream.body.cancel(); if (c && c.catch) c.catch(() => {}); } catch { /* already closed */ }
+    // The DNS-fallback response carries no headers, so its redirect cannot be checked.
+    if (!(upstream.headers && upstream.headers.get)) throw liveRelayError(502, `upstream ${upstream.status} redirect without headers`);
+    const location = upstream.headers.get('location');
+    if (!location) throw liveRelayError(502, `upstream ${upstream.status} without location`);
+    if (hop >= LIVE_MAX_REDIRECTS) throw liveRelayError(502, 'too many redirects');
+    let next;
+    try { next = new URL(location, current).href; } catch { throw liveRelayError(502, 'bad redirect location'); }
+    if (!liveRedirectTargetAllowed(next)) throw liveRelayError(403, 'redirect to disallowed target');
+    current = next;
+  }
+}
+
 async function handleLiveHls(req, res, url) {
   const p = liveRelayParams(url);
   if (p.error) { console.log(`[live] 403 ${p.error}`); return liveJson(res, 403, { error: p.error }); }
   const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 8000);
-  let upstream;
-  try { upstream = await resolvingFetch(p.u, { headers: upstreamHeaders(p.ref, p.org), redirect: 'follow', signal: ac.signal }); }
-  catch (err) { clearTimeout(t); return liveJson(res, 502, { error: String(err.message || err) }); }
-  clearTimeout(t);
-  if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(JSON.stringify({ error: `upstream ${upstream.status}` })); }
-  const text = await upstream.text();
-  const body = rewritePlaylist(text, { playlistUrl: upstream.url || p.u, relayBase: '', ref: p.ref, org: p.org, secret: LIVE_SECRET, key: url.searchParams.get('key') || '' });
-  res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
-  res.end(body);
+  const t = setTimeout(() => ac.abort(), 8000); // bounds the redirect chain AND the body read
+  try {
+    const { upstream, finalUrl } = await fetchUpstreamGuarded(p.u, upstreamHeaders(p.ref, p.org), ac.signal);
+    if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(JSON.stringify({ error: `upstream ${upstream.status}` })); }
+    const text = await upstream.text();
+    const body = rewritePlaylist(text, { playlistUrl: finalUrl, relayBase: '', ref: p.ref, org: p.org, secret: LIVE_SECRET, key: url.searchParams.get('key') || '' });
+    res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    res.end(body);
+  } catch (err) {
+    if (err.status === 403) console.log(`[live] 403 ${err.message}`);
+    if (!res.headersSent) liveJson(res, err.status || 502, { error: String(err.message || err) });
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 async function handleLiveSeg(req, res, url) {
@@ -1088,8 +1148,12 @@ async function handleLiveSeg(req, res, url) {
   const ac = new AbortController();
   req.on('close', () => ac.abort());
   let upstream;
-  try { upstream = await resolvingFetch(p.u, { headers: upstreamHeaders(p.ref, p.org), redirect: 'follow', signal: ac.signal }); }
-  catch (err) { if (!res.headersSent) liveJson(res, 502, { error: String(err.message || err) }); return; }
+  try { ({ upstream } = await fetchUpstreamGuarded(p.u, upstreamHeaders(p.ref, p.org), ac.signal)); }
+  catch (err) {
+    if (err.status === 403) console.log(`[live] 403 ${err.message}`);
+    if (!res.headersSent) liveJson(res, err.status || 502, { error: String(err.message || err) });
+    return;
+  }
   if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(); }
   const headers = { 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'content-type': (upstream.headers && upstream.headers.get && upstream.headers.get('content-type')) || 'video/mp2t' };
   const len = upstream.headers && upstream.headers.get && upstream.headers.get('content-length');

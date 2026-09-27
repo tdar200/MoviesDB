@@ -19,6 +19,10 @@ function originServer(dir) {
   return http.createServer(async (req, res) => {
     if (req.headers.referer !== REF || req.headers.origin !== ORG) { res.writeHead(403); return res.end('forbidden'); }
     const name = decodeURIComponent(new URL(req.url, 'http://x').pathname.slice(1));
+    // Redirect routes exercise the relay's per-hop guard.
+    if (name === 'redirect-private') { res.writeHead(302, { location: 'http://10.1.2.3/x' }); return res.end(); }
+    if (name === 'redirect-loopback') { res.writeHead(302, { location: '/index.m3u8' }); return res.end(); }
+    if (name === 'redirect-loop') { res.writeHead(302, { location: '/redirect-loop' }); return res.end(); }
     try {
       const body = await readFile(join(dir, name));
       res.writeHead(200, { 'content-type': name.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t', 'content-length': body.length });
@@ -69,6 +73,19 @@ test('relay: rewritten playlist plays through the helper with Referer+Origin add
     // Tampered signature and missing key are both refused.
     assert.equal((await fetch(`http://127.0.0.1:${PORT}/live/hls?${new URLSearchParams({ u, s: s.replace(/^./, c => c === 'a' ? 'b' : 'a'), ref: REF, org: ORG, key: KEY })}`)).status, 403);
     assert.equal((await fetch(`http://127.0.0.1:${PORT}/live/hls?${new URLSearchParams({ u, s, ref: REF, org: ORG })}`)).status, 401);
+    // Redirects: every hop is re-checked. RFC1918 is refused even with LIVE_RELAY_ALLOW_PRIVATE,
+    // loopback is followed (test escape hatch), and an endless chain stops at 5 hops.
+    const relayUrl = target => {
+      const tu = `http://127.0.0.1:${originPort}/${target}`;
+      return `http://127.0.0.1:${PORT}/live/hls?${new URLSearchParams({ u: tu, s: signUpstream({ u: tu, ref: REF, org: ORG }, KEY), ref: REF, org: ORG, key: KEY })}`;
+    };
+    const priv = await fetch(relayUrl('redirect-private'));
+    assert.equal(priv.status, 403);
+    assert.equal((await priv.json()).error, 'redirect to disallowed target');
+    const viaLoopback = await fetch(relayUrl('redirect-loopback'));
+    assert.equal(viaLoopback.status, 200);
+    assert.match(await viaLoopback.text(), /\/live\/seg\?u=/);
+    assert.equal((await fetch(relayUrl('redirect-loop'))).status, 502);
     // Preflight.
     const pre = await fetch(`http://127.0.0.1:${PORT}/live/seg?x=1`, { method: 'OPTIONS' });
     assert.equal(pre.status, 204);
