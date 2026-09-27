@@ -4,6 +4,12 @@ const timeText = value => {
   const seconds = Math.max(0, Math.floor(value || 0));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 };
+// What the HUD shows in live mode: no progress bar, no seek, a LIVE label.
+export function liveHudState(live) {
+  return live
+    ? { showProgress: false, showSeekButtons: false, timeText: 'LIVE', help: 'OK Play / pause · Back Return' }
+    : { showProgress: true, showSeekButtons: true, timeText: null, help: '← → Seek · OK Play / pause · Back Return' };
+}
 export function createTvPlayer(modal, video, playButton) {
   video.controls = false;
   installTvSubtitles(modal, video);
@@ -16,9 +22,9 @@ export function createTvPlayer(modal, video, playButton) {
     const button = document.createElement('button'); button.id = id; button.type = 'button'; button.textContent = text; button.onclick = click; actions.append(button); return button;
   };
   const seek = delta => document.dispatchEvent(new CustomEvent('tv-seek', { detail: delta }));
-  add('tv-rewind', '↶ 10 seconds', () => seek(-10));
+  const rewind = add('tv-rewind', '↶ 10 seconds', () => seek(-10));
   actions.append(playButton);
-  add('tv-forward', '30 seconds ↷', () => seek(30));
+  const forward = add('tv-forward', '30 seconds ↷', () => seek(30));
   const settings = add('tv-player-settings', 'Audio, subtitles & episodes', () => {
     modal.classList.add('tv-settings-open');
     reveal();
@@ -54,7 +60,18 @@ export function createTvPlayer(modal, video, playButton) {
       if (modal.contains(document.activeElement)) document.activeElement.blur();
     }, 4500);
   }
+  const isLive = () => modal.dataset.live === '1';
+  function applyLiveHud() {
+    const s = liveHudState(isLive());
+    progress.style.display = s.showProgress ? '' : 'none';
+    rewind.style.display = s.showSeekButtons ? '' : 'none';
+    forward.style.display = s.showSeekButtons ? '' : 'none';
+    hud.querySelector('.tv-player-help').textContent = s.help;
+    if (s.timeText) hud.querySelector('.tv-player-time').textContent = s.timeText;
+    modal.classList.toggle('tv-live', isLive());
+  }
   const update = () => {
+    applyLiveHud();
     modal.classList.toggle('tv-native-player', video.style.display !== 'none');
     modal.classList.toggle('tv-embed-player', video.style.display === 'none');
     hud.querySelector('#tv-now-playing').textContent = document.getElementById('player-title').textContent;
@@ -62,7 +79,7 @@ export function createTvPlayer(modal, video, playButton) {
     next.disabled = document.getElementById('next-episode').disabled;
     if (!isOpen()) { clearTimeout(timer); modal.classList.remove('tv-settings-open', 'tv-hud-hidden'); }
   };
-  new MutationObserver(update).observe(modal, { attributes: true, attributeFilter: ['style'] });
+  new MutationObserver(update).observe(modal, { attributes: true, attributeFilter: ['style', 'data-live'] });
   new MutationObserver(update).observe(video, { attributes: true, attributeFilter: ['style'] });
   new MutationObserver(update).observe(document.getElementById('player-title'), { childList: true });
   new MutationObserver(update).observe(document.getElementById('next-episode'), { attributes: true, attributeFilter: ['disabled'] });
@@ -72,6 +89,7 @@ export function createTvPlayer(modal, video, playButton) {
   modal.addEventListener('mousemove', () => { if (isOpen()) reveal(); });
   modal.addEventListener('click', () => { if (isOpen()) reveal(); });
   document.addEventListener('tv-playback-time', event => {
+    if (isLive()) return;
     ({ position, duration } = event.detail);
     const percent = duration ? Math.min(100, position / duration * 100) : 0;
     progress.querySelector('span').style.width = `${percent}%`;
@@ -88,6 +106,7 @@ export function createTvPlayer(modal, video, playButton) {
         modal.classList.remove('tv-settings-open'); reveal(); settings.focus(); return true;
       }
       if (back) return false;
+      if (isLive() && ([412, 417].includes(event.keyCode) || ['MediaRewind', 'MediaFastForward', 'ArrowLeft', 'ArrowRight'].includes(key))) { reveal(); playButton.focus(); return true; }
       if ([412,417].includes(event.keyCode) || ['MediaRewind','MediaFastForward'].includes(key)) { seek(event.keyCode === 412 || key === 'MediaRewind' ? -10 : 30); reveal(); progress.focus(); return true; }
       if (modal.classList.contains('tv-settings-open')) return false;
       const hidden = modal.classList.contains('tv-hud-hidden');

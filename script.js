@@ -15,6 +15,7 @@ import { IMDB_TOP_250 } from './imdb-top250.js';
 import { EMMY_WINNERS } from './emmy-winners.js';
 import { buildLiveRows, restoreFocusById } from './live-home.mjs';
 import { createLiveDetails } from './live-details.mjs';
+import { createLivePlayer } from './live-player.mjs';
 
 // App state - which tab is active
 let currentApp = 'movies'; // 'movies' or 'youtube'
@@ -2637,6 +2638,7 @@ function handleEpisodeChange(episodeNum) {
 async function openPlayer(movie, target = null) {
   // Begin engagement capture for this title. Watched status is NOT set on open — it is
   // committed later by flushDwell() once enough active watch-tab time has accrued.
+  livePlayer.stop(); // an on-demand title replaces any live stream that did not close cleanly
   flushDwell(); // flush any prior session that didn't close cleanly (may mark it watched)
   dwellTitleId = movie.id;
   dwellMovie = movie;
@@ -2862,6 +2864,8 @@ async function openPlayer(movie, target = null) {
 
 // Close video player modal
 function closePlayer() {
+  livePlayer.stop();
+  delete playerModal.dataset.live;
   savePlaybackPosition(); // capture the final position before we tear the player down
   playerModalOpen = false;
   const recommendationsChanged = flushDwell();
@@ -3963,8 +3967,24 @@ const liveDetails = createLiveDetails({
   fetchStreams: fetchStreamsForMatch,
   onPlay: (match, streams, index) => { liveDetails.close(); openLivePlayer({ title: match.title, streams, startIndex: index, refresh: () => fetchStreamsForMatch(match) }); },
 });
-// Temporary until Task 12 (the live player) replaces it.
-function openLivePlayer(session) { console.log('[live] play', session.title, session.streams.length); }
+const livePlayer = createLivePlayer({
+  video: playerVideo, modal: playerModal, helperUrl,
+  setStatus: (msg, isError) => setYtsStatus(msg, !!isError),
+});
+function openLivePlayer(session) {
+  stopYtsStream();
+  currentPlayingMovie = null;
+  currentTvData = null;
+  showPlayerVideo(true);
+  if (qualitySelect) qualitySelect.style.display = 'none';
+  if (subtitleSelect) subtitleSelect.style.display = 'none';
+  playerTitle.textContent = session.title || 'Live';
+  playerModal.dataset.live = '1';
+  playerModal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  playerModalOpen = true;
+  livePlayer.play(session);
+}
 
 // A card opens details first; the hero's Play button still plays immediately.
 function openDetails(movie) {
@@ -5354,17 +5374,20 @@ tabRecommended?.addEventListener('click', switchToRecommended);
 if (importedTitleCount !== null) switchToFavorites();
 
 document.addEventListener('tv-seek', event => {
+  if (livePlayer.isActive()) return;
   const delta = Number(event.detail) || 0;
   if (tvPlayCtx && (TV_HLS || tvPlayCtx.src?.remux)) torrentSeekBy(delta);
   else if (Number.isFinite(playerVideo.duration)) playerVideo.currentTime = Math.max(0, Math.min(playerVideo.duration, playerVideo.currentTime + delta));
 });
 document.addEventListener('tv-seek-to', event => {
+  if (livePlayer.isActive()) return;
   const fraction = Math.max(0, Math.min(1, Number(event.detail) || 0));
   if (tvPlayCtx && (TV_HLS || tvPlayCtx.src?.remux)) torrentSeekTo(fraction * torrentDuration);
   else if (Number.isFinite(playerVideo.duration)) playerVideo.currentTime = fraction * playerVideo.duration;
 });
 function publishTvPlaybackTime() {
   if (!TV_MODE || !playerVideo) return;
+  if (livePlayer.isActive()) return;
   document.dispatchEvent(new CustomEvent('tv-playback-time', { detail: {
     position: torrentSeekBase + (playerVideo.currentTime || 0),
     duration: torrentDuration || (Number.isFinite(playerVideo.duration) ? playerVideo.duration : 0),
@@ -5374,6 +5397,7 @@ playerVideo?.addEventListener('timeupdate', publishTvPlaybackTime);
 playerVideo?.addEventListener('durationchange', publishTvPlaybackTime);
 
 document.addEventListener('tv-retry-playback', () => {
+  if (livePlayer.isActive()) { livePlayer.retry(); return; }
   if (!currentPlayingMovie) return;
   if (EMBED_SOURCES[currentSourceIndex]?.tvOnly) loadTvStream(currentPlayingMovie, currentSeason, currentEpisode);
   else if (EMBED_SOURCES[currentSourceIndex]?.torrent) loadYtsStream(currentPlayingMovie);
