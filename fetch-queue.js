@@ -17,6 +17,9 @@ export function createFetchQueue({
   storage,
   delayImpl = defaultDelay,
   now = Date.now,
+  // A black-holed connection must not hold a concurrency slot forever (every later
+  // call would queue behind it and the UI spinner would never end).
+  timeoutMs = 15000,
 } = {}) {
   const inFlight = new Map();   // url -> Promise<json> (de-dup identical pending URLs)
   const waiters = [];           // queued runners awaiting a concurrency slot
@@ -93,12 +96,29 @@ export function createFetchQueue({
     return slot > t ? delayImpl(slot - t) : null;
   }
 
+  // Races the request against a deadline (and aborts it), so even a fetchImpl that
+  // ignores the signal cannot pin the slot.
+  function fetchWithDeadline(url) {
+    if (!timeoutMs) return fetchImpl(url);
+    const controller = typeof AbortController === 'undefined' ? null : new AbortController();
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`fetch timed out after ${timeoutMs} ms for ${url}`));
+        if (controller) controller.abort();
+      }, timeoutMs);
+      if (timer && timer.unref) timer.unref();
+    });
+    const request = controller ? fetchImpl(url, { signal: controller.signal }) : fetchImpl(url);
+    return Promise.race([request, deadline]).finally(() => clearTimeout(timer));
+  }
+
   async function doFetch(url) {
     let attempt = 0;
     for (;;) {
       const gapWait = reserveStart();
       if (gapWait) await gapWait;
-      const res = await fetchImpl(url);
+      const res = await fetchWithDeadline(url);
       if (res.ok) return res.json();
 
       if (res.status === 429 && attempt < MAX_RETRIES) {

@@ -173,3 +173,13 @@ test('orderRowItems leaves rows flagged noSort in their given order', () => {
   assert.deepEqual(orderRowItems({ key: 'today', noSort: true, items }).map(i => i.id), [1, 2]);
   assert.deepEqual(orderRowItems({ key: 'today', items }).map(i => i.id), [2, 1]);
 });
+
+test('All tab carries documentaries: films and series', () => {
+  const defs = catalogRowDefs('KEY', 'https://api.themoviedb.org/3', 'all');
+  const films = defs.find(d => d.key === 'g99');
+  const series = defs.find(d => d.key === 'tvg99');
+  assert.ok(films && /discover\/movie.*with_genres=99/.test(films.url));
+  assert.ok(series && /discover\/tv.*with_genres=99/.test(series.url));
+  assert.equal(series.mediaType, 'tv');
+  assert.equal(series.title, 'Documentary Series');
+});

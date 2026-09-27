@@ -244,3 +244,4 @@ body.tv-mode { background: #22254b; }
 .tv-card-channel .tv-card-title { font-size: 18px; margin-top: 3px; }
 .tv-card-channel .tv-card-overview { min-height: 0; -webkit-line-clamp: 1; font-size: 14px; margin-top: 4px; }
 .tv-card-channel .tv-card-footer { display: none; }
+.tv-episode-empty { font-size: 20px; color: #bbb; padding: 16px 0; }

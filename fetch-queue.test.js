@@ -26,7 +26,7 @@ function jsonResponse(body, { ok = true, status = 200, headers = {} } = {}) {
 }
 
 // Resolve a promise after letting the microtask queue drain `ticks` times.
-async function flush(ticks = 5) {
+async function flush(ticks = 20) {
   for (let i = 0; i < ticks; i++) await Promise.resolve();
 }
 
@@ -279,4 +279,13 @@ test('minGapMs omitted: behavior unchanged, no spacing delays injected', async (
   const q = createFetchQueue({ fetchImpl, storage, delayImpl: async (ms) => { delays.push(ms); }, now: () => NOW });
   await Promise.all([q.fetchJson('https://api/ng/1'), q.fetchJson('https://api/ng/2')]);
   assert.deepEqual(delays, [], 'no gap -> no delay calls');
+});
+
+test('a hung request times out and frees its slot for the next one', async () => {
+  const fetchImpl = (url, opts = {}) => url.includes('hang')
+    ? new Promise((_, reject) => opts.signal?.addEventListener('abort', () => reject(new Error('aborted'))))
+    : Promise.resolve(jsonResponse({ ok: 1 }));
+  const q = createFetchQueue({ fetchImpl, maxInflight: 1, timeoutMs: 30, delayImpl: async () => {}, now: () => NOW });
+  await assert.rejects(q.fetchJson('https://api/hang'), /timed out/);
+  assert.deepEqual(await q.fetchJson('https://api/fine'), { ok: 1 });
 });

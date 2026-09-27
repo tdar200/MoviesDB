@@ -127,9 +127,10 @@ export function createCatalogFeed({ entries, probe, now = Date.now, ttlMs = 30 *
 // Some platform channels store a URL template instead of a fixed URL:
 //   {channelId}  the part after "<platform>:" in the entry id
 //   {plexToken}  a free anonymous Plex token the helper mints
-// Anything else (e.g. Pluto's per-viewer session parameters) cannot be filled
-// here and the entry is left out.
-export function resolveTemplates(entries, { plexToken = '' } = {}) {
+//   {stitcherParams} / {sessionToken}  a Pluto session from its public start
+//                endpoint (no account), minted by the helper about daily
+// Anything else cannot be filled here and the entry is left out.
+export function resolveTemplates(entries, { plexToken = '', plutoSession = null } = {}) {
   const out = [];
   for (const e of entries || []) {
     if (!e.urlTemplate) { out.push(e); continue; }
@@ -138,6 +139,12 @@ export function resolveTemplates(entries, { plexToken = '' } = {}) {
     if (url.includes('{plexToken}')) {
       if (!plexToken) continue;
       url = url.split('{plexToken}').join(encodeURIComponent(plexToken));
+    }
+    if (url.includes('{stitcherParams}') || url.includes('{sessionToken}')) {
+      if (!plutoSession || !plutoSession.stitcherParams || !plutoSession.sessionToken) continue;
+      // stitcherParams is already a query string; the token goes in as one value.
+      url = url.split('{stitcherParams}').join(plutoSession.stitcherParams)
+        .split('{sessionToken}').join(encodeURIComponent(plutoSession.sessionToken));
     }
     if (/\{[A-Za-z]+\}/.test(url)) continue;
     const { urlTemplate, ...rest } = e;

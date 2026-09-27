@@ -36,7 +36,7 @@ export function matchToCard(m, nowMs) {
 }
 
 export function channelToCard(c) {
-  return { id: `ch:${c.id}`, title: c.name, image_url: c.logo || null, kind: 'channel', vote_average: 0, live: { state: 'channel', height: c.height || 0 }, raw: c };
+  return { id: `ch:${c.id}`, title: c.name, image_url: c.logo || null, kind: 'channel', vote_average: 0, live: { state: 'channel', height: c.height || 0, category: c.category || null }, raw: c };
 }
 
 const RECENT_POST_MS = 2 * 3_600_000 + 130 * 60_000; // finished within the last ~2 h
@@ -68,7 +68,7 @@ export function buildLiveRows(matches, channels, nowMs) {
   const rows = [];
   for (const sport of ['football', 'cricket']) rows.push({ key: `live-${sport}`, title: `${SPORT_LABEL[sport]} · Live now`, items: live[sport].slice(0, MATCH_ROW_CAP), noSort: true });
   for (const sport of ['football', 'cricket']) rows.push({ key: `today-${sport}`, title: `${SPORT_LABEL[sport]} · Today`, items: today[sport].slice(0, MATCH_ROW_CAP), noSort: true });
-  rows.push({ key: 'channels', title: 'Sports channels', items: (channels || []).map(channelToCard), noSort: true });
+  rows.push({ key: 'channels', title: 'Sports channels', items: (channels || []).map(c => channelToCard({ category: 'Sports', ...c })), noSort: true });
   return rows.filter(r => r.items.length);
 }
 

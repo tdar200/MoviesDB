@@ -182,6 +182,24 @@ export function installTvRemote() {
   detailsOverlays().forEach(o => detailsObserver.observe(o, { attributes: true, attributeFilter: ['hidden'] }));
   let modalWasOpen = false;
   const modalOpen = () => visible(modal);
+  let cardWait = null;
+  const awaitCard = (id, rowTitle, parkedOn) => {
+    if (cardWait) cardWait.stop();
+    const main = document.getElementById('main');
+    const find = () => {
+      const cards = Array.from(main.querySelectorAll('.tv-card')).filter(c => c.dataset.movieId === id);
+      return cards.find(c => c.closest('[data-tv-row]')?.dataset.tvRow === rowTitle) || cards[0] || null;
+    };
+    const observer = new MutationObserver(() => {
+      if (document.activeElement !== parkedOn || modalOpen() || detailsOpen()) { stop(); return; }
+      const card = find();
+      if (card && visible(card)) { stop(); focus(card); }
+    });
+    const timer = setTimeout(() => stop(), 10000);
+    function stop() { observer.disconnect(); clearTimeout(timer); if (cardWait && cardWait.stop === stop) cardWait = null; }
+    cardWait = { stop };
+    observer.observe(main, { childList: true, subtree: true });
+  };
   // Netflix-style anchored rail: the focused card holds a fixed left gutter and the
   // whole track glides under it (CSS transitions the transform). Clamped so it never
   // scrolls past the first or last card.
@@ -193,11 +211,24 @@ export function installTvRemote() {
     const tx = parseFloat(track.dataset.tx || '0');
     const railRect = rail.getBoundingClientRect();
     const cardRect = card.getBoundingClientRect();
+    // While the track is still gliding (CSS transition) the card's rect is at the
+    // ANIMATED offset, not at the target tx. Measuring from it on rapid presses
+    // over- or under-shot and left the focused card clipped at the rail edge.
+    // Re-base the card onto the target transform before computing the move.
+    const shown = getComputedStyle(track).transform;
+    const shownTx = shown && shown !== 'none' ? parseFloat(shown.split(',')[4]) || 0 : 0;
+    const left = cardRect.left - shownTx + tx;
+    const right = cardRect.right - shownTx + tx;
     let delta = 0;
-    if (cardRect.left < railRect.left + gutter) delta = (railRect.left + gutter) - cardRect.left;
-    else if (cardRect.right > railRect.right - gutter) delta = (railRect.right - gutter) - cardRect.right;
+    if (left < railRect.left + gutter) delta = (railRect.left + gutter) - left;
+    else if (right > railRect.right - gutter) delta = (railRect.right - gutter) - right;
     let next = tx + delta;
-    const min = Math.min(0, rail.clientWidth - track.scrollWidth);
+    // Clamp so the LAST card stops at the gutter. clientWidth - scrollWidth ignored
+    // the rail's padding and the trailing card margin, so the end of every row left
+    // the focused last card clipped ~12 px by the rail edge.
+    const last = track.lastElementChild;
+    const lastRight = last ? last.getBoundingClientRect().right - shownTx + tx : railRect.right;
+    const min = Math.min(0, tx + (railRect.right - gutter) - lastRight);
     if (next > 0) next = 0;
     if (next < min) next = min;
     track.dataset.tx = String(next);
@@ -288,7 +319,19 @@ export function installTvRemote() {
       const row = Array.from(document.querySelectorAll('[data-tv-row]')).find(r => r.dataset.tvRow === previousRow);
       const matchingCard = scope => Array.from(scope.querySelectorAll('.tv-card')).find(c => c.dataset.movieId === previousMovieId);
       const replacement = previousMovieId && ((row && matchingCard(row)) || matchingCard(document));
-      focus(previousFocus?.isConnected && visible(previousFocus) ? previousFocus : replacement || homeAnchor());
+      // The home repaints when playback records history, replacing the hero. Its
+      // Play / More info buttons carry no title id, so match the new hero control
+      // by role rather than dropping the viewer back to the top nav.
+      const heroControl = !replacement && previousFocus && !previousFocus.isConnected && previousFocus.classList
+        ? ['tv-play', 'tv-more-info'].filter(cls => previousFocus.classList.contains(cls)).map(cls => document.querySelector('#main .' + cls)).find(node => node && visible(node))
+        : null;
+      const target = previousFocus?.isConnected && visible(previousFocus) ? previousFocus : replacement || heroControl || null;
+      focus(target || homeAnchor());
+      // Closing the player records the watch and repaints the home, which paints
+      // its catalogue rows asynchronously: the card the viewer came from may not
+      // exist yet. Park on the nav, then move onto the card once its row arrives,
+      // unless the viewer has already moved on (bounded wait).
+      if (!target && previousMovieId) awaitCard(previousMovieId, previousRow, homeAnchor());
     }
   }).observe(modal, { attributes: true, attributeFilter: ['style'] });
   document.querySelectorAll('.app-tabs button').forEach(button => button.addEventListener('click', () => {

@@ -151,3 +151,31 @@ export function sortMatches(list) {
     return Date.parse(a.kickoff || '') - Date.parse(b.kickoff || '');
   });
 }
+
+// Stream lists from several adapters arrive at very different speeds (Highfly
+// ~1 s, Nuvio up to ~25 s at peak). Once any adapter has streams, wait at most
+// graceMs for the rest, then answer with what has arrived, in adapter order.
+// Failed adapters count as empty. With nothing yet, keep waiting for all.
+export function gatherEarly(tasks, { graceMs = 3000 } = {}) {
+  return new Promise(resolve => {
+    const results = tasks.map(() => null);
+    let pending = tasks.length;
+    let timer = null;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(results.filter(Boolean).flat());
+    };
+    if (!pending) { finish(); return; }
+    tasks.forEach((task, i) => {
+      Promise.resolve(task).then(list => list || [], () => []).then(list => {
+        results[i] = list;
+        pending--;
+        if (!pending) { finish(); return; }
+        if (list.length && !timer && Number.isFinite(graceMs)) timer = setTimeout(finish, graceMs);
+      });
+    });
+  });
+}

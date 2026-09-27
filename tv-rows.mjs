@@ -65,7 +65,7 @@ export function catalogRowDefs(apiKey, base = TMDB_BASE, kind = 'all') {
       { key: 'tv_popular', title: 'Popular Shows', url: `${base}/tv/popular?${q}&page=1`, mediaType: 'tv' },
       { key: 'tv_top', title: 'Top Rated Shows', url: `${base}/tv/top_rated?${q}&page=1`, mediaType: 'tv' },
     );
-    [[18, 'Drama Series'], [35, 'Comedy Series'], [80, 'Crime Series'], [10765, 'Sci-Fi & Fantasy Series']].forEach(([id, name]) =>
+    [[18, 'Drama Series'], [35, 'Comedy Series'], [80, 'Crime Series'], [10765, 'Sci-Fi & Fantasy Series'], [99, 'Documentary Series']].forEach(([id, name]) =>
       rows.push({ key: `tvg${id}`, title: name, url: `${base}/discover/tv?${q}&sort_by=popularity.desc&vote_count.gte=200&with_genres=${id}&page=1`, mediaType: 'tv' }));
   }
   // Award/prestige rows (curated lists — film awards). Skipped under the TV tab

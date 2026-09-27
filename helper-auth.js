@@ -11,10 +11,17 @@
 // helperRequestAllowed() once per request.
 
 // Paths that touch torrents or their files. Everything else is the static app.
-export const HELPER_API_PATHS = ['/yts', '/movie-torrents', '/tv-torrents', '/subtitles', '/subtitle', '/stream', '/stream-status', '/stream-stop'];
+export const HELPER_API_PATHS = ['/yts', '/movie-torrents', '/tv-torrents', '/subtitles', '/subtitle', '/stream', '/stream-status', '/stream-stop', '/debrid-proxy', '/transcode', '/lan-info'];
 
 export function isHelperApiPath(pathname) {
   return HELPER_API_PATHS.includes(pathname) || pathname.startsWith('/hls/') || pathname.startsWith('/live/');
+}
+
+// Dot-files and dot-directories (.env*, .git, .vercel, .claude) are never part
+// of the app, but the helper serves the repo folder over the public Funnel, so
+// they must be refused outright.
+export function isPrivateStaticPath(pathname) {
+  return String(pathname).split(/[/\\]/).some(seg => seg.startsWith('.'));
 }
 
 // True when the request may proceed. With no key configured the helper is open

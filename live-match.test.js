@@ -154,3 +154,22 @@ test('joinFixtures tags sports and never joins a cricket source to a football fi
   const legacy = source('n1', 'X', 'Y', '2026-09-27T15:00:00Z');
   assert.equal(joinFixtures([], [legacy], { now })[0].sport, 'football', 'untagged sources are football');
 });
+
+test('gatherEarly returns the fast adapter\'s streams without waiting for a slow one', async () => {
+  const { gatherEarly } = await import('./live-match.mjs');
+  const never = new Promise(() => {});
+  const fast = Promise.resolve([{ play: '/a' }]);
+  const t0 = Date.now();
+  const got = await gatherEarly([fast, never], { graceMs: 30 });
+  assert.deepEqual(got, [{ play: '/a' }]);
+  assert.ok(Date.now() - t0 < 1000);
+});
+
+test('gatherEarly keeps source order and waits for everything when nothing has streams yet', async () => {
+  const { gatherEarly } = await import('./live-match.mjs');
+  const slowFirst = new Promise(r => setTimeout(() => r([{ play: '/hf' }]), 20));
+  const fastSecond = Promise.resolve([{ play: '/nv' }]);
+  assert.deepEqual(await gatherEarly([slowFirst, fastSecond], { graceMs: 200 }), [{ play: '/hf' }, { play: '/nv' }]);
+  assert.deepEqual(await gatherEarly([Promise.resolve([]), Promise.reject(new Error('x'))], { graceMs: 10 }), []);
+  assert.deepEqual(await gatherEarly([Promise.resolve([]), new Promise(r => setTimeout(() => r([{ play: '/late' }]), 30))], { graceMs: 10 }), [{ play: '/late' }]);
+});

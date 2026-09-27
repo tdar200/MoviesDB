@@ -14,6 +14,7 @@ import { dedupeTrackLabels } from './subtitles.js';
 import { IMDB_TOP_250 } from './imdb-top250.js';
 import { EMMY_WINNERS } from './emmy-winners.js';
 import { buildLiveRows, restoreFocusById, findCurrentMatch, channelToCard } from './live-home.mjs';
+import { gatherEarly } from './live-match.mjs';
 import { createLiveDetails } from './live-details.mjs';
 import { createLivePlayer } from './live-player.mjs';
 
@@ -1034,6 +1035,11 @@ async function fetchByActor(actorId, mediaType = 'all') {
   return movies;
 }
 
+// TMDB names are user-edited data; never let them become markup.
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
 // Display actor suggestions
 function displayActorSuggestions(actors) {
   if (actors.length === 0) {
@@ -1043,11 +1049,11 @@ function displayActorSuggestions(actors) {
   }
 
   actorSuggestions.innerHTML = actors.map(actor => `
-    <div class="actor-suggestion" data-id="${actor.id}" data-name="${actor.name}">
-      <img src="${actor.profile_path ? 'https://image.tmdb.org/t/p/w45' + actor.profile_path : "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><rect width='40' height='40' fill='%23333'/><text x='50%25' y='55%25' fill='%23aaa' font-size='18' text-anchor='middle' font-family='sans-serif'>?</text></svg>"}" alt="${actor.name}">
+    <div class="actor-suggestion" data-id="${escapeHtml(actor.id)}" data-name="${escapeHtml(actor.name)}">
+      <img src="${actor.profile_path ? 'https://image.tmdb.org/t/p/w45' + actor.profile_path : "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><rect width='40' height='40' fill='%23333'/><text x='50%25' y='55%25' fill='%23aaa' font-size='18' text-anchor='middle' font-family='sans-serif'>?</text></svg>"}" alt="${escapeHtml(actor.name)}">
       <div class="actor-suggestion-info">
-        <span class="actor-suggestion-name">${actor.name}</span>
-        <span class="actor-suggestion-known">${actor.known_for}</span>
+        <span class="actor-suggestion-name">${escapeHtml(actor.name)}</span>
+        <span class="actor-suggestion-known">${escapeHtml(actor.known_for)}</span>
       </div>
     </div>
   `).join('');
@@ -3999,16 +4005,17 @@ document.addEventListener('focusin', event => {
   if (!data || data.kind !== 'match' || !data.raw || !(data.raw.sources || []).length) return;
   livePrefetchTimer = setTimeout(() => { cachedStreamsForMatch(data.raw).catch(() => {}); }, LIVE_PREFETCH_DELAY_MS);
 });
-async function fetchStreamsForMatch(match) {
-  const lists = await Promise.all((match.sources || []).map(s =>
+// Details show Play as soon as one adapter answers (plus a short grace for the
+// others) instead of waiting ~25 s for the slowest; the player's refresh, used
+// when every listed stream failed, waits for all of them.
+async function fetchStreamsForMatch(match, graceMs = 3000) {
+  return gatherEarly((match.sources || []).map(s =>
     fetchLiveJson(`/live/streams?adapter=${encodeURIComponent(s.adapter)}&id=${encodeURIComponent(s.sourceId)}`, 70000)
-      .then(r => (r.streams || []).map(st => ({ ...st, adapter: s.adapter })))
-      .catch(() => [])));
-  return lists.flat();
+      .then(r => (r.streams || []).map(st => ({ ...st, adapter: s.adapter })))), { graceMs });
 }
 const liveDetails = createLiveDetails({
   fetchStreams: match => cachedStreamsForMatch(match),
-  onPlay: (match, streams, index) => { liveDetails.close(); openLivePlayer({ title: match.title, streams, startIndex: index, refresh: async () => fetchStreamsForMatch(await currentMatch(match)) }); },
+  onPlay: (match, streams, index) => { liveDetails.close(); openLivePlayer({ title: match.title, streams, startIndex: index, refresh: async () => fetchStreamsForMatch(await currentMatch(match), Infinity) }); },
 });
 const livePlayer = createLivePlayer({
   video: playerVideo, modal: playerModal, helperUrl,
@@ -4124,6 +4131,10 @@ async function renderTvHome(seed) {
     const shown = dedupeItems(items.slice(0, TV_HOME_CARD_LIMIT), seen);
     const section = appendTvRow(main, { key: def.key, title: def.title, items: shown }, onSelect);
     if (section) {
+      // The rest of page 1 is shown before page 2 is fetched. It used to be dropped:
+      // paging jumped to page 2, so items 13-20 of every row's first page never
+      // appeared, and fast Right presses stalled at card 12 waiting on the network.
+      section.__pageRest = items.slice(TV_HOME_CARD_LIMIT);
       section.dataset.rowUrl = def.url;
       section.dataset.rowPage = '1';
       if (def.mediaType) section.dataset.rowMedia = def.mediaType;
@@ -4136,10 +4147,17 @@ async function renderTvHome(seed) {
 
   // Recommended row: use the same aggregate taste engine as the full recommendation
   // page. Every watched title contributes; no single recent film can dictate the rail.
-  try {
+  // A profile with no taste signal (fresh device, cleared storage) gets only the
+  // trending/top-rated cold-start pool back from the engine. Labelled "for you"
+  // it is not personal, and as the first deduping row it swallowed the catalogue
+  // rows below it (Top Rated and Critically Acclaimed vanished, New Releases kept
+  // one card). Skip the row until there is something to recommend from.
+  const signals = buildSignalItems();
+  const hasTasteSignal = signals.basket.length > 0 || signals.watched.length > 0 || signals.seen.length > 0;
+  if (hasTasteSignal) try {
     // Ask for extra candidates so Movies/TV tabs can filter by media type and
     // still fill the expanded 120-card recommendation rail.
-    const ranked = await getRecommendations(buildSignalItems(), { limit: TV_HOME_RECOMMENDATION_LIMIT * 2 });
+    const ranked = await getRecommendations(signals, { limit: TV_HOME_RECOMMENDATION_LIMIT * 2 });
     let candidates = ranked.map(rec => rec && rec.movie).filter(Boolean);
     if (kind !== 'all') {
       candidates = candidates.filter(movie => {
@@ -4311,6 +4329,19 @@ async function extendTvRow(section) {
   if (!section || section.dataset.rowLoading === '1' || section.dataset.rowDone === '1') return;
   const base = section.dataset.rowUrl;
   if (!base) return;
+  if (section.__pageRest && section.__pageRest.length) {
+    const rest = section.__pageRest;
+    section.__pageRest = null;
+    const seen = tvRowSeen.get(section) || new Set();
+    const fresh = dedupeItems(rest, seen);
+    tvRowSeen.set(section, seen);
+    const track = section.querySelector('.tv-rail-track');
+    if (track && fresh.length) {
+      fresh.forEach(m => track.append(createTvCard(m, openDetails)));
+      sortTvTrackByRating(track);
+      return;
+    }
+  }
   const page = Number(section.dataset.rowPage || '1') + 1;
   section.dataset.rowLoading = '1';
   try {
@@ -4775,7 +4806,12 @@ async function handleFilterChange() {
 }
 
 // Handle search
+// Every search (and every clear) takes a number; a response that comes back after a
+// newer one started is dropped, so "bat" can never overwrite "batman".
+let searchSeq = 0;
+
 async function handleSearch(query) {
+  const seq = ++searchSeq;
   if (!query.trim()) {
     search.value = '';
     updateQueryParams();
@@ -4810,15 +4846,17 @@ async function handleSearch(query) {
     hideError();
     updateQueryParams();
     const movies = await searchMovies(query);
+    if (seq !== searchSeq) return;
     // Apply filters to search results (with relaxed filtering)
     allMovies = movies;
     isSearchMode = true;
     await processAndDisplayMovies(movies, true);
   } catch (error) {
+    if (seq !== searchSeq) return;
     console.error('Error searching movies:', error);
     showError('Search failed. Please try again.');
   } finally {
-    setLoading(false);
+    if (seq === searchSeq) setLoading(false);
   }
 }
 

@@ -25,11 +25,14 @@ test('TV remote: rails, player, Back, search, and option selection', { skip: !pr
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=111Movies`);
     await page.waitForSelector('.tv-card');
     const focused = () => page.evaluate(() => document.activeElement.className);
-    assert.equal(await page.locator(':focus').getAttribute('id'), 'tab-movies');
+    const focusedIs = cls => page.evaluate(c => document.activeElement.classList.contains(c), cls);
+    // The home focus anchor is the active media-kind tab (All / Movies / TV / Live / Channels).
+    const onHomeAnchor = () => page.evaluate(() => document.activeElement === document.querySelector('.tv-kind-tab.active'));
+    assert.equal(await onHomeAnchor(), true);
     await page.keyboard.press('ArrowDown');
     assert.equal(await focused(), 'tv-play');
     await page.keyboard.press('ArrowDown');
-    assert.equal(await focused(), 'tv-card');
+    assert.equal(await focusedIs('tv-card'), true);
     const first = await page.locator(':focus').getAttribute('data-movie-id');
     for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight');
     assert.notEqual(await page.locator(':focus').getAttribute('data-movie-id'), first);
@@ -58,22 +61,31 @@ test('TV remote: rails, player, Back, search, and option selection', { skip: !pr
     await page.waitForSelector('#player-modal', { state: 'hidden' });
     assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), selected);
     await page.keyboard.press('Escape');
-    assert.equal(await page.locator(':focus').getAttribute('id'), 'tab-movies');
-    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+    assert.equal(await onHomeAnchor(), true);
+    // All -> Movies -> TV -> Live -> Channels -> IMDb Top 250 -> Search & filters.
+    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator(':focus').getAttribute('id'), 'tv-browse-controls');
     await page.keyboard.press('Enter');
-    assert.equal(await page.locator(':focus').getAttribute('id'), 'search');
+    // Opening the panel focuses its first filter, not the search box (which would pop
+    // the on-screen keyboard over the filters on webOS).
+    assert.equal(await page.locator('#tv-browse-controls').getAttribute('aria-expanded'), 'true');
+    assert.equal(await focusedIs('filter-select'), true);
+    await page.locator('#search').focus();
     await page.keyboard.type('Adventure');
     await page.keyboard.press('Enter');
     await page.waitForSelector('.tv-card');
     await page.keyboard.press('ArrowUp');
     // The filters are reachable spatially, and each select has a D-pad option list.
-    await page.locator('#media-type').focus();
+    // (Media type moved to the top nav; sort is a remaining panel filter.)
+    const sortBefore = await page.locator('#sort-by').inputValue();
+    const sortNext = await page.locator('#sort-by').evaluate(s => s.options[s.selectedIndex + 1].value);
+    await page.locator('#sort-by').focus();
     await page.keyboard.press('Enter');
     await page.waitForSelector('.tv-picker');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
-    assert.equal(await page.locator('#media-type').inputValue(), 'movie');
+    assert.notEqual(sortNext, sortBefore);
+    assert.equal(await page.locator('#sort-by').inputValue(), sortNext);
     assert.equal(await page.locator('.tv-picker').count(), 0);
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#tv-browse-controls').getAttribute('aria-expanded'), 'false');
@@ -170,7 +182,8 @@ test('111Movies toolbar works with D-pad and Enter across the provider frame', {
   // This fixture verifies keyboard/iframe command routing, not media delivery.
   await page.route('https://player.vidlove.cc/**',r=>r.fulfill({contentType:'text/html',body:`<video muted></video><script>var v=document.querySelector('video'),paused=false;Object.defineProperty(v,'paused',{get:()=>paused});Object.defineProperty(v,'readyState',{get:()=>4});Object.defineProperty(v,'duration',{get:()=>3600});Object.defineProperty(v,'currentTime',{value:50,writable:true});v.play=()=>{paused=false;return Promise.resolve()};v.pause=()=>{paused=true};</script>`}));
   await page.goto(appOrigin+'/tv.html?source=111Movies');await page.waitForSelector('.tv-card');
-  await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');
+  // The curated IMDb/Emmy rails come first on All, so focus the fixture card itself.
+  await page.locator('.tv-card[data-movie-id="9005"]').first().focus();
   await page.locator(':focus').evaluate(card=>card.addEventListener('click',()=>card.replaceWith(card.cloneNode(true)),{once:true}));
   await page.keyboard.press('Enter');
   await page.waitForSelector('.tv-details:not([hidden])');
@@ -216,13 +229,21 @@ test('TV home shows distinct, deduped rows and Back from details returns to the 
     await page.route(/https:\/\/(?!api\.themoviedb\.org)/, route => route.fulfill({ contentType: 'text/html', body: 'fixture' }));
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html`);
     await page.waitForSelector('.tv-card');
-    // Rows paint progressively; wait for the last one before reading them all.
-    await page.waitForFunction(() => [...document.querySelectorAll('.tv-row h2')].some(h => h.textContent === 'Action & Adventure'));
+    // Rows paint progressively; wait for the last fixture-backed one (every later
+    // discover row repeats the same ids and is deduped away) before reading them all.
+    await page.waitForFunction(() => [...document.querySelectorAll('.tv-row h2')].some(h => h.textContent === 'Critically Acclaimed'));
     // Several distinct rows, not slices of one feed.
     const headings = await page.locator('.tv-row h2').allTextContents();
-    for (const h of ['Trending This Week', 'Popular Right Now', 'Top Rated', 'New Releases']) assert.ok(headings.includes(h), `missing row ${h}`);
-    // No title appears in more than one row.
-    const ids = await page.locator('.tv-card').evaluateAll(cards => cards.map(c => c.dataset.movieId));
+    for (const h of ['Trending This Week', 'Popular Movies', 'Top Rated', 'New Releases', 'Critically Acclaimed']) assert.ok(headings.includes(h), `missing row ${h}`);
+    // A fresh profile has no taste signal, so no unpersonalised "Recommended" row
+    // swallows the catalogue rows above.
+    assert.ok(!headings.includes('Recommended for You'));
+    // No title appears in more than one catalogue row. Rows are windowed, so read
+    // each row's full item list, not only the rendered cards. The curated IMDb/Emmy
+    // collections deliberately bypass cross-row dedupe and are excluded.
+    const ids = await page.locator('.tv-row').evaluateAll(rows => rows
+      .filter(row => !/IMDb Top 250|Emmy Award Winners/.test(row.querySelector('h2').textContent))
+      .flatMap(row => [...row.querySelectorAll('.tv-card')].map(c => c.dataset.movieId).concat((row.__rest || []).map(m => String(m.id)))));
     assert.equal(new Set(ids).size, ids.length, 'a title was repeated across rows');
     // The two ids that overlapped trending must not reappear under Popular.
     assert.equal(ids.filter(id => id === '3').length, 1);
@@ -315,5 +336,153 @@ test('TV defaults to the native torrent source, not the bot-gated embed', { skip
     await page.keyboard.press('Enter'); // Play
     await page.waitForSelector('#player-modal', { state: 'visible' });
     await page.waitForFunction(() => { const o = document.querySelector('#source-select option:checked'); return !!o && o.textContent.includes('TV (Torrent)'); });
+  } finally { await browser.close(); }
+});
+
+// Shared fixture for the navigation/stress tests: several distinct catalogue rows,
+// each with more cards than one render window, all movies with a playable MP4.
+async function navigationFixture(page, bytes) {
+  const { parseByteRange } = await import('./http-range.js');
+  const mk = (start, n) => Array.from({ length: n }, (_, i) => ({ id: start + i, title: `Nav ${start + i}`, media_type: 'movie', vote_average: 8, vote_count: 1000, popularity: 100, genre_ids: [18], release_date: '2024-01-01', overview: 'Navigation fixture.', poster_path: null, backdrop_path: null }));
+  // Registered first: Playwright tries the most recently added route first, so the
+  // specific helper routes below (on the https helper origin) must come after this.
+  await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+  const feeds = [[/\/trending\//, 1000], [/\/movie\/popular/, 2000], [/\/movie\/top_rated/, 3000], [/\/movie\/now_playing/, 4000], [/sort_by=vote_average/, 5000], [/with_genres=28&/, 6000], [/with_genres=35&/, 7000]];
+  await page.route('https://api.themoviedb.org/**', route => {
+    const url = route.request().url();
+    if (/\/external_ids/.test(url)) return route.fulfill({ json: { imdb_id: 'tt1234567' } });
+    const feed = feeds.find(([re]) => re.test(url));
+    return route.fulfill({ json: { results: feed ? mk(feed[1], 20) : [], cast: [], page: 1, total_pages: 1 } });
+  });
+  await page.route('**/yts?*', r => r.fulfill({ json: { title: 'Nav', torrents: [{ hash: 'a'.repeat(40), quality: '1080p', seeds: 100, video_codec: 'x264' }] } }));
+  await page.route('**/subtitles?*', r => r.fulfill({ json: { tracks: [] } }));
+  await page.route('**/stream-status?*', r => r.fulfill({ json: { state: 'ready', peers: 100 } }));
+  await page.route('**/stream-stop?*', r => r.fulfill({ status: 204 }));
+  await page.route('**/stream?*', r => {
+    const range = parseByteRange(r.request().headers().range, bytes.length);
+    return r.fulfill({ status: range ? 206 : 200, contentType: 'video/mp4', body: range ? bytes.subarray(range.start, range.end + 1) : bytes, headers: { 'accept-ranges': 'bytes', ...(range ? { 'content-range': `bytes ${range.start}-${range.end}/${bytes.length}` } : {}) } });
+  });
+  // Progressive MP4 path (no native HLS in desktop Chrome).
+  await page.addInitScript(() => { const o = HTMLMediaElement.prototype.canPlayType; HTMLMediaElement.prototype.canPlayType = function (t) { return t.includes('mpegurl') ? '' : o.call(this, t); }; });
+}
+
+async function makeClip() {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'movies-nav-test-'));
+  const file = join(dir, 'clip.mp4');
+  await promisify(execFile)('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '30', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '50', '-c:a', 'aac', '-movflags', '+faststart', '-y', file]);
+  const bytes = await readFile(file);
+  await rm(dir, { recursive: true, force: true });
+  return bytes;
+}
+
+// The focused card must be a real, on-screen card: inside the viewport and inside its rail.
+// The rail glides with a CSS transition, so wait for it to settle there (bounded).
+const focusedCardOnScreen = async page => {
+  await page.waitForFunction(() => {
+    const a = document.activeElement;
+    if (!a || !a.classList.contains('tv-card')) return false;
+    const r = a.getBoundingClientRect();
+    const rail = a.closest('.tv-rail').getBoundingClientRect();
+    return r.left >= rail.left - 1 && r.right <= rail.right + 1 && r.top >= 0 && r.bottom <= innerHeight;
+  }, null, { timeout: 3000 }).catch(() => {});
+  return readFocusedCard(page);
+};
+const readFocusedCard = page => page.evaluate(() => {
+  const a = document.activeElement;
+  if (!a || !a.classList.contains('tv-card')) return { ok: false, why: `focus on ${a && a.tagName}.${a && a.className}` };
+  const r = a.getBoundingClientRect();
+  const rail = a.closest('.tv-rail').getBoundingClientRect();
+  const ok = r.width > 0 && r.left >= rail.left - 1 && r.right <= rail.right + 1 && r.top >= 0 && r.bottom <= innerHeight;
+  return { ok, id: a.dataset.movieId, why: JSON.stringify({ r: [r.left, r.right, r.top, r.bottom], rail: [rail.left, rail.right] }) };
+});
+
+test('TV focus returns to the same deep card after details, and rapid Right keeps a visible focus', { skip: !process.env.TV_E2E, timeout: 60000 }, async () => {
+  const bytes = await makeClip();
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await navigationFixture(page, bytes);
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
+    // Wait until the fixture rows have painted (Critically Acclaimed = the 5000 feed).
+    await page.waitForSelector('.tv-card[data-movie-id="5000"]');
+    await page.keyboard.press('ArrowDown'); // hero Play
+    assert.equal(await page.evaluate(() => document.activeElement.className), 'tv-play');
+    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown'); // six rows deep
+    for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight'); // eight cards across
+    const deep = await focusedCardOnScreen(page);
+    assert.ok(deep.ok, 'deep: ' + deep.why);
+    const row = await page.evaluate(() => document.activeElement.closest('.tv-row').dataset.tvRow);
+    const tx = await page.evaluate(() => document.activeElement.closest('.tv-rail-track').dataset.tx);
+    assert.ok(parseFloat(tx) < 0, 'the rail glided to keep the ninth card on screen');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.tv-details:not([hidden])');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.tv-details', { state: 'hidden' });
+    await page.waitForFunction(id => document.activeElement && document.activeElement.dataset.movieId === id, deep.id);
+    assert.equal(await page.evaluate(() => document.activeElement.closest('.tv-row').dataset.tvRow), row);
+    const back = await focusedCardOnScreen(page);
+    assert.ok(back.ok, 'back: ' + back.why);
+
+    // Rapid presses (no waits) and a held key (auto-repeat) never lose the focus.
+    for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowRight');
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const rapid = await focusedCardOnScreen(page);
+    assert.ok(rapid.ok, 'rapid: ' + rapid.why);
+    assert.ok(Number(rapid.id) > Number(deep.id), 'rapid Right moved along the row');
+    for (let i = 0; i < 15; i++) await page.keyboard.down('ArrowRight');
+    await page.keyboard.up('ArrowRight');
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const held = await focusedCardOnScreen(page);
+    assert.ok(held.ok, 'held: ' + held.why);
+    // The row walked to its real end: all 20 titles of the feed's first page (none
+    // skipped when paging), with focus on the last card.
+    assert.deepEqual(await page.evaluate(() => { const t = document.activeElement.closest('.tv-rail-track'); return [t.children.length, t.lastElementChild === document.activeElement]; }), [20, true]);
+    for (let i = 0; i < 25; i++) await page.keyboard.press('ArrowLeft'); // past the first card
+    const start = await focusedCardOnScreen(page);
+    assert.ok(start.ok, 'start: ' + start.why);
+    assert.equal(await page.evaluate(() => document.activeElement.closest('.tv-rail-track').querySelector('.tv-card') === document.activeElement), true);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('TV open -> play -> Back five times leaves one stopped player and the same card focused', { skip: !process.env.TV_E2E, timeout: 90000 }, async () => {
+  const bytes = await makeClip();
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await navigationFixture(page, bytes);
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
+    await page.waitForSelector('.tv-card[data-movie-id="2003"]');
+    await page.locator('.tv-card[data-movie-id="2003"]').first().focus();
+    for (let round = 0; round < 5; round++) {
+      const step = async (label, promise) => { try { return await promise; } catch (e) { throw new Error(`round ${round + 1}: ${label}: ${await page.evaluate(() => `${document.activeElement.tagName}.${document.activeElement.className}#${document.activeElement.id} ${document.activeElement.dataset.movieId || ''}`)}; ${e.message}`); } };
+      await page.keyboard.press('Enter');
+      await step('details open', page.waitForSelector('.tv-details:not([hidden])', { timeout: 10000 }));
+      await page.keyboard.press('Enter'); // Play
+      await step('player open', page.waitForSelector('#player-modal', { state: 'visible', timeout: 10000 }));
+      await step('playing', page.waitForFunction(() => document.getElementById('player-video').currentTime > 0.3, null, { timeout: 15000 }));
+      await page.keyboard.press('Escape'); // leave playback
+      await step('player closed', page.waitForSelector('#player-modal', { state: 'hidden', timeout: 10000 }));
+      await step('focus restored', page.waitForFunction(() => document.activeElement && document.activeElement.dataset.movieId === '2003', null, { timeout: 10000 }));
+      const state = await page.evaluate(() => ({
+        videos: document.querySelectorAll('video').length,
+        playing: Array.from(document.querySelectorAll('video')).filter(v => !v.paused).length,
+        src: document.getElementById('player-video').getAttribute('src') || '',
+        iframes: Array.from(document.querySelectorAll('iframe')).filter(f => f.getAttribute('src')).length,
+        details: document.querySelectorAll('.tv-details:not([hidden])').length,
+        pickers: document.querySelectorAll('.tv-picker').length,
+      }));
+      assert.deepEqual(state, { videos: 1, playing: 0, src: '', iframes: 0, details: 0, pickers: 0 }, `round ${round + 1}`);
+    }
+    assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

@@ -25,7 +25,7 @@ function fakeHlsClass(log) {
   return FakeHls;
 }
 function harness() {
-  const log = [], statuses = [], timers = [];
+  const log = [], statuses = [], timers = [], timeouts = [];
   const Hls = fakeHlsClass(log);
   const video = fakeVideo();
   let clock = 0;
@@ -33,9 +33,10 @@ function harness() {
     video, modal: { dataset: {} }, helperUrl: p => 'http://h' + p + (p.includes('?') ? '&' : '?') + 'key=k',
     setStatus: (msg, err) => statuses.push([msg, !!err]), getHls: () => Hls, now: () => clock,
     setInterval: (fn, ms) => { timers.push(fn); return timers.length; }, clearInterval: () => { timers.length = 0; },
+    setTimeout: (fn, ms) => { timeouts.push({ fn, ms }); return timeouts.length; }, clearTimeout: () => {},
   });
   const tick = (ms) => { clock += ms; timers.slice().forEach(fn => fn()); };
-  return { log, statuses, Hls, video, player, tick, setClock: v => { clock = v; } };
+  return { log, statuses, timeouts, Hls, video, player, tick, setClock: v => { clock = v; } };
 }
 
 test('LIVE_HLS_CONFIG keeps a small live buffer', () => {
@@ -107,7 +108,24 @@ test('the watchdog gives 30 s before first frame and 20 s once playing', async (
   h.tick(1000); await Promise.resolve();
   assert.equal(h.log.filter(e => e[0] === 'load').length, 2, 'both streams tried; nothing left to load without refresh results');
   await new Promise(r => setTimeout(r, 0));
-  assert.equal(h.statuses.at(-1)[1], true, 'the failure is reported');
+  // It had been playing, so this reads as an outage: reconnect, reported but not as a dead end.
+  assert.deepEqual(h.statuses.at(-1), ['Connection lost. Reconnecting…', false]);
+  assert.equal(h.timeouts.length, 1);
+});
+
+test('reconnecting gives up with an honest error after the limit', async () => {
+  const h = harness();
+  await h.player.play({ title: 't', streams: [{ label: 's1', play: '/a' }] });
+  h.video.currentTime = 5; h.video.paused = false; h.tick(1000); h.tick(1000);
+  for (let round = 0; round < 7; round++) {
+    h.video.paused = false;
+    for (let i = 0; i < 31; i++) h.tick(1000);
+    await new Promise(r => setTimeout(r, 0));
+    const t = h.timeouts.shift();
+    if (t) { assert.ok(t.ms >= 5000); t.fn(); await new Promise(r => setTimeout(r, 0)); }
+  }
+  assert.equal(h.statuses.at(-1)[1], true);
+  assert.match(h.statuses.at(-1)[0], /could not reconnect/);
 });
 
 test('stop destroys hls, clears the video source and the interval', async () => {
@@ -275,4 +293,36 @@ test('loads hls.js on demand before the first play, and only attaches for the la
   await new Promise(r => setTimeout(r, 20));
   assert.equal(loads, 1);
   assert.equal(h.video.src, 'http://h/live/hls?u=1');
+});
+
+test('a channel that was playing reconnects by itself after a long outage instead of giving up', async () => {
+  const log = [], statuses = [], intervals = [], timeouts = [];
+  const Hls = fakeHlsClass(log);
+  const video = fakeVideo();
+  let clock = 0;
+  const player = createLivePlayer({
+    video, modal: { dataset: {} }, helperUrl: p => p, setStatus: (m, e) => statuses.push([m, !!e]), getHls: () => Hls, now: () => clock,
+    setInterval: fn => { intervals.push(fn); return intervals.length; }, clearInterval: () => { intervals.length = 0; },
+    setTimeout: (fn, ms) => { timeouts.push({ fn, ms }); return timeouts.length; }, clearTimeout: () => {},
+  });
+  const tick = ms => { clock += ms; intervals.slice().forEach(fn => fn()); };
+  await player.play({ title: 'News', streams: [{ label: 'ch', play: '/live/ch?id=1' }] });
+  video.currentTime = 5; video.paused = false; tick(1000); // playing
+  tick(1000);
+  tick(25000); // network gone: playhead frozen past STALL_MS, nothing buffered
+  await settle();
+  assert.equal(statuses.at(-1)[0], 'Connection lost. Reconnecting…');
+  assert.equal(statuses.at(-1)[1], false, 'not presented as a dead end');
+  assert.equal(timeouts.length, 1);
+  timeouts[0].fn(); await settle();
+  assert.equal(log.filter(e => e[0] === 'load').length, 2, 'the same channel is loaded again');
+  player.stop();
+});
+
+test('a stream that never played still ends in Retry, not an endless reconnect loop', async () => {
+  const h = harness();
+  await h.player.play({ title: 'x', streams: [{ label: 's', play: '/a' }] });
+  h.Hls.last.emit('err', { fatal: true, type: 'networkError', response: { code: 404 } });
+  await settle();
+  assert.equal(h.statuses.at(-1)[0], 'No working stream yet. Press Retry, or pick a channel.');
 });

@@ -39,5 +39,8 @@ test('createLiveCard renders score, clock, league and marks stream-less matches'
     assert.ok(ch.classList.contains('tv-card-channel'));
     assert.equal(ch.querySelector('.tv-card-art').src, 'https://l/x.png');
     assert.equal(ch.querySelector('.tv-card-cta').textContent, 'Watch  ›');
+    assert.equal(ch.querySelector('.tv-card-overview').textContent, 'Live channel');
+    const news = createLiveCard({ id: 'ch:n', title: 'CBS News', kind: 'channel', image_url: null, live: { state: 'channel', height: 720, category: 'News' }, raw: {} }, () => {});
+    assert.equal(news.querySelector('.tv-card-overview').textContent, '720p  ·  News');
   } finally { if (prev === undefined) delete globalThis.document; else globalThis.document = prev; }
 });

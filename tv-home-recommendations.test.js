@@ -12,8 +12,10 @@ const imdbHomeBlock = source.slice(imdbStart, imdbEnd);
 
 test('TV home recommendations use the full signal set, not only the latest watched title', () => {
   assert.ok(start >= 0 && end > start, 'TV home recommendation block is present');
+  assert.match(homeRecommendationBlock, /const signals = buildSignalItems\(\);/,
+    'the home rail reads the full signal set');
   assert.match(homeRecommendationBlock,
-    /getRecommendations\(buildSignalItems\(\), \{ limit:/,
+    /getRecommendations\(signals, \{ limit:/,
     'the home rail invokes the aggregate recommendation pipeline');
   assert.doesNotMatch(homeRecommendationBlock, /recSeed|\/recommendations\?/,
     'the latest-title TMDB shortcut cannot regress');
@@ -22,7 +24,7 @@ test('TV home recommendations use the full signal set, not only the latest watch
 test('TV home recommendation rail targets 120 cards (10x the standard 12-card row)', () => {
   assert.match(source, /const TV_HOME_RECOMMENDATION_LIMIT = TV_HOME_CARD_LIMIT \* 10;/);
   assert.match(homeRecommendationBlock,
-    /getRecommendations\(buildSignalItems\(\), \{ limit: TV_HOME_RECOMMENDATION_LIMIT \* 2 \}/,
+    /getRecommendations\(signals, \{ limit: TV_HOME_RECOMMENDATION_LIMIT \* 2 \}/,
     'the pipeline requests enough candidates before media-kind filtering');
   assert.match(homeRecommendationBlock, /\.slice\(0, TV_HOME_RECOMMENDATION_LIMIT\)/,
     'the rendered recommendation rail is capped at 120, not 12');
@@ -36,6 +38,12 @@ test('All renders the complete IMDb and Emmy rails without cross-row dedupe', ()
     'the complete collection is rendered');
   assert.doesNotMatch(imdbHomeBlock, /dedupeItems|\.slice\(/,
     'watched titles and ranks are not removed from the IMDb collection');
+});
+
+test('a profile with no taste signal gets no unpersonalised Recommended row', () => {
+  assert.match(homeRecommendationBlock,
+    /const hasTasteSignal = signals\.basket\.length > 0 \|\| signals\.watched\.length > 0 \|\| signals\.seen\.length > 0;\s*if \(hasTasteSignal\) try \{/,
+    'the cold-start pool must not be labelled "for you" or swallow the catalogue rows');
 });
 
 test('TV signal changes rebuild the TV home instead of mounting desktop recommendation UI', () => {

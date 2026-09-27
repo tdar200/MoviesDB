@@ -231,12 +231,21 @@ export function createTvDetails(deps) {
     const listHost = el('div', 'tv-details-episode-list');
     host.append(listHost);
 
+    // Quick season changes race: only the latest request may paint, and it clears
+    // the list itself, after its await, so two seasons never interleave.
+    let seasonRequest = 0;
     async function renderSeason(seasonNumber) {
       const localToken = token;
+      const request = ++seasonRequest;
       listHost.textContent = '';
-      let season;
-      try { season = await fetchSeasonDetails(movie.id, seasonNumber); } catch (e) { return; }
-      if (localToken !== openToken || !season || !season.episodes) return;
+      let season = null;
+      try { season = await fetchSeasonDetails(movie.id, seasonNumber); } catch (e) { season = null; }
+      if (localToken !== openToken || request !== seasonRequest) return;
+      listHost.textContent = '';
+      if (!season || !season.episodes || !season.episodes.length) {
+        listHost.append(el('p', 'tv-episode-empty', season ? 'No episodes listed for this season yet.' : 'Couldn\u2019t load this season. Choose it again to retry.'));
+        return;
+      }
       season.episodes.forEach(ep => {
         const item = el('button', 'tv-episode');
         item.type = 'button';

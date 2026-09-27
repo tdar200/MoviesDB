@@ -106,3 +106,12 @@ test('Pakistani and Indian channels get their own rows at the top and leave the 
     ['News', ['gb-news']],
   ]);
 });
+
+test('resolveTemplates fills Pluto session parameters once a session is minted', async () => {
+  const { resolveTemplates } = await import('./live-catalog.mjs');
+  const e = { id: 'pluto:abc123', name: 'X', urlTemplate: 'https://stitch.pluto.tv/channel/{channelId}/master.m3u8?{stitcherParams}&jwt={sessionToken}&masterJWTPassthrough=true' };
+  assert.equal(resolveTemplates([e]).length, 0, 'no session yet: left out');
+  const [r] = resolveTemplates([e], { plutoSession: { stitcherParams: 'appName=web&country=GB&sid=s1', sessionToken: 'a.b-c_d' } });
+  assert.equal(r.url, 'https://stitch.pluto.tv/channel/abc123/master.m3u8?appName=web&country=GB&sid=s1&jwt=a.b-c_d&masterJWTPassthrough=true');
+  assert.equal(r.urlTemplate, undefined);
+});

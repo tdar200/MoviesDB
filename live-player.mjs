@@ -35,9 +35,13 @@ const STARTUP_MS = 30000;
 const STALL_MS = 20000;
 const NUDGE_MS = 4000;
 const RECOVER_MS = 9000;
+// A stream that had been playing and then ran out of options is most likely a
+// network outage, not a dead channel: keep reconnecting with a growing delay.
+const RECONNECT_LIMIT = 6;
+const RECONNECT_BASE_MS = 5000;
 const FRAG_STRIKES = 2; // non-fatal fragment failures before the first frame that condemn a stream
 
-export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = () => globalThis.Hls, loadHls = () => (globalThis.__loadHls ? globalThis.__loadHls() : Promise.resolve()), now = Date.now, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
+export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = () => globalThis.Hls, loadHls = () => (globalThis.__loadHls ? globalThis.__loadHls() : Promise.resolve()), now = Date.now, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval, setTimeout = globalThis.setTimeout, clearTimeout = globalThis.clearTimeout }) {
   let session = null;
   let hls = null;
   let current = null;
@@ -46,6 +50,10 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
   let timer = null;
   let generation = 0;
   let nativeErrorHandler = null;
+  let sessionPlayed = false; // this session showed moving video at least once
+  let reconnects = 0;
+  let reconnectTimer = null;
+  function cancelReconnect() { if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; } }
 
   // Drop the hls.js instance and watchdog of a failed stream without touching the video.
   function releaseStream() {
@@ -90,8 +98,8 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
       if (gen !== generation) return;
       const t = video.currentTime;
       if (lastMove === null) { lastMove = now(); lastTime = t; }
-      if (t > 0.25) started = true;
-      if (t > lastTime + 0.25 && t !== nudgedTo) { lastTime = t; lastMove = now(); step = 0; nudgedTo = null; return; }
+      if (t > 0.25) { started = true; sessionPlayed = true; }
+      if (t > lastTime + 0.25 && t !== nudgedTo) { lastTime = t; lastMove = now(); step = 0; nudgedTo = null; reconnects = 0; return; }
       if (video.paused && started) { lastMove = now(); return; } // user paused
       const stuck = now() - lastMove;
       if (started && bufferedAhead() > 1) {
@@ -193,7 +201,21 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
     generation++;
     teardownMedia();
     current = null;
-    setStatus('No working stream yet. Press Retry, or pick a channel.', true);
+    if (sessionPlayed && reconnects < RECONNECT_LIMIT) {
+      reconnects++;
+      setStatus('Connection lost. Reconnecting…', false);
+      const gen = generation;
+      cancelReconnect();
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (session !== s || generation !== gen) return;
+        tried = new Set();
+        refreshed = 0;
+        startNext();
+      }, RECONNECT_BASE_MS * reconnects);
+      return;
+    }
+    setStatus(sessionPlayed ? 'The stream stopped and could not reconnect. Press Retry, or pick a channel.' : 'No working stream yet. Press Retry, or pick a channel.', true);
   }
 
   function fail(gen, reason) {
@@ -210,12 +232,16 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
       session = { title: next.title, streams: (next.streams || []).slice(), refresh: next.refresh || null };
       tried = new Set();
       refreshed = 0;
+      cancelReconnect();
+      sessionPlayed = false;
+      reconnects = 0;
       const first = session.streams[next.startIndex || 0] || session.streams[0];
       if (first) start(first); else await startNext();
     },
     stop() {
       if (!session) return; // nothing live: leave the shared <video> (and its resume position) alone
       generation++;
+      cancelReconnect();
       teardownMedia();
       session = null; current = null; tried = new Set();
       if (modal && modal.dataset) delete modal.dataset.live;
@@ -224,8 +250,10 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
     async retry() {
       if (!session) return;
       generation++;
+      cancelReconnect();
       tried = new Set();
       refreshed = 0;
+      reconnects = 0;
       await startNext();
     },
   };

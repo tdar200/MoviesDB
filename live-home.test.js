@@ -136,3 +136,8 @@ test('restoreFocusById prefers the TV remote focus routine (it re-anchors the ra
     if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
   }
 });
+
+test('channel cards describe the channel by its own category, not as a sports channel', () => {
+  assert.equal(channelToCard({ id: 'a', name: 'CBS News', category: 'News', height: 720 }).live.category, 'News');
+  assert.equal(channelToCard({ id: 'b', name: 'X', height: 1080 }).live.category, null);
+});

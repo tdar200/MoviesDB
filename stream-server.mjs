@@ -20,7 +20,7 @@ import { CONFIG } from './config.js';
 import { parseByteRange } from './http-range.js';
 import { HlsSessions } from './hls-session.mjs';
 import { spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, statfsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { tmpdir, networkInterfaces } from 'node:os';
@@ -33,7 +33,7 @@ import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle, shiftVtt, clea
 import { fetchMovieSources, fetchTvSources, isRemuxableTvFile, isTranscodableTvFile, pickEpisodeFile, pickEpisodeVideoFile, pickMovieFileByIndex } from './tv-api.mjs';
 import { createResolvingFetch, fetchViaPublicDns } from './dns-fetch.js';
 import { pieceWindow } from './stream-window.mjs';
-import { helperRequestAllowed } from './helper-auth.js';
+import { helperRequestAllowed, isPrivateStaticPath } from './helper-auth.js';
 import { clampReadyTimeout, deferFailedSources, rememberSourceFailure } from './tv-fallback.js';
 import { lanBaseUrl } from './lan-info.mjs';
 import { Readable } from 'node:stream';
@@ -213,7 +213,10 @@ const client = new WebTorrent({
   uploadLimit: Number.isFinite(UPLOAD_LIMIT) ? UPLOAD_LIMIT : 262144,
   downloadLimit: Number.isFinite(DOWNLOAD_LIMIT) ? DOWNLOAD_LIMIT : 1572864,
 });
-const hlsSessions = new HlsSessions({ tmpDir: HLS_DIR });
+// The open player pings its playlist every 30 s (even when paused), so 3 min of
+// silence means the viewer left (app closed or suspended): stop ffmpeg then
+// instead of letting it run for half an hour.
+const hlsSessions = new HlsSessions({ tmpDir: HLS_DIR, idleMs: 3 * 60000 });
 // The app can be served from a different origin than the stream helper (e.g. the UI
 // hosted on Vercel while streams still come from this machine). The provider bridge
 // must match the app's actual origin, so it is configurable and defaults to the
@@ -1001,6 +1004,10 @@ async function handleStream(req, res, url) {
 async function serveStatic(req, res, url) {
   let pathname = decodeURIComponent(url.pathname);
   if (pathname === '/') pathname = '/index.html';
+  if (isPrivateStaticPath(pathname)) {
+    res.writeHead(404);
+    return res.end('not found');
+  }
   // Block path traversal.
   const safe = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   const filePath = join(ROOT, safe);
@@ -1167,8 +1174,29 @@ async function mintPlexToken() {
   if (!token) throw new Error('plex token missing');
   return token;
 }
+// Pluto channels need a session (stitcher params + a ~24 h JWT) from Pluto's own
+// public start endpoint, the one its web player calls; no account. Refreshed well
+// inside the token's life.
+let livePlutoSession = null;
+async function mintPlutoSession() {
+  const clientId = randomUUID();
+  const q = `appName=web&appVersion=9.0.0&deviceVersion=120.0.0&deviceModel=web&deviceMake=chrome&deviceType=web&clientID=${clientId}&clientModelNumber=1.0.0&serverSideAds=false`;
+  const res = await liveFetch(`https://boot.pluto.tv/v4/start?${q}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`pluto session ${res.status}`);
+  const body = await res.json();
+  if (!body.sessionToken || !body.stitcherParams) throw new Error('pluto session missing fields');
+  return { sessionToken: body.sessionToken, stitcherParams: body.stitcherParams };
+}
+// One Pluto session cannot answer many channel playlists at once (parallel
+// requests come back empty), so Pluto probes run one at a time.
+let plutoProbeChain = Promise.resolve();
+function serialPluto(task) {
+  const run = plutoProbeChain.then(task, task);
+  plutoProbeChain = run.catch(() => {});
+  return run;
+}
 function buildCatalogFeed() { return createCatalogFeed({
-  entries: resolveTemplates(catalogEntries, { plexToken: livePlexToken }),
+  entries: resolveTemplates(catalogEntries, { plexToken: livePlexToken, plutoSession: livePlutoSession }),
   // Liveness only: fetch the playlist (a few KB). Resolutions were measured when
   // the lists were built; re-measuring ~1,600 channels every 30 min would pull
   // hundreds of MB per round on this line.
@@ -1178,6 +1206,11 @@ function buildCatalogFeed() { return createCatalogFeed({
     // for a while, including the one being watched), so it is never bulk-probed.
     // Its lineup was verified channel by channel when the list was built.
     if (/(^|\.)plex\.tv$/.test(new URL(e.url).hostname)) return { status: 'ok' };
+    if (/(^|\.)pluto\.tv$/.test(new URL(e.url).hostname)) return serialPluto(() => probePlaylist(e));
+    return probePlaylist(e);
+  },
+}); }
+async function probePlaylist(e) {
     const { upstream } = await fetchUpstreamGuarded(e.url, upstreamHeaders(headerOf(e, 'Referer'), headerOf(e, 'Origin')), AbortSignal.timeout(8000));
     if (!upstream.ok) {
       try { const c = upstream.body && upstream.body.cancel && upstream.body.cancel(); if (c && c.catch) c.catch(() => {}); } catch { /* closed */ }
@@ -1185,8 +1218,7 @@ function buildCatalogFeed() { return createCatalogFeed({
       return { status: upstream.status === 429 ? 'ok' : 'http-error' };
     }
     return { status: (await upstream.text()).trimStart().startsWith('#EXTM3U') ? 'ok' : 'bad-playlist' };
-  },
-}); }
+}
 let liveCatalog = buildCatalogFeed();
 async function refreshPlexToken() {
   try {
@@ -1199,6 +1231,18 @@ async function refreshPlexToken() {
 if (catalogEntries.some(e => e.urlTemplate && e.urlTemplate.includes('{plexToken}'))) {
   setTimeout(refreshPlexToken, 2000).unref();
   setInterval(refreshPlexToken, 24 * 3600_000).unref();
+}
+async function refreshPlutoSession() {
+  try {
+    livePlutoSession = await mintPlutoSession();
+    liveCatalog = buildCatalogFeed();
+    console.log(`[live] pluto session ok, catalog entries=${liveCatalog.size()}`);
+    refreshCatalog();
+  } catch (err) { console.log(`[live] pluto session failed: ${err.message}`); }
+}
+if (catalogEntries.some(e => e.urlTemplate && e.urlTemplate.includes('{sessionToken}'))) {
+  setTimeout(refreshPlutoSession, 4000).unref();
+  setInterval(refreshPlutoSession, 12 * 3600_000).unref();
 }
 function refreshCatalog() {
   const t0 = Date.now();
@@ -1216,7 +1260,7 @@ function handleLiveCatalog(res) {
   liveJson(res, 200, { categories: liveCatalog.categories().map(c => ({
     name: c.name,
     channels: c.channels.map(e => ({
-      id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0,
+      id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0, category: e.category || null,
       play: `/live/ch?id=${encodeURIComponent(e.id)}`,
     })),
   })) });
