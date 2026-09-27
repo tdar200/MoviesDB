@@ -64,7 +64,44 @@ export function createTvCard(movie, onSelect) {
 }
 
 // A row of titles: an overflow-hidden rail wrapping a flex track the remote glides.
+// Rows render a window of cards, not all of them: a Channels tab of 22 rows x
+// 100 cards put ~1,500 cards (15k DOM nodes, 7k listeners) in the page and made
+// every up/down press cost ~370 ms of layout on a TV-class CPU. Like Netflix's
+// rails, a row starts with ROW_WINDOW cards and grows by ROW_WINDOW when focus
+// comes within ROW_LOOKAHEAD cards of the last rendered one.
+export const ROW_WINDOW = 12;
+const ROW_LOOKAHEAD = 4;
+let rowWindowingInstalled = false;
+
+function appendRowCards(section, count) {
+  const rest = section.__rest;
+  if (!rest || !rest.length) return 0;
+  const track = section.querySelector('.tv-rail-track');
+  const chunk = rest.splice(0, count);
+  chunk.forEach(movie => track.append(createTvCard(movie, section.__onSelect)));
+  return chunk.length;
+}
+
+// Grow the row holding `card` if focus is near its last rendered card.
+export function growRowWindow(card) {
+  const section = card && card.closest ? card.closest('.tv-row') : null;
+  if (!section || !section.__rest || !section.__rest.length) return false;
+  const cards = section.querySelectorAll('.tv-card');
+  if (Array.prototype.indexOf.call(cards, card) < cards.length - ROW_LOOKAHEAD) return false;
+  return appendRowCards(section, ROW_WINDOW) > 0;
+}
+
+function installRowWindowing() {
+  if (rowWindowingInstalled || typeof document === 'undefined' || !document.addEventListener) return;
+  rowWindowingInstalled = true;
+  document.addEventListener('focusin', event => {
+    const card = event.target && event.target.closest ? event.target.closest('.tv-card') : null;
+    if (card) growRowWindow(card);
+  });
+}
+
 function buildRow(row, onSelect) {
+  installRowWindowing();
   const name = row.title || row.key;
   const titles = orderRowItems(row);
   const section = element('section', 'tv-row');
@@ -72,7 +109,10 @@ function buildRow(row, onSelect) {
   const rail = element('div', 'tv-rail');
   rail.setAttribute('aria-label', name);
   const track = element('div', 'tv-rail-track');
-  titles.forEach(movie => track.append(createTvCard(movie, onSelect)));
+  titles.slice(0, ROW_WINDOW).forEach(movie => track.append(createTvCard(movie, onSelect)));
+  section.__rest = titles.slice(ROW_WINDOW);
+  section.__onSelect = onSelect;
+  section.__total = titles.length;
   rail.append(track);
   section.append(element('h2', '', name), rail);
   return section;

@@ -1083,7 +1083,7 @@ async function handleLiveFixtures(res, url) {
   catch (err) { liveJson(res, isLiveTimeout(err) ? 504 : 502, { error: String(err.message || err) }); }
 }
 
-async function handleLiveMatches(res) {
+async function buildLiveMatches() {
   const now = Date.now();
   const status = { fixtures: 'ok', sources: {} };
   const fixturesP = Promise.all([localDate(now), localDate(now, 1)].map(d => withDeadline(liveFixtures.fetchFixtures(d), LIVE_FEED_DEADLINE_MS, `espn ${d}`)))
@@ -1096,7 +1096,34 @@ async function handleLiveMatches(res) {
   const [fixtures, sourceMatches] = await Promise.all([fixturesP, sourcesP]);
   const matches = sortMatches(joinFixtures(fixtures, sourceMatches, { now }));
   console.log(`[live] fixtures=${status.fixtures} ${Object.entries(status.sources).map(([k, v]) => `${k}=${v}`).join(' ')} matches=${matches.length} withStream=${matches.filter(m => m.hasStream).length}`);
-  liveJson(res, 200, { matches, status, generatedAt: new Date(now).toISOString() });
+  return { at: now, body: JSON.stringify({ matches, status, generatedAt: new Date(now).toISOString() }) };
+}
+
+// Stale-while-revalidate: the Live tab must open instantly. A cold build hits
+// ESPN plus every source (seconds); a warm answer is the last result, refreshed
+// in the background once it is older than 45 s. Warmed at startup. A result
+// older than 10 minutes is not served; the request waits for a fresh build.
+const LIVE_MATCHES_FRESH_MS = 45_000;
+const LIVE_MATCHES_MAX_AGE_MS = 10 * 60_000;
+let liveMatchesCache = null;
+let liveMatchesBuild = null;
+function rebuildLiveMatches() {
+  if (!liveMatchesBuild) {
+    liveMatchesBuild = buildLiveMatches()
+      .then(r => { liveMatchesCache = r; return r; })
+      .finally(() => { liveMatchesBuild = null; });
+  }
+  return liveMatchesBuild;
+}
+setTimeout(() => { rebuildLiveMatches().catch(() => {}); }, 3000).unref();
+
+async function handleLiveMatches(res) {
+  const age = liveMatchesCache ? Date.now() - liveMatchesCache.at : Infinity;
+  let result = liveMatchesCache;
+  if (age >= LIVE_MATCHES_MAX_AGE_MS) result = await rebuildLiveMatches();
+  else if (age >= LIVE_MATCHES_FRESH_MS) rebuildLiveMatches().catch(() => {});
+  res.writeHead(200, LIVE_JSON);
+  res.end(result.body);
 }
 
 async function handleLiveStreams(res, url) {
@@ -1189,8 +1216,8 @@ function handleLiveCatalog(res) {
   liveJson(res, 200, { categories: liveCatalog.categories().map(c => ({
     name: c.name,
     channels: c.channels.map(e => ({
-      id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0, language: e.language || '', country: e.country || '',
-      play: relayPath('hls', { u: e.url, ref: headerOf(e, 'Referer'), org: headerOf(e, 'Origin') }, LIVE_SECRET),
+      id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0,
+      play: `/live/ch?id=${encodeURIComponent(e.id)}`,
     })),
   })) });
 }
@@ -1252,6 +1279,21 @@ async function fetchUpstreamGuarded(startUrl, headers, signal) {
 async function handleLiveHls(req, res, url) {
   const p = liveRelayParams(url);
   if (p.error) { console.log(`[live] 403 ${p.error}`); return liveJson(res, 403, { error: p.error }); }
+  return relayPlaylist(res, url, p);
+}
+
+// Channels tab: the TV asks by channel id; the helper looks the channel up and
+// relays it. Keeps the /live/catalog payload small (it used to carry a long
+// signed upstream link per channel: 729 KB for ~1,500 channels) and upstream
+// URLs never reach the TV.
+async function handleLiveChannel(req, res, url) {
+  const entry = liveCatalog.get(url.searchParams.get('id') || '');
+  if (!entry) return liveJson(res, 404, { error: 'unknown channel' });
+  if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(entry.url)) return liveJson(res, 403, { error: 'upstream not allowed' });
+  return relayPlaylist(res, url, { u: entry.url, ref: headerOf(entry, 'Referer'), org: headerOf(entry, 'Origin') });
+}
+
+async function relayPlaylist(res, url, p) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 15000); // bounds the redirect chain AND the body read (Nuvio's wrapper can take ~8 s)
   try {
@@ -1524,6 +1566,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/live/matches') return await handleLiveMatches(res);
     if (url.pathname === '/live/streams') return await handleLiveStreams(res, url);
     if (url.pathname === '/live/catalog') return handleLiveCatalog(res);
+    if (url.pathname === '/live/ch') return await handleLiveChannel(req, res, url);
     if (url.pathname === '/live/channels') return await handleLiveChannels(res);
     if (url.pathname === '/live/hls') return await handleLiveHls(req, res, url);
     if (url.pathname === '/live/seg') return await handleLiveSeg(req, res, url);

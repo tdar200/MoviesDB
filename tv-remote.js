@@ -204,6 +204,9 @@ export function installTvRemote() {
     track.style.transform = `translateX(${next}px)`;
     return cardRect;
   };
+  // The header's positioning only changes with the viewport; read it once.
+  let headerPinned = null;
+  window.addEventListener('resize', () => { headerPinned = null; });
   const focus = node => {
     if (!node) return;
     node.focus({ preventScroll: true });
@@ -217,8 +220,9 @@ export function installTvRemote() {
       if (rect) {
         const section = node.closest('.tv-row');
         const header = document.querySelector('header');
-        const hr = header ? header.getBoundingClientRect() : null;
-        const topLimit = hr && hr.bottom > 0 && getComputedStyle(header).position !== 'static' ? hr.bottom + 8 : 8;
+        if (header && headerPinned === null) headerPinned = getComputedStyle(header).position !== 'static';
+        const hr = header && headerPinned ? header.getBoundingClientRect() : null;
+        const topLimit = hr && hr.bottom > 0 ? hr.bottom + 8 : 8;
         const sectionTop = section ? section.getBoundingClientRect().top : rect.top;
         if (sectionTop < topLimit) window.scrollBy(0, sectionTop - topLimit);
         else if (rect.bottom > window.innerHeight - 16) window.scrollBy(0, rect.bottom - window.innerHeight + 24);
@@ -291,6 +295,7 @@ export function installTvRemote() {
     toggleControls(false);
     window.scrollTo(0, 0);
   }));
+  let moveInFrame = false;
   document.addEventListener('keydown', event => {
     const key = event.key || ({ 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown', 13: 'Enter' })[event.keyCode];
     const active = document.activeElement;
@@ -336,6 +341,12 @@ export function installTvRemote() {
     if ((active?.tagName === 'VIDEO' || active?.id === 'ts-bar') && ['ArrowLeft', 'ArrowRight'].includes(key)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    // A held arrow key auto-repeats faster than an old TV can lay out and paint.
+    // Handle at most one move per frame and drop the surplus repeats, so focus
+    // stops where the user lets go instead of racing through a queued backlog.
+    if (event.repeat && moveInFrame) return;
+    moveInFrame = true;
+    requestAnimationFrame(() => { moveInFrame = false; });
     const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
     const sign = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1;
     const rail = active?.closest('.tv-rail, .rec-scroller');

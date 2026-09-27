@@ -122,8 +122,9 @@ test('stop destroys hls, clears the video source and the interval', async () => 
 
 test('falls back to native src when hls.js is unsupported or absent', async () => {
   const h = harness();
-  const player = createLivePlayer({ video: h.video, modal: { dataset: {} }, helperUrl: p => 'http://h' + p, setStatus: () => {}, getHls: () => null, now: () => 0, setInterval: () => 1, clearInterval: () => {} });
+  const player = createLivePlayer({ video: h.video, modal: { dataset: {} }, helperUrl: p => 'http://h' + p, setStatus: () => {}, getHls: () => null, loadHls: () => Promise.reject(new Error('offline')), now: () => 0, setInterval: () => 1, clearInterval: () => {} });
   await player.play({ title: 't', streams: [{ label: 'n', play: '/live/hls?u=9' }], refresh: async () => [] });
+  await new Promise(r => setTimeout(r, 0));
   assert.equal(h.video.src, 'http://h/live/hls?u=9');
   assert.equal(h.video.played, 1);
 });
@@ -261,4 +262,17 @@ test('a frozen playhead with no buffer ahead is not nudged (that is a real stall
   for (let i = 0; i < 10; i++) h.tick(1000);
   assert.equal(h.video.currentTime, 60);
   assert.ok(!h.log.some(e => e[0] === 'recoverMedia'));
+});
+
+test('loads hls.js on demand before the first play, and only attaches for the latest request', async () => {
+  const h = harness();
+  let Hls = null; let loads = 0;
+  const lazy = createLivePlayer({ video: h.video, modal: { dataset: {} }, helperUrl: p => 'http://h' + p, setStatus: () => {},
+    getHls: () => Hls, loadHls: async () => { loads++; await new Promise(r => setTimeout(r, 5)); Hls = { isSupported: () => false }; },
+    now: () => 0, setInterval: () => 1, clearInterval: () => {} });
+  await lazy.play({ title: 't', streams: [{ label: 'n', play: '/live/hls?u=1' }], refresh: async () => [] });
+  assert.equal(h.video.src || '', '', 'nothing attached until hls.js has loaded');
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(loads, 1);
+  assert.equal(h.video.src, 'http://h/live/hls?u=1');
 });

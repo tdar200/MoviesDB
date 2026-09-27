@@ -37,7 +37,7 @@ const NUDGE_MS = 4000;
 const RECOVER_MS = 9000;
 const FRAG_STRIKES = 2; // non-fatal fragment failures before the first frame that condemn a stream
 
-export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = () => globalThis.Hls, now = Date.now, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
+export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = () => globalThis.Hls, loadHls = () => (globalThis.__loadHls ? globalThis.__loadHls() : Promise.resolve()), now = Date.now, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
   let session = null;
   let hls = null;
   let current = null;
@@ -117,6 +117,16 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
     tried.add(stream.play);
     if (modal && modal.dataset) modal.dataset.live = '1';
     setStatus(`Connecting to ${stream.label || 'stream'}…`, false);
+    // hls.js is loaded on demand (it is most of the TV bundle); wait for it once.
+    if (!getHls()) {
+      const go = () => { if (gen === generation) attach(stream, gen); };
+      Promise.resolve().then(loadHls).then(go, go);
+      return;
+    }
+    attach(stream, gen);
+  }
+
+  function attach(stream, gen) {
     const url = helperUrl(stream.play);
     const Hls = getHls();
     let mediaRecovered = false;

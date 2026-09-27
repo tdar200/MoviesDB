@@ -63,6 +63,7 @@ export function createLiveCard(card, onSelect) {
   caption.append(element('span', 'tv-card-kicker', kicker), element('span', 'tv-card-title', card.title), element('span', 'tv-card-overview', details), footer);
   button.append(caption);
   button.setAttribute('aria-label', [card.title, kicker, details].filter(Boolean).join(', '));
+  button.__liveCard = card; // for focus-time prefetch of a match's streams
   button.addEventListener('click', () => onSelect(card));
   return button;
 }

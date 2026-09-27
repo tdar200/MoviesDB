@@ -3974,6 +3974,31 @@ const tvDetails = TV_MODE ? createTvDetails({
 async function currentMatch(match) {
   try { return findCurrentMatch((await fetchLiveJson('/live/matches')).matches, match); } catch (e) { return match; }
 }
+// Netflix-style playback preparation: when a match card holds focus for 700 ms,
+// fetch its streams in the background (the helper probes every stream, 5-15 s
+// cold), so the details screen opens with them. Kept for 60 s; an empty or
+// failed result is not kept. The player's refresh/Retry always fetches fresh.
+const LIVE_PREFETCH_DELAY_MS = 700;
+const LIVE_PREFETCH_TTL_MS = 60000;
+const liveStreamCache = new Map();
+function cachedStreamsForMatch(match) {
+  const hit = liveStreamCache.get(match.id);
+  if (hit && Date.now() - hit.at < LIVE_PREFETCH_TTL_MS) return hit.promise;
+  const promise = currentMatch(match).then(fetchStreamsForMatch);
+  const entry = { at: Date.now(), promise };
+  liveStreamCache.set(match.id, entry);
+  promise.then(list => { if (!list || !list.length) liveStreamCache.delete(match.id); }, () => liveStreamCache.delete(match.id));
+  if (liveStreamCache.size > 40) liveStreamCache.delete(liveStreamCache.keys().next().value);
+  return promise;
+}
+let livePrefetchTimer = null;
+document.addEventListener('focusin', event => {
+  clearTimeout(livePrefetchTimer);
+  const card = event.target && event.target.closest ? event.target.closest('.tv-card-live') : null;
+  const data = card && card.__liveCard;
+  if (!data || data.kind !== 'match' || !data.raw || !(data.raw.sources || []).length) return;
+  livePrefetchTimer = setTimeout(() => { cachedStreamsForMatch(data.raw).catch(() => {}); }, LIVE_PREFETCH_DELAY_MS);
+});
 async function fetchStreamsForMatch(match) {
   const lists = await Promise.all((match.sources || []).map(s =>
     fetchLiveJson(`/live/streams?adapter=${encodeURIComponent(s.adapter)}&id=${encodeURIComponent(s.sourceId)}`, 70000)
@@ -3982,7 +4007,7 @@ async function fetchStreamsForMatch(match) {
   return lists.flat();
 }
 const liveDetails = createLiveDetails({
-  fetchStreams: async match => fetchStreamsForMatch(await currentMatch(match)),
+  fetchStreams: match => cachedStreamsForMatch(match),
   onPlay: (match, streams, index) => { liveDetails.close(); openLivePlayer({ title: match.title, streams, startIndex: index, refresh: async () => fetchStreamsForMatch(await currentMatch(match)) }); },
 });
 const livePlayer = createLivePlayer({
@@ -4193,17 +4218,20 @@ const liveRowIds = section => Array.prototype.map.call(section.querySelectorAll(
 // focus routine so its rail is re-anchored.
 function paintLiveRows(rows, emptyText, statusText) {
   const sections = Array.prototype.filter.call(main.children, el => el.classList && el.classList.contains('tv-row'));
+  // Rows are windowed (tv-ui ROW_WINDOW): compare the rendered cards with the
+  // start of the new list, and the full length with what the row holds.
   const unchanged = sections.length === rows.length && rows.every((r, i) => {
-    if (sections[i].dataset.tvRow !== r.title) return false;
+    if (sections[i].dataset.tvRow !== r.title || sections[i].__total !== r.items.length) return false;
     const ids = liveRowIds(sections[i]);
-    return ids.length === r.items.length && r.items.every((item, j) => String(item.id) === ids[j]);
+    return ids.length <= r.items.length && ids.every((id, j) => String(r.items[j].id) === id);
   });
   main.querySelectorAll('.tv-live-empty, .tv-live-status').forEach(el => el.remove());
   const note = (cls, text) => Object.assign(document.createElement('p'), { className: cls, textContent: text });
   if (unchanged) {
     rows.forEach((r, i) => {
       const cards = sections[i].querySelectorAll('.tv-card');
-      r.items.forEach((item, j) => {
+      sections[i].__rest = r.items.slice(cards.length);
+      r.items.slice(0, cards.length).forEach((item, j) => {
         const fresh = createTvCard(item, card => onLiveSelect(card));
         const old = cards[j];
         old.className = fresh.className;
@@ -4318,6 +4346,8 @@ function installTvEndlessRows() {
     const card = event.target?.closest?.('.tv-card');
     const section = card?.closest?.('[data-tv-row]');
     if (!card || !section || !section.dataset.rowUrl) return;
+    // Render the row's own windowed cards before fetching another page.
+    if (section.__rest && section.__rest.length) return;
     const cards = section.querySelectorAll('.tv-card');
     if (Array.prototype.indexOf.call(cards, card) >= cards.length - 6) extendTvRow(section);
   });

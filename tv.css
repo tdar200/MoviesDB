@@ -46,11 +46,13 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-row h2 { font-size: 24px; margin: 0 0 6px; font-weight: 600; color: #e5e5e5; }
 /* Clip each rail to the viewport. Leaving a 20-70 card transformed track visible
    made the old TV repaint its full off-screen width on every D-pad press. */
-.tv-rail { overflow: hidden; padding: 22px 12px 26px; margin: 0 -12px; }
-.tv-rail-track { display: flex; gap: 14px; transition: transform .16s ease-out; }
+.tv-rail { overflow: hidden; padding: 22px 12px 26px; margin: 0 -12px; contain: paint; }
+/* Card spacing uses margins: webOS 6 (Chromium 79) ignores flex gap. */
+.tv-rail-track { display: flex; transition: transform .16s ease-out; }
+.tv-rail-track > * { margin-right: 14px; }
 /* Four rich, readable recommendations per row. Each card explains why it is worth
    opening without making the viewer leave the rail for basic context. */
-.tv-card { flex: 0 0 calc((92vw - 42px) / 4); width: calc((92vw - 42px) / 4); min-width: 240px; padding: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: #1c1c1c; color: white; text-align: left; overflow: hidden; cursor: pointer; position: relative; box-shadow: 0 6px 18px rgba(0,0,0,.28); }
+.tv-card { flex: 0 0 calc((92vw - 42px) / 4); width: calc((92vw - 42px) / 4); min-width: 240px; padding: 0; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: #1c1c1c; color: white; text-align: left; overflow: hidden; cursor: pointer; position: relative; contain: layout; }
 .tv-card-visual { display: block; position: relative; }
 .tv-card-visual::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 42%; background: linear-gradient(transparent, rgba(28,28,28,.72)); pointer-events: none; }
 .tv-card-art { display: block; width: 100%; height: 12vw; min-height: 150px; max-height: 235px; object-fit: cover; background: #303030; }
@@ -86,7 +88,7 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-picker { position: fixed; top: 10vh; bottom: 10vh; left: 22vw; right: 22vw; z-index: 200; background: #242424; box-shadow: 0 0 0 100vmax rgba(0,0,0,.88); padding: 30px; overflow: auto; border-radius: 8px; }
 .tv-picker h2 { margin: 0 0 24px; font-size: 26px; }
 .tv-picker button { display: block; width: 100%; padding: 16px; margin: 12px 0; background: #363636; color: white; border: 0; border-radius: 4px; text-align: left; font-size: 23px; }
-@supports not (aspect-ratio: 1) { .tv-rail > * { margin-right: 18px; } .tv-mode .app-tabs > * { margin-right: 10px; } .tv-mode .player-controls > * { margin-right: 15px; } }
+@supports not (aspect-ratio: 1) { .tv-mode #main > * { margin-bottom: 24px; } .tv-live-teams > * + * { margin-left: 22px; } .tv-mode .tv-kind-nav > * + * { margin-left: 8px; } .tv-hero-actions > *, .tv-details-actions > *, .tv-live-stream-list > * { margin: 0 12px 10px 0; } .tv-mode .header-top > * + * { margin-left: 30px; } .tv-mode .app-tabs > * { margin-right: 10px; } .tv-mode .player-controls > * { margin-right: 15px; } }
 .tv-mode .app-tabs { background: transparent; border-radius: 0; justify-content: flex-start; padding: 0; }
 .tv-more { margin: 12px 0 28px; padding: 18px 30px; background: #303030; color: white; border: 0; border-radius: 5px; font-size: 22px; }
 /* Native TV playback fills the screen; controls are an auto-hiding overlay. */
@@ -207,7 +209,7 @@ body.tv-mode { background: #22254b; }
 /* Live football cards */
 .tv-card-live .tv-card-visual { height: 12vw; min-height: 150px; max-height: 235px; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at top, #24304a, #141826 70%); }
 .tv-live-teams { display: flex; align-items: center; justify-content: center; gap: 22px; width: 100%; padding: 0 16px; }
-.tv-live-badge { width: 72px; height: 72px; object-fit: contain; filter: drop-shadow(0 4px 10px rgba(0,0,0,.5)); }
+.tv-live-badge { width: 72px; height: 72px; object-fit: contain; }
 .tv-live-badge-missing { width: 72px; height: 72px; border-radius: 50%; background: rgba(255,255,255,.08); }
 .tv-live-score { font-size: 34px; font-weight: 800; letter-spacing: 1px; color: #fff; min-width: 90px; text-align: center; }
 .tv-card-onair .tv-card-badge { background: #d81f26; color: #fff; }
