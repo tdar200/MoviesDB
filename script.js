@@ -2884,6 +2884,8 @@ function closePlayer() {
 
 // Show/hide loading state
 function setLoading(isLoading) {
+  // A grid/search load must not hide the Live home behind the spinner.
+  if (isLoading && liveHomeOwnsMain()) return;
   if (loadingEl) {
     loadingEl.style.display = isLoading ? 'flex' : 'none';
   }
@@ -3334,6 +3336,15 @@ async function processAndDisplayMovies(movies, isSearch = false) {
   // cache. Paint the provisional order now; refine it in the background.
   filteredMovies = sortMovies(filtered, stats);
   displayedCount = 0;
+
+  // The home is the Live one: a late trending load must not clobber it (nor paint
+  // "No movies found"). Keep the result as the seed for when the user leaves Live.
+  if (liveHomeCurrent()) {
+    if (filteredMovies.length) lastTrendingSeed = filteredMovies;
+    if (!liveHomeOwnsMain()) renderLiveHome(); // e.g. a search was cleared under Live
+    return;
+  }
+
   main.innerHTML = '';
 
   if (filteredMovies.length === 0) {
@@ -3608,7 +3619,7 @@ async function renderRecommendationsRow() {
   // Only show on the Movies home/browse view. Callers fire late (end of loadTrending,
   // debounced signal changes) — re-check ownership here rather than trusting them: the
   // rec page in particular must not get a duplicate pipeline run + injected teaser row.
-  if (!browseGridOwnsMain()) return;
+  if (!browseGridOwnsMain() || tvMediaKind === 'live') return;
 
   const items = buildSignalItems();
   if (items.basket.length === 0 && items.watched.length === 0 && items.seen.length === 0) return;
@@ -4024,7 +4035,7 @@ function setTvMediaKind(kind) {
   tvMediaKind = (kind === 'movie' || kind === 'tv' || kind === 'live') ? kind : 'all';
   document.querySelectorAll('.tv-kind-tab').forEach(b => b.classList.toggle('active', b.dataset.kind === tvMediaKind));
   window.scrollTo(0, 0);
-  if (tvMediaKind === 'live') renderLiveHome();
+  if (tvMediaKind === 'live') { setLoading(false); renderLiveHome(); }
   else { stopLiveHomeRefresh(); renderTvHome(lastTrendingSeed); }
 }
 if (TV_MODE) window.__setTvMediaKind = setTvMediaKind; // called by the injected top nav in tv-remote.js
@@ -4131,6 +4142,10 @@ async function renderTvHome(seed) {
 // Live home is on screen and nothing is open on top of it; focus is restored to
 // the same card by id so the remote never drops to <body>.
 const liveHomeCurrent = () => tvMediaKind === 'live' && (!TV_MODE || tvHomeIsCurrent());
+// Is the Live home (its rows, or its loading/empty placeholder) what #main shows now?
+function liveHomeOwnsMain() {
+  return liveHomeCurrent() && !!main.querySelector('.tv-card-live, .tv-live-empty, .tv-live-status');
+}
 
 async function fetchLiveJson(path, ms = 15000) {
   await helperBaseReady;
@@ -4161,7 +4176,7 @@ let onLiveSelect = card => {
 async function renderLiveHome() {
   stopLiveHomeRefresh();
   const token = ++tvHomeToken;
-  if (liveHomeCurrent() && !main.querySelector('.tv-row')) { main.textContent = ''; main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: 'Loading live football…' })); }
+  if (liveHomeCurrent() && !liveHomeOwnsMain()) { main.textContent = ''; main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: 'Loading live football…' })); }
   const [matchesRes, channelsRes] = await Promise.all([
     fetchLiveJson('/live/matches').catch(error => ({ error })),
     // /live/channels can take ~20 s on a cold cache (it probes every stream).

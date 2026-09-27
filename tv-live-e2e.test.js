@@ -35,7 +35,11 @@ test('Live tab: rows, details, stream picker, hls.js playback, Back, focus survi
       const name = decodeURIComponent(new URL(r.request().url()).searchParams.get('u'));
       r.fulfill({ contentType: 'video/mp2t', headers: { 'access-control-allow-origin': '*' }, body: await readFile(join(dir, name)) });
     });
-    await page.route('https://api.themoviedb.org/**', r => r.fulfill({ json: { results: [], page: 1, total_pages: 1, total_results: 0 } }));
+    // TMDB is empty until the Live checks are done: the empty first trending load must
+    // not clobber the Live home. Later requests return one title for the All-tab check.
+    let tmdbFull = false;
+    const tmdbTitle = { id: 550, title: 'Fight Club', media_type: 'movie', vote_average: 8.4, vote_count: 30000, release_date: '1999-10-15', poster_path: null, genre_ids: [18], popularity: 50 };
+    await page.route('https://api.themoviedb.org/**', r => r.fulfill({ json: tmdbFull ? { results: [tmdbTitle], page: 1, total_pages: 1, total_results: 1 } : { results: [], page: 1, total_pages: 1, total_results: 0 } }));
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?helperkey=k&helper=${encodeURIComponent(process.env.TV_TEST_URL || 'http://127.0.0.1:8123')}`);
     await page.waitForSelector('.tv-kind-tab[data-kind="live"]');
     // Keyboard only: the kind nav is focused first; ArrowRight x3 lands on Live.
@@ -78,6 +82,16 @@ test('Live tab: rows, details, stream picker, hls.js playback, Back, focus survi
     // Back from the home goes to the Live tab anchor.
     await page.keyboard.press('Escape');
     assert.equal(await page.locator(':focus').getAttribute('data-kind'), 'live');
+    // Leaving Live renders the TMDB home again, even though the first trending load
+    // finished (empty) while Live was showing.
+    tmdbFull = true;
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowLeft');
+    assert.equal(await page.locator(':focus').getAttribute('data-kind'), 'all');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#main .tv-card[data-movie-id="550"]');
+    assert.equal(await page.locator('#main .tv-card-live').count(), 0);
+    assert.equal(await page.locator('#main .no-results').count(), 0);
+    assert.equal(await page.locator('#main').isVisible(), true);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
