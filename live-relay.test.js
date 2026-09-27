@@ -16,11 +16,21 @@ test('signatures verify only for the exact url/referer/origin triple and secret'
   assert.equal(verifyUpstream({ ...P, s: s.slice(0, 31) }, S), false);
 });
 
+test('signUpstream throws when secret is empty/undefined/null, verifyUpstream returns false', () => {
+  assert.throws(() => signUpstream(P, ''), /relay secret required/);
+  assert.throws(() => signUpstream(P, undefined), /relay secret required/);
+  assert.throws(() => signUpstream(P, null), /relay secret required/);
+  assert.equal(verifyUpstream({ ...P, s: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }, ''), false);
+  assert.equal(verifyUpstream({ ...P, s: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }, undefined), false);
+});
+
 test('isPublicHttpUrl refuses private, loopback, link-local and non-http targets', () => {
   assert.equal(isPublicHttpUrl('https://cdn.example/a.m3u8'), true);
   assert.equal(isPublicHttpUrl('http://89.1.2.3:8080/x.m3u8'), true);
+  assert.equal(isPublicHttpUrl('http://100.63.255.255/x'), true, 'just before CGNAT');
+  assert.equal(isPublicHttpUrl('http://100.128.0.1/x'), true, 'just after CGNAT');
   assert.equal(isPublicHttpUrl('http://89.1.2.3:8080/x.m3u8', ['https:']), false);
-  for (const bad of ['http://127.0.0.1/x', 'http://localhost/x', 'http://10.0.0.5/x', 'http://192.168.0.189:8123/x', 'http://172.16.0.1/x', 'http://169.254.1.1/x', 'http://[::1]/x', 'http://[fe80::1]/x', 'http://[fd00::1]/x', 'http://[::ffff:127.0.0.1]/x', 'ftp://cdn.example/x', 'not a url', '']) {
+  for (const bad of ['http://127.0.0.1/x', 'http://localhost/x', 'http://localhost./x', 'http://10.0.0.5/x', 'http://192.168.0.189:8123/x', 'http://172.16.0.1/x', 'http://169.254.1.1/x', 'http://[::1]/x', 'http://[fe80::1]/x', 'http://[fe90::1]/x', 'http://[febf::1]/x', 'http://[fd00::1]/x', 'http://[::ffff:127.0.0.1]/x', 'http://[::7f00:1]/x', 'http://[::ffff:0:127.0.0.1]/x', 'http://[64:ff9b::7f00:1]/x', 'http://100.64.0.1/x', 'http://100.100.100.100/x', 'http://224.0.0.1/x', 'http://255.255.255.255/x', 'ftp://cdn.example/x', 'not a url', '']) {
     assert.equal(isPublicHttpUrl(bad), false, bad);
   }
 });
@@ -53,12 +63,13 @@ test('rewritePlaylist routes segments to /live/seg, resolving relative URLs, kee
 });
 
 test('rewritePlaylist sends master-playlist variants and .m3u8 lines to /live/hls', () => {
-  const text = ['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720', 'high/mono.m3u8', '#EXT-X-STREAM-INF:BANDWIDTH=800000', 'https://cdn.example/low/index.m3u8?e=1', 'chunklist.m3u8'].join('\n');
+  const text = ['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720', 'high/mono.m3u8', '#EXT-X-STREAM-INF:BANDWIDTH=800000', 'https://cdn.example/low/index.m3u8?e=1', 'chunklist.m3u8', '#EXT-X-STREAM-INF:BANDWIDTH=500000', 'live/abc?token=1'].join('\n');
   const out = rewritePlaylist(text, { playlistUrl: 'https://cdn.example/hls/master.m3u8', ref: P.ref, org: P.org, secret: S, key: '' }).split('\n');
   assert.equal(out[1], '#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720');
   const v = seg(out[2]); assert.equal(v.path, '/live/hls'); assert.equal(v.u, 'https://cdn.example/hls/high/mono.m3u8'); assert.equal(v.key, null);
   assert.equal(seg(out[4]).u, 'https://cdn.example/low/index.m3u8?e=1');
   assert.equal(seg(out[5]).path, '/live/hls');
+  const noExt = seg(out[7]); assert.equal(noExt.path, '/live/hls', 'variant without extension goes to /live/hls'); assert.equal(noExt.u, 'https://cdn.example/hls/live/abc?token=1');
 });
 
 test('rewritePlaylist rewrites URI= in KEY/MAP (segments) and MEDIA/I-FRAME (playlists), leaving other attributes alone', () => {
@@ -71,6 +82,13 @@ test('rewritePlaylist rewrites URI= in KEY/MAP (segments) and MEDIA/I-FRAME (pla
   assert.equal(seg(uri(out[3])).path, '/live/hls'); assert.equal(seg(uri(out[3])).u, 'https://cdn.example/p/audio/en.m3u8');
   assert.equal(seg(uri(out[4])).path, '/live/hls');
   assert.equal(seg(out[6]).u, 'https://cdn.example/p/f1.m4s');
+});
+
+test('rewritePlaylist: variantNext resets after each non-tag line, routing segments without extensions correctly', () => {
+  const text = ['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=2000', 'live/abc?token=1', '#EXTINF:5,', 'chunk?n=5'].join('\n');
+  const out = rewritePlaylist(text, { playlistUrl: 'https://cdn.example/p.m3u8', ref: '', org: '', secret: S, key: '' }).split('\n');
+  const v = seg(out[2]); assert.equal(v.path, '/live/hls', 'variant after STREAM-INF goes to /live/hls');
+  const c = seg(out[4]); assert.equal(c.path, '/live/seg', 'segment after EXTINF goes to /live/seg');
 });
 
 test('rewritePlaylist honours relayBase for absolute relay URLs', () => {
