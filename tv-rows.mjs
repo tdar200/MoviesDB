@@ -38,6 +38,44 @@ const AWARD_ROWS = [
   [10, 'Biggest Blockbusters'],
 ];
 
+// Extra browse rows for the All tab only: [key, title, type, discover params].
+// Thresholds are per row because world-cinema feeds have far fewer votes.
+const ALL_EXTRA_ROWS = [
+  ['xg12', 'Adventure', 'movie', 'with_genres=12&vote_count.gte=200'],
+  ['xg10751', 'Family Movies', 'movie', 'with_genres=10751&vote_count.gte=200'],
+  ['xg36', 'History', 'movie', 'with_genres=36&vote_count.gte=200'],
+  ['xg10752', 'War Movies', 'movie', 'with_genres=10752&vote_count.gte=200'],
+  ['xg37', 'Westerns', 'movie', 'with_genres=37&vote_count.gte=100'],
+  ['xg10402', 'Music & Musicals', 'movie', 'with_genres=10402&vote_count.gte=100'],
+  ['xtg10759', 'Action & Adventure Series', 'tv', 'with_genres=10759&vote_count.gte=200'],
+  ['xtg9648', 'Mystery Series', 'tv', 'with_genres=9648&vote_count.gte=200'],
+  ['xtg16', 'Animated Series', 'tv', 'with_genres=16&vote_count.gte=200'],
+  ['xtg10764', 'Reality TV', 'tv', 'with_genres=10764&vote_count.gte=20'],
+  ['xtg10762', 'Kids TV', 'tv', 'with_genres=10762&vote_count.gte=50'],
+  ['xtg10768', 'War & Politics Series', 'tv', 'with_genres=10768&vote_count.gte=50'],
+  ['xk10051', 'Heist Movies', 'movie', 'with_keywords=10051&vote_count.gte=100'],
+  ['xk9672', 'Based on a True Story', 'movie', 'with_keywords=9672&vote_count.gte=200'],
+  ['xk9882', 'Space', 'movie', 'with_keywords=9882&vote_count.gte=100'],
+  ['xk4565', 'Dystopian Worlds', 'movie', 'with_keywords=4565&vote_count.gte=100'],
+  ['xk10714', 'Serial Killers', 'movie', 'with_keywords=10714&vote_count.gte=100'],
+  ['xk779', 'Martial Arts', 'movie', 'with_keywords=779&vote_count.gte=100'],
+  ['xk470', 'Spies', 'movie', 'with_keywords=470&vote_count.gte=100'],
+  ['xk10349', 'Survival', 'movie', 'with_keywords=10349&vote_count.gte=100'],
+  ['xk6075', 'Sports Movies', 'movie', 'with_keywords=6075&vote_count.gte=100'],
+  ['xk12190', 'Cyberpunk', 'movie', 'with_keywords=12190&vote_count.gte=50'],
+  ['xk10854', 'Time Loops', 'movie', 'with_keywords=10854&vote_count.gte=50'],
+  ['xk207317', 'Christmas Movies', 'movie', 'with_keywords=207317&vote_count.gte=100'],
+  ['xlhi', 'Bollywood', 'movie', 'with_original_language=hi&vote_count.gte=50'],
+  ['xlko', 'Korean Dramas', 'tv', 'with_original_language=ko&with_genres=18&vote_count.gte=50'],
+  ['xlja', 'Anime Series', 'tv', 'with_original_language=ja&with_genres=16&vote_count.gte=100'],
+  ['xlur', 'Pakistani Dramas', 'tv', 'with_original_language=ur&vote_count.gte=1'],
+  ['xcgb', 'British TV', 'tv', 'with_origin_country=GB&vote_count.gte=100'],
+  ['xles', 'Spanish-Language Films', 'movie', 'with_original_language=es&vote_count.gte=200'],
+  ['xd80', '80s Classics', 'movie', 'primary_release_date.gte=1980-01-01&primary_release_date.lte=1989-12-31&vote_count.gte=500'],
+  ['xd90', '90s Classics', 'movie', 'primary_release_date.gte=1990-01-01&primary_release_date.lte=1999-12-31&vote_count.gte=500'],
+  ['xgems', 'Hidden Gems', 'movie', 'vote_average.gte=7.5&vote_count.gte=150&vote_count.lte=1500'],
+];
+
 // The curated, media-kind-aware home. `kind` is 'all' | 'movie' | 'tv'. Every row
 // is a distinct TMDB feed; each paginates endlessly in the UI. Personal rows
 // (Continue Watching, My List) and Recommended are added by the caller.
@@ -75,6 +113,8 @@ export function catalogRowDefs(apiKey, base = TMDB_BASE, kind = 'all') {
     rows.push({ key: `l${id}`, title: name, url: `${base}/list/${id}?${q}&page=1`, list: true }));
   (type === 'tv' ? TV_GENRE_ROWS : MOVIE_GENRE_ROWS).forEach(([id, name]) =>
     rows.push({ key: `g${id}`, title: name, url: disc(`with_genres=${id}`), mediaType }));
+  if (kind === 'all') ALL_EXTRA_ROWS.forEach(([key, title, t, params]) =>
+    rows.push({ key, title, url: `${base}/discover/${t}?${q}&sort_by=popularity.desc&${params}&page=1`, mediaType: t }));
   THEME_ROWS.forEach(([id, name]) =>
     rows.push({ key: `k${id}`, title: name, url: disc(`with_keywords=${id}`), mediaType }));
   PROVIDER_ROWS.forEach(([id, name]) =>

@@ -4093,7 +4093,12 @@ function effectiveMediaType() {
 
 let tvHomeToken = 0;
 let lastTrendingSeed = null;
+// Rows are fetched in batches as focus nears the bottom of the home: the first
+// batch on open, then TV_HOME_ROW_BATCH more each time. Loading all ~70 feeds up
+// front would cost the TV's scarce memory and a burst of TMDB requests.
 const TV_HOME_ROW_LIMIT = 12;
+const TV_HOME_ROW_BATCH = 8;
+let tvHomeLoadMore = null;
 const TV_HOME_CARD_LIMIT = 12;
 const TV_HOME_RECOMMENDATION_LIMIT = TV_HOME_CARD_LIMIT * 10;
 async function renderTvHome(seed) {
@@ -4172,21 +4177,33 @@ async function renderTvHome(seed) {
     }
   } catch { /* no recommendations; skip the row */ }
 
-  const defs = catalogRowDefs(CONFIG.API_KEY, CONFIG.BASE_URL, kind).slice(0, TV_HOME_ROW_LIMIT);
-  for (const def of defs) {
-    if (token !== tvHomeToken || !tvHomeIsCurrent()) return; // user navigated away
-    let items = [];
-    if (def.key === 'trending' && kind === 'all' && seed && seed.length) {
-      items = seed.slice(0, 40);
-    } else {
-      try {
-        const data = await fetchTmdbJson(def.url);
-        items = (data && (data.results || data.items)) || []; // curated lists use `items`
-      } catch (e) { items = []; }
+  const defs = catalogRowDefs(CONFIG.API_KEY, CONFIG.BASE_URL, kind);
+  let nextDef = 0;
+  const loadRows = async (count) => {
+    const end = Math.min(defs.length, nextDef + count);
+    while (nextDef < end) {
+      const def = defs[nextDef++];
+      if (token !== tvHomeToken || !tvHomeIsCurrent()) return; // user navigated away
+      let items = [];
+      if (def.key === 'trending' && kind === 'all' && seed && seed.length) {
+        items = seed.slice(0, 40);
+      } else {
+        try {
+          const data = await fetchTmdbJson(def.url);
+          items = (data && (data.results || data.items)) || []; // curated lists use `items`
+        } catch (e) { items = []; }
+      }
+      if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
+      appendEndless(def, items);
     }
-    if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
-    appendEndless(def, items);
-  }
+  };
+  let loadingMore = false;
+  tvHomeLoadMore = async () => {
+    if (loadingMore || nextDef >= defs.length || token !== tvHomeToken) return;
+    loadingMore = true;
+    try { await loadRows(TV_HOME_ROW_BATCH); } finally { loadingMore = false; }
+  };
+  await loadRows(TV_HOME_ROW_LIMIT);
 }
 
 // ---- Live football home -------------------------------------------------------
@@ -4376,7 +4393,13 @@ function installTvEndlessRows() {
   document.addEventListener('focusin', (event) => {
     const card = event.target?.closest?.('.tv-card');
     const section = card?.closest?.('[data-tv-row]');
-    if (!card || !section || !section.dataset.rowUrl) return;
+    if (!card || !section) return;
+    // Near the bottom of the home: fetch the next batch of rows.
+    if (tvHomeLoadMore && main.contains(section)) {
+      const rows = main.querySelectorAll('[data-tv-row]');
+      if (Array.prototype.indexOf.call(rows, section) >= rows.length - 3) tvHomeLoadMore();
+    }
+    if (!section.dataset.rowUrl) return;
     // Render the row's own windowed cards before fetching another page.
     if (section.__rest && section.__rest.length) return;
     const cards = section.querySelectorAll('.tv-card');

@@ -486,3 +486,47 @@ test('TV open -> play -> Back five times leaves one stopped player and the same 
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
+
+test('TV home keeps loading category rows as focus moves down, up to the last one', { skip: !process.env.TV_E2E, timeout: 120000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+    // Every feed gets its own titles so cross-row dedupe never empties a row.
+    const feedIds = new Map();
+    await page.route('https://api.themoviedb.org/**', route => {
+      const url = new URL(route.request().url());
+      if (/\/external_ids/.test(url.pathname)) return route.fulfill({ json: { imdb_id: 'tt1234567' } });
+      url.searchParams.delete('api_key');
+      const feed = url.pathname + '?' + [...url.searchParams].filter(([k]) => k !== 'page').map(p => p.join('=')).join('&');
+      if (!feedIds.has(feed)) feedIds.set(feed, 100000 + feedIds.size * 1000 + Number(url.searchParams.get('page') || 1) * 100);
+      const base = feedIds.get(feed) + (Number(url.searchParams.get('page') || 1) - 1) * 50;
+      const results = Array.from({ length: 20 }, (_, i) => ({ id: base + i, title: `Row ${base + i}`, media_type: 'movie', vote_average: 7, vote_count: 500, popularity: 50, genre_ids: [18], release_date: '2020-01-01', overview: 'x', poster_path: null, backdrop_path: null }));
+      return route.fulfill({ json: { results, items: results, cast: [], page: 1, total_pages: 5 } });
+    });
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Documentary Series'), null, { timeout: 60000 });
+    const rowCount = () => page.evaluate(() => document.querySelectorAll('#main [data-tv-row]').length);
+    const initial = await rowCount();
+    await page.keyboard.press('ArrowDown');
+    // Walk down the home; batches of rows arrive as focus nears the bottom.
+    // At the current last row, wait for the next batch before pressing on.
+    for (let i = 0; i < 200; i++) {
+      if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Max'))) break;
+      const before = await rowCount();
+      await page.keyboard.press('ArrowDown');
+      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')]; return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
+      if (atBottom) await page.waitForFunction(n => document.querySelectorAll('#main [data-tv-row]').length > n, before, { timeout: 20000 }).catch(() => {});
+    }
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Max'), null, { timeout: 30000 });
+    const titles = await page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].map(r => r.dataset.tvRow));
+    assert.ok(titles.length >= initial + 50, `rows ${initial} -> ${titles.length}`);
+    for (const t of ['Oscar Best Picture Winners', 'Bollywood', 'Pakistani Dramas', 'Heist Movies', 'Hidden Gems', 'Documentaries']) assert.ok(titles.includes(t), t);
+    assert.equal(new Set(titles).size, titles.length, 'no row appears twice');
+    const focus = await page.evaluate(() => { const a = document.activeElement; const r = a.getBoundingClientRect(); return { card: a.classList.contains('tv-card'), onScreen: r.top >= 0 && r.bottom <= innerHeight }; });
+    assert.deepEqual(focus, { card: true, onScreen: true });
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});

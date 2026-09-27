@@ -183,3 +183,21 @@ test('All tab carries documentaries: films and series', () => {
   assert.equal(series.mediaType, 'tv');
   assert.equal(series.title, 'Documentary Series');
 });
+
+test('All tab carries at least 20 extra category rows, each a distinct discover feed', () => {
+  const all = catalogRowDefs('KEY', 'https://api.themoviedb.org/3', 'all');
+  const extra = all.filter(d => d.key.startsWith('x'));
+  assert.ok(extra.length >= 20, `only ${extra.length}`);
+  assert.equal(new Set(all.map(d => d.key)).size, all.length, 'row keys are unique');
+  assert.equal(new Set(all.map(d => d.url)).size, all.length, 'no two rows share a feed');
+  for (const d of extra) {
+    assert.match(d.url, /\/discover\/(movie|tv)\?api_key=KEY&/);
+    assert.equal(d.mediaType, /\/discover\/tv/.test(d.url) ? 'tv' : 'movie', d.title);
+  }
+  for (const t of ['Bollywood', 'Korean Dramas', 'Pakistani Dramas', 'Heist Movies', 'Hidden Gems', '90s Classics', 'Reality TV']) {
+    assert.ok(extra.some(d => d.title === t), t);
+  }
+  // Movies and TV tabs keep their own focused layout.
+  assert.equal(catalogRowDefs('KEY', undefined, 'movie').some(d => d.key.startsWith('x')), false);
+  assert.equal(catalogRowDefs('KEY', undefined, 'tv').some(d => d.key.startsWith('x')), false);
+});
