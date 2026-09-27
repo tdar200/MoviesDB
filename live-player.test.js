@@ -230,3 +230,35 @@ test('playlist timeouts leave room for a slow Nuvio wrapper', () => {
   assert.ok(LIVE_HLS_CONFIG.manifestLoadingTimeOut >= 15000);
   assert.ok(LIVE_HLS_CONFIG.levelLoadingTimeOut >= 15000);
 });
+
+test('a frozen playhead with buffer ahead is nudged, then media-recovered, before the stream is abandoned', async () => {
+  const h = harness();
+  await h.player.play({ title: 't', streams: [{ label: 'only', play: '/a' }], refresh: async () => [] });
+  h.Hls.last.emit('mp', { levels: [] });
+  h.video.buffered = { length: 1, start: () => 36, end: () => 84 };
+  h.video.paused = false;
+  h.video.currentTime = 60; h.tick(1000);          // playing
+  for (let i = 0; i < 3; i++) h.tick(1000);         // stuck 3 s: nothing yet
+  assert.equal(h.video.currentTime, 60);
+  h.tick(1000);                                     // stuck 4 s: nudge
+  assert.equal(h.video.currentTime, 60.5);
+  for (let i = 0; i < 4; i++) h.tick(1000);         // still frozen at the nudged position
+  assert.ok(!h.log.some(e => e[0] === 'recoverMedia'));
+  h.tick(1000);                                     // stuck 9 s: rebuild the media pipeline
+  assert.ok(h.log.some(e => e[0] === 'recoverMedia'));
+  assert.equal(h.log.filter(e => e[0] === 'load').length, 1, 'still the same stream');
+  h.video.currentTime = 62; h.tick(1000);           // playback resumes
+  for (let i = 0; i < 10; i++) { h.video.currentTime += 1; h.tick(1000); }
+  assert.equal(h.log.filter(e => e[0] === 'destroy').length, 0, 'no failover after recovery');
+  assert.ok(!h.statuses.some(s => s[1]), 'no error shown');
+});
+
+test('a frozen playhead with no buffer ahead is not nudged (that is a real stall)', async () => {
+  const h = harness();
+  await h.player.play({ title: 't', streams: [{ label: 'only', play: '/a' }], refresh: async () => [] });
+  h.video.buffered = { length: 1, start: () => 36, end: () => 60.2 };
+  h.video.currentTime = 60; h.tick(1000);
+  for (let i = 0; i < 10; i++) h.tick(1000);
+  assert.equal(h.video.currentTime, 60);
+  assert.ok(!h.log.some(e => e[0] === 'recoverMedia'));
+});

@@ -3,7 +3,6 @@
 // or a stall moves to the next untried stream; when every stream has failed the
 // list is refreshed once (tokens expire in minutes) before giving up with a
 // Retry. No seeking, no resume, no watch-time: live is not on-demand.
-import { playbackHealth } from './playback-health.js';
 
 export const LIVE_HLS_CONFIG = {
   maxBufferLength: 10,
@@ -34,6 +33,8 @@ export const LIVE_HLS_CONFIG = {
 
 const STARTUP_MS = 30000;
 const STALL_MS = 20000;
+const NUDGE_MS = 4000;
+const RECOVER_MS = 9000;
 const FRAG_STRIKES = 2; // non-fatal fragment failures before the first frame that condemn a stream
 
 export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = () => globalThis.Hls, now = Date.now, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
@@ -62,14 +63,50 @@ export function createLivePlayer({ video, modal, helperUrl, setStatus, getHls = 
     try { video.load(); } catch { /* jsdom-less */ }
   }
 
+  // Seconds of video buffered ahead of the playhead (0 when unknown).
+  function bufferedAhead() {
+    try {
+      const b = video.buffered;
+      if (!b || !b.length) return 0;
+      const t = video.currentTime;
+      for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.1 && b.end(i) > t) return b.end(i) - t;
+    } catch { /* no buffer info */ }
+    return 0;
+  }
+
+  // Stall handling. On webOS the decoder can freeze with a healthy buffer ahead
+  // (seen on FAST channels around ad splices, 27 Sep 2026: playhead stuck at 60 s
+  // with 36-84 s buffered, readyState 4, no error). Before abandoning a stream:
+  // nudge the playhead at 4 s, rebuild the media pipeline at 9 s, fail at the
+  // startup/stall deadline. A frozen playhead with nothing buffered is a real
+  // network stall and goes straight to the deadline.
   function watchdog(gen) {
-    let health = null;
     let started = false;
+    let lastTime = null;
+    let lastMove = null;
+    let step = 0;
+    let nudgedTo = null;
     timer = setInterval(() => {
       if (gen !== generation) return;
-      if (video.currentTime > 0.25) started = true;
-      health = playbackHealth(health, { now: now(), time: video.currentTime, paused: video.paused, started, timeoutMs: started ? STALL_MS : STARTUP_MS });
-      if (health.stalled) { health = null; fail(gen, 'stalled'); }
+      const t = video.currentTime;
+      if (lastMove === null) { lastMove = now(); lastTime = t; }
+      if (t > 0.25) started = true;
+      if (t > lastTime + 0.25 && t !== nudgedTo) { lastTime = t; lastMove = now(); step = 0; nudgedTo = null; return; }
+      if (video.paused && started) { lastMove = now(); return; } // user paused
+      const stuck = now() - lastMove;
+      if (started && bufferedAhead() > 1) {
+        if (step === 0 && stuck >= NUDGE_MS) {
+          step = 1;
+          try { video.currentTime = t + 0.5; nudgedTo = video.currentTime; } catch { /* not seekable yet */ }
+        } else if (step === 1 && stuck >= RECOVER_MS) {
+          step = 2;
+          try {
+            if (hls && typeof hls.recoverMediaError === 'function') hls.recoverMediaError();
+            else { video.load(); video.play().catch(() => {}); }
+          } catch { /* fall through to the deadline */ }
+        }
+      }
+      if (stuck >= (started ? STALL_MS : STARTUP_MS)) { lastMove = null; fail(gen, 'stalled'); }
     }, 1000);
   }
 
