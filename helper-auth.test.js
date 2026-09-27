@@ -32,3 +32,12 @@ test('a request with no query at all is handled', () => {
   assert.ok(!helperRequestAllowed({ pathname: '/stream', searchParams: undefined, requiredKey: 'secret' }));
   assert.ok(helperRequestAllowed({ pathname: '/index.html', searchParams: undefined, requiredKey: 'secret' }));
 });
+
+test('every /live/* path needs the key, other static paths stay open', () => {
+  assert.equal(isHelperApiPath('/live/matches'), true);
+  assert.equal(isHelperApiPath('/live/hls'), true);
+  assert.equal(isHelperApiPath('/live/seg'), true);
+  assert.equal(isHelperApiPath('/liveness.html'), false);
+  assert.equal(helperRequestAllowed({ pathname: '/live/seg', searchParams: new URLSearchParams(''), requiredKey: 'k' }), false);
+  assert.equal(helperRequestAllowed({ pathname: '/live/seg', searchParams: new URLSearchParams('key=k'), requiredKey: 'k' }), true);
+});

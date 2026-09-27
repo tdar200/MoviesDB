@@ -14,7 +14,7 @@
 export const HELPER_API_PATHS = ['/yts', '/movie-torrents', '/tv-torrents', '/subtitles', '/subtitle', '/stream', '/stream-status', '/stream-stop'];
 
 export function isHelperApiPath(pathname) {
-  return HELPER_API_PATHS.includes(pathname) || pathname.startsWith('/hls/');
+  return HELPER_API_PATHS.includes(pathname) || pathname.startsWith('/hls/') || pathname.startsWith('/live/');
 }
 
 // True when the request may proceed. With no key configured the helper is open
