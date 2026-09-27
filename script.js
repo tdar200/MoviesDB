@@ -6,7 +6,7 @@ import { calculateScore, newestWeightedScore } from './scoring.js';
 import { playbackHealth, bufferRecovery } from './playback-health.js';
 import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow, sortTvTrackByRating } from './tv-ui.js';
 import { createTvDetails, mergeTitleRecommendations } from './tv-details.js';
-import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows, staticHomeRows } from './tv-rows.mjs';
+import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows, staticHomeRows, rowSourcesAtPage } from './tv-rows.mjs';
 import { fetchTmdbJson } from './tmdb-queue.js';
 import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
 import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentFailure } from './yts-status.js';
@@ -4102,6 +4102,23 @@ const TV_HOME_ROW_PAGES = 3;
 let tvHomeLoadMore = null;
 const TV_HOME_CARD_LIMIT = 12;
 const TV_HOME_RECOMMENDATION_LIMIT = TV_HOME_CARD_LIMIT * 10;
+// One page of a TV home row. A mixed All row (films AND shows) has a movie and a
+// tv feed; both are fetched for the same page number and merged, each item
+// stamped with its media type so playback takes the right path. `more` is true
+// while any feed has pages left.
+async function fetchTvRowPage(def, page) {
+  const pages = await Promise.all(rowSourcesAtPage(def, page).map(async src => {
+    try {
+      const data = await fetchTmdbJson(src.url);
+      let list = (data && (data.results || data.items)) || []; // curated lists use `items`
+      if (src.mediaType) list = list.map(it => (it.media_type ? it : { ...it, media_type: src.mediaType }));
+      const paged = /[?&]page=\d+/.test(src.url);
+      return { list, more: paged && list.length > 0 && page < ((data && data.total_pages) || 1) };
+    } catch (e) { return { list: [], more: false, failed: true }; }
+  }));
+  return { items: pages.flatMap(p => p.list), more: pages.some(p => p.more), failed: pages.every(p => p.failed) };
+}
+
 async function renderTvHome(seed) {
   stopLiveHomeRefresh();
   if (seed && seed.length) lastTrendingSeed = seed;
@@ -4202,22 +4219,17 @@ async function renderTvHome(seed) {
         // so after cross-row dedupe page 1 can leave a single card. Pull further
         // pages (up to TV_HOME_ROW_PAGES) until the row has a full window of new titles.
         for (let page = 1; page <= TV_HOME_ROW_PAGES; page++) {
-          let batch = [];
-          try {
-            const url = page === 1 ? def.url : def.url.replace(/([?&]page=)\d+/, `$1${page}`);
-            const data = await fetchTmdbJson(url);
-            batch = (data && (data.results || data.items)) || []; // curated lists use `items`
-            pagesLoaded = page;
-            if (page >= ((data && data.total_pages) || 1)) page = TV_HOME_ROW_PAGES;
-          } catch (e) { batch = []; }
+          const { items: batch, more } = await fetchTvRowPage(def, page);
+          if (batch.length) pagesLoaded = page;
           items = items.concat(batch);
-          if (!batch.length || !/[?&]page=\d+/.test(def.url)) break;
+          if (!batch.length || !more) break;
           if (items.filter(it => it && it.id != null && !seen.has(titleKey(it))).length >= TV_HOME_CARD_LIMIT) break;
           if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
         }
       }
       if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
       const section = appendEndless(def, items);
+      if (section) section.__rowDef = def;
       if (section && pagesLoaded > 1) section.dataset.rowPage = String(pagesLoaded);
     }
   };
@@ -4386,10 +4398,10 @@ async function extendTvRow(section) {
   const page = Number(section.dataset.rowPage || '1') + 1;
   section.dataset.rowLoading = '1';
   try {
-    const url = /[?&]page=\d+/.test(base) ? base.replace(/([?&]page=)\d+/, `$1${page}`) : `${base}${base.includes('?') ? '&' : '?'}page=${page}`;
-    const data = await fetchTmdbJson(url);
-    let items = (data && (data.results || data.items)) || []; // curated lists use `items`
-    if (section.dataset.rowMedia) items = items.map(it => (it.media_type ? it : { ...it, media_type: section.dataset.rowMedia }));
+    // Mixed All rows page their movie and tv feeds together.
+    const def = section.__rowDef || { url: base, mediaType: section.dataset.rowMedia };
+    const { items, more, failed } = await fetchTvRowPage(def, page);
+    if (failed) return; // transient; a later scroll retries this page
     const seen = tvRowSeen.get(section) || new Set();
     const fresh = dedupeItems(items, seen);
     tvRowSeen.set(section, seen);
@@ -4402,7 +4414,7 @@ async function extendTvRow(section) {
     // Stop when a page adds nothing new (empty page, or an endpoint that ignores
     // ?page= and re-returns the same items — all deduped away), or past total_pages.
     // Without the fresh===0 guard such a row would refetch forever on every scroll.
-    if (!items.length || fresh.length === 0 || page >= (data.total_pages || 500)) section.dataset.rowDone = '1';
+    if (!items.length || fresh.length === 0 || !more) section.dataset.rowDone = '1';
   } catch { /* transient; a later scroll retries */ } finally {
     section.dataset.rowLoading = '0';
   }

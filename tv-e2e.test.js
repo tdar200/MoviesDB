@@ -234,7 +234,7 @@ test('TV home shows distinct, deduped rows and Back from details returns to the 
     await page.waitForFunction(() => [...document.querySelectorAll('.tv-row h2')].some(h => h.textContent === 'Critically Acclaimed'));
     // Several distinct rows, not slices of one feed.
     const headings = await page.locator('.tv-row h2').allTextContents();
-    for (const h of ['Trending This Week', 'Popular Movies', 'Top Rated', 'New Releases', 'Critically Acclaimed']) assert.ok(headings.includes(h), `missing row ${h}`);
+    for (const h of ['Trending This Week', 'Popular Now', 'Top Rated', 'New Releases & Episodes', 'Critically Acclaimed']) assert.ok(headings.includes(h), `missing row ${h}`);
     // A fresh profile has no taste signal, so no unpersonalised "Recommended" row
     // swallows the catalogue rows above.
     assert.ok(!headings.includes('Recommended for You'));
@@ -507,23 +507,24 @@ test('TV home keeps loading category rows as focus moves down, up to the last on
       return route.fulfill({ json: { results, items: results, cast: [], page: 1, total_pages: 5 } });
     });
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
-    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Documentary Series'), null, { timeout: 60000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Action & Adventure'), null, { timeout: 60000 });
     const rowCount = () => page.evaluate(() => document.querySelectorAll('#main [data-tv-row]').length);
     const initial = await rowCount();
     await page.keyboard.press('ArrowDown');
     // Walk down the home; batches of rows arrive as focus nears the bottom.
     // At the current last row, wait for the next batch before pressing on.
     for (let i = 0; i < 200; i++) {
-      if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Max'))) break;
+      if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+'))) break;
       const before = await rowCount();
       await page.keyboard.press('ArrowDown');
       const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')]; return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
       if (atBottom) await page.waitForFunction(n => document.querySelectorAll('#main [data-tv-row]').length > n, before, { timeout: 20000 }).catch(() => {});
     }
-    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Max'), null, { timeout: 30000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+'), null, { timeout: 30000 });
     const titles = await page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].map(r => r.dataset.tvRow));
-    assert.ok(titles.length >= initial + 50, `rows ${initial} -> ${titles.length}`);
-    for (const t of ['Oscar Best Picture Winners', 'Bollywood', 'Pakistani Dramas', 'Heist Movies', 'Hidden Gems', 'Documentaries']) assert.ok(titles.includes(t), t);
+    assert.ok(titles.length >= initial + 45, `rows ${initial} -> ${titles.length}`);
+    for (const t of ['Oscar Best Picture Winners', 'Comedy', 'Bollywood & Indian', 'Pakistani', 'Heists', 'Hidden Gems', 'Documentaries']) assert.ok(titles.includes(t), t);
+    assert.equal(titles.some(t => / Series$/.test(t)), false, 'All mixes films and shows in one row per category');
     assert.equal(new Set(titles).size, titles.length, 'no row appears twice');
     const focus = await page.evaluate(() => { const a = document.activeElement; const r = a.getBoundingClientRect(); return { card: a.classList.contains('tv-card'), onScreen: r.top >= 0 && r.bottom <= innerHeight }; });
     assert.deepEqual(focus, { card: true, onScreen: true });
@@ -543,11 +544,12 @@ test('a row whose first page repeats an earlier row still fills its window from 
     await page.route('https://api.themoviedb.org/**', route => {
       const url = new URL(route.request().url());
       const pg = Number(url.searchParams.get('page') || 1);
-      // Top Rated Shows and page 1 of Drama Series are the same 20 shows.
+      // The shows in Top Rated and page 1 of the Drama row's tv feed are the same 20.
       if (/\/tv\/top_rated/.test(url.pathname)) return route.fulfill({ json: { results: mk(900000, 20, 9), page: pg, total_pages: 1 } });
       if (/\/discover\/tv/.test(url.pathname) && url.searchParams.get('with_genres') === '18') {
         return route.fulfill({ json: { results: pg === 1 ? mk(900000, 20, 9) : mk(910000 + pg * 100, 20, 8.5 - pg * 0.3), page: pg, total_pages: 10 } });
       }
+      if (/\/discover\/movie/.test(url.pathname) && url.searchParams.get('with_genres') === '18') return route.fulfill({ json: { results: [], page: pg, total_pages: 1 } });
       url.searchParams.delete('api_key'); url.searchParams.delete('page');
       const feed = url.pathname + url.search;
       if (!feedIds.has(feed)) feedIds.set(feed, 100000 + feedIds.size * 1000);
@@ -556,11 +558,21 @@ test('a row whose first page repeats an earlier row still fills its window from 
       return route.fulfill({ json: { results, items: results, cast: [], page: pg, total_pages: 5 } });
     });
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
-    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Drama Series'), null, { timeout: 60000 });
-    const drama = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-tv-row]')].find(x => x.dataset.tvRow === 'Drama Series'); const c = [...r.querySelectorAll('.tv-card')]; return { n: c.length, ids: c.map(x => Number(x.dataset.movieId)), ratings: c.map(x => Number(x.dataset.rating)) }; });
-    assert.ok(drama.n >= 12, `Drama Series shows ${drama.n} cards`);
-    assert.ok(drama.ids.every(id => id >= 910000), 'none of the titles already shown in Top Rated Shows');
-    assert.deepEqual(drama.ratings, [...drama.ratings].sort((a, b) => b - a), 'highest rated first');
+    // Drama is past the first batch of rows: walk down until it loads.
+    await page.waitForFunction(() => document.querySelectorAll('#main [data-tv-row]').length >= 10, null, { timeout: 60000 });
+    await page.keyboard.press('ArrowDown');
+    for (let i = 0; i < 60; i++) {
+      if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Drama'))) break;
+      const before = await page.evaluate(() => document.querySelectorAll('#main [data-tv-row]').length);
+      await page.keyboard.press('ArrowDown');
+      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')]; return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
+      if (atBottom) await page.waitForFunction(n => document.querySelectorAll('#main [data-tv-row]').length > n, before, { timeout: 20000 }).catch(() => {});
+    }
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Drama'), null, { timeout: 30000 });
+    const drama = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-tv-row]')].find(x => x.dataset.tvRow === 'Drama'); const c = [...r.querySelectorAll('.tv-card')]; return { n: c.length, ids: c.map(x => Number(x.dataset.movieId)), scores: c.map(x => Number(x.dataset.score)) }; });
+    assert.ok(drama.n >= 12, `Drama shows ${drama.n} cards`);
+    assert.ok(drama.ids.every(id => id >= 910000), 'none of the shows already in Top Rated');
+    assert.deepEqual(drama.scores, [...drama.scores].sort((a, b) => b - a), 'highest (weighted) rating first');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

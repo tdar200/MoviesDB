@@ -1,4 +1,4 @@
-import { orderRowItems } from './tv-rows.mjs';
+import { orderRowItems, weightedRating } from './tv-rows.mjs';
 import { createLiveCard } from './live-ui.js';
 
 // TV presentation shares the existing catalogue, preferences, and player.
@@ -30,6 +30,7 @@ export function createTvCard(movie, onSelect) {
   card.type = 'button';
   card.dataset.movieId = movie.id;
   card.dataset.rating = String(Number(movie.vote_average) || 0);
+  card.dataset.score = String(weightedRating(movie)); // row order; the star shows the plain rating
   const score = Number(movie.vote_average) > 0 ? Number(movie.vote_average).toFixed(1) : '';
   const facts = [yearOf(movie), kindOf(movie), genreOf(movie), score && `${score} stars`].filter(Boolean);
   card.setAttribute('aria-label', [titleOf(movie), ...facts].join(', '));
@@ -177,7 +178,7 @@ export function sortTvTrackByRating(track) {
   const focused = document.activeElement;
   const restoreFocus = !!(focused && focused.classList?.contains('tv-card') && track.contains(focused));
   Array.from(track.querySelectorAll('.tv-card'))
-    .sort((a, b) => (Number(b.dataset.rating) || 0) - (Number(a.dataset.rating) || 0))
+    .sort((a, b) => (Number(b.dataset.score || b.dataset.rating) || 0) - (Number(a.dataset.score || a.dataset.rating) || 0))
     .forEach(card => track.append(card));
   if (restoreFocus && focused.isConnected) focused.focus({ preventScroll: true });
 }

@@ -174,42 +174,64 @@ test('orderRowItems leaves rows flagged noSort in their given order', () => {
   assert.deepEqual(orderRowItems({ key: 'today', items }).map(i => i.id), [2, 1]);
 });
 
-test('All tab carries documentaries: films and series', () => {
-  const defs = catalogRowDefs('KEY', 'https://api.themoviedb.org/3', 'all');
-  const films = defs.find(d => d.key === 'g99');
-  const series = defs.find(d => d.key === 'tvg99');
-  assert.ok(films && /discover\/movie.*with_genres=99/.test(films.url));
-  assert.ok(series && /discover\/tv.*with_genres=99/.test(series.url));
-  assert.equal(series.mediaType, 'tv');
-  assert.equal(series.title, 'Documentary Series');
-});
-
-test('All tab carries at least 20 extra category rows, each a distinct discover feed', () => {
-  const all = catalogRowDefs('KEY', 'https://api.themoviedb.org/3', 'all');
-  const extra = all.filter(d => d.key.startsWith('x'));
-  assert.ok(extra.length >= 20, `only ${extra.length}`);
-  assert.equal(new Set(all.map(d => d.key)).size, all.length, 'row keys are unique');
-  assert.equal(new Set(all.map(d => d.url)).size, all.length, 'no two rows share a feed');
-  for (const d of extra) {
-    assert.match(d.url, /\/discover\/(movie|tv)\?api_key=KEY&/);
-    assert.equal(d.mediaType, /\/discover\/tv/.test(d.url) ? 'tv' : 'movie', d.title);
-  }
-  for (const t of ['Bollywood', 'Korean Dramas', 'Pakistani Dramas', 'Heist Movies', 'Hidden Gems', '90s Classics', 'Reality TV']) {
-    assert.ok(extra.some(d => d.title === t), t);
-  }
-  // Movies and TV tabs keep their own focused layout.
-  assert.equal(catalogRowDefs('KEY', undefined, 'movie').some(d => d.key.startsWith('x')), false);
-  assert.equal(catalogRowDefs('KEY', undefined, 'tv').some(d => d.key.startsWith('x')), false);
-});
-
-test('category rows are fetched highest-rated first, with a vote floor so obscure 10/10s do not lead', () => {
+test('category rows are fetched highest-rated first, with a vote floor so obscure 10/10s do not lead', async () => {
+  const { rowSources } = await import('./tv-rows.mjs');
   for (const kind of ['all', 'movie', 'tv']) {
-    for (const d of catalogRowDefs('KEY', 'https://api.themoviedb.org/3', kind).filter(r => /\/discover\//.test(r.url))) {
-      const q = new URL(d.url).searchParams;
-      assert.equal(q.get('sort_by'), 'vote_average.desc', `${kind}: ${d.title}`);
-      assert.ok(Number(q.get('vote_count.gte')) >= 3, `${kind}: ${d.title} has a vote floor`);
+    for (const d of catalogRowDefs('KEY', 'https://api.themoviedb.org/3', kind)) {
+      for (const src of rowSources(d).filter(x => /\/discover\//.test(x.url))) {
+        const q = new URL(src.url).searchParams;
+        assert.equal(q.get('sort_by'), 'vote_average.desc', `${kind}: ${d.title}`);
+        assert.ok(Number(q.get('vote_count.gte')) >= 3, `${kind}: ${d.title} has a vote floor`);
+      }
     }
   }
-  const adventure = catalogRowDefs('KEY', undefined, 'all').find(d => d.title === 'Adventure');
-  assert.ok(Number(new URL(adventure.url).searchParams.get('vote_count.gte')) >= 500);
+  const action = catalogRowDefs('KEY', undefined, 'all').find(d => d.title === 'Action & Adventure');
+  const film = rowSources(action).find(x => x.mediaType === 'movie');
+  assert.ok(Number(new URL(film.url).searchParams.get('vote_count.gte')) >= 500);
+});
+
+test('All tab: each category is one row mixing films and shows, not separate film and series rows', async () => {
+  const { rowSources } = await import('./tv-rows.mjs');
+  const all = catalogRowDefs('KEY', 'https://api.themoviedb.org/3', 'all');
+  const titles = all.map(d => d.title);
+  assert.equal(titles.some(t => / Series$/.test(t)), false, 'no "X Series" rows on All');
+  assert.equal(new Set(titles).size, titles.length, 'one row per category');
+  assert.ok(all.length >= 60, `${all.length} rows`);
+  for (const t of ['Comedy', 'Drama', 'Crime', 'Documentaries', 'Horror', 'Heists', 'Pakistani', 'Korean', 'British', '90s Classics', 'On Netflix']) {
+    const row = all.find(d => d.title === t);
+    assert.ok(row, t);
+    const kinds = rowSources(row).map(s => s.mediaType).sort();
+    assert.deepEqual(kinds, ['movie', 'tv'], `${t} mixes films and shows`);
+    for (const s of rowSources(row)) assert.match(s.url, new RegExp(`/discover/${s.mediaType}\\?`), `${t} ${s.mediaType}`);
+  }
+  // Core rails mix too; Trending is already mixed at the source.
+  for (const key of ['popular', 'top_rated', 'now_playing', 'highly_rated']) {
+    assert.deepEqual(rowSources(all.find(d => d.key === key)).map(s => s.mediaType).sort(), ['movie', 'tv'], key);
+  }
+  assert.match(all.find(d => d.key === 'trending').url, /\/trending\/all\//);
+  const everyUrl = all.flatMap(d => rowSources(d).map(s => s.url));
+  assert.equal(new Set(everyUrl).size, everyUrl.length, 'no two rows share a feed');
+});
+
+test('rowSourcesAtPage pages every source of a mixed row together', async () => {
+  const { rowSourcesAtPage } = await import('./tv-rows.mjs');
+  const comedy = catalogRowDefs('KEY', 'https://api.themoviedb.org/3', 'all').find(d => d.title === 'Comedy');
+  const p3 = rowSourcesAtPage(comedy, 3);
+  assert.equal(p3.length, 2);
+  for (const s of p3) assert.match(s.url, /[?&]page=3(&|$)/);
+  const single = rowSourcesAtPage({ url: 'https://x/y?a=1&page=1', mediaType: 'movie' }, 2);
+  assert.deepEqual(single, [{ url: 'https://x/y?a=1&page=2', mediaType: 'movie', list: undefined }]);
+});
+
+test('rows sort by vote-weighted rating, so a 9.4 from few votes does not beat a well-rated classic', async () => {
+  const { weightedRating } = await import('./tv-rows.mjs');
+  const fewVotes = { id: 1, vote_average: 9.4, vote_count: 900 };
+  const classic = { id: 2, vote_average: 8.7, vote_count: 28000 };
+  const mid = { id: 3, vote_average: 8.5, vote_count: 20000 };
+  assert.ok(weightedRating(classic) > weightedRating(fewVotes));
+  assert.deepEqual(sortItemsByRating([fewVotes, mid, classic]).map(i => i.id), [2, 3, 1]);
+  // No vote count (curated static lists): the plain rating stands.
+  assert.equal(weightedRating({ vote_average: 8.1 }), 8.1);
+  // Weighting pulls toward the mean, never past the raw rating.
+  assert.ok(weightedRating(fewVotes) < 9.4 && weightedRating(fewVotes) > 6.8);
 });
