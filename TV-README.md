@@ -52,7 +52,7 @@ Device validation used the configured LG TV, whose browser reports Chrome 79. Th
 
 LG references: [remote keys](https://webostv.developer.lge.com/develop/guides/magic-remote), [Back handling](https://webostv.developer.lge.com/develop/guides/back-button), [CLI deployment](https://webostv.developer.lge.com/develop/tools/cli-dev-guide).
 
-TV subtitles are rendered by the app because the native HLS player rejected sidecar tracks on the test TV. Embedded subtitle caches refresh as the torrent downloads and are separated by episode file. HLS sessions and their temporary segments are removed on close, source change, or helper shutdown; sessions nobody has read for 3 minutes (the open player pings every 30 seconds, even while paused) are stopped.
+TV subtitles are rendered by the app because the native HLS player rejected sidecar tracks on the test TV. Embedded subtitle caches refresh as the torrent downloads and are separated by episode file. HLS sessions and their temporary segments are removed on close, source change, or helper shutdown; inactive sessions expire after 30 minutes.
 
 YTS media downloads on the helper computer under `/tmp/webtorrent/`, not on the TV. It streams while downloading; normal playback teardown deletes its torrent store. Temporary HLS output uses `/tmp/moviesdb-hls-*`. Interrupted processes can leave temporary files behind.
 

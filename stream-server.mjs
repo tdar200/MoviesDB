@@ -213,10 +213,11 @@ const client = new WebTorrent({
   uploadLimit: Number.isFinite(UPLOAD_LIMIT) ? UPLOAD_LIMIT : 262144,
   downloadLimit: Number.isFinite(DOWNLOAD_LIMIT) ? DOWNLOAD_LIMIT : 1572864,
 });
-// The open player pings its playlist every 30 s (even when paused), so 3 min of
-// silence means the viewer left (app closed or suspended): stop ffmpeg then
-// instead of letting it run for half an hour.
-const hlsSessions = new HlsSessions({ tmpDir: HLS_DIR, idleMs: 3 * 60000 });
+// Keep the 30 min default. A 3 min sweep was tried (27 Sep 2026) and reverted:
+// an older TV bundle was seen with a paused player sending no keep-alive pings,
+// and a short sweep would delete the session under a paused movie. The current
+// bundle does ping every 30 s while paused (verified on the TV).
+const hlsSessions = new HlsSessions({ tmpDir: HLS_DIR });
 // The app can be served from a different origin than the stream helper (e.g. the UI
 // hosted on Vercel while streams still come from this machine). The provider bridge
 // must match the app's actual origin, so it is configurable and defaults to the
