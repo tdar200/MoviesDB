@@ -44,6 +44,7 @@ import { createNuvioAdapter } from './live-source-nuvio.mjs';
 import { selectTodayFixtures, joinFixtures, sortMatches } from './live-match.mjs';
 import { createChannelFeed } from './live-channels.mjs';
 import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHeaders } from './live-relay.mjs';
+import { probeStream, createStreamHealth } from './live-health.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
   fileTrackId, embeddedTrackId, externalTrackId, stremioTrackId, ytsSubtitleTrackId, parseTrackId,
@@ -103,6 +104,13 @@ const LIVE_ALLOW_PRIVATE = process.env.LIVE_RELAY_ALLOW_PRIVATE === '1'; // inte
 const liveFixtures = createFixturesFeed({ fetchImpl: resolvingFetch });
 const liveSources = createSourceRegistry([createNuvioAdapter({ fetchImpl: resolvingFetch })]);
 const liveChannels = createChannelFeed({ fetchImpl: resolvingFetch });
+// Probe each stream once (2-min cache) so /live/streams drops broken ones and
+// lists playable ones first; see live-health.mjs for the 2026-09-27 measurements.
+const liveHealth = createStreamHealth({
+  probe: s => probeStream(s, {
+    fetchUpstream: (u, headers, signal) => fetchUpstreamGuarded(u, { ...upstreamHeaders(s.referer, s.origin), ...headers }, signal).then(r => r.upstream),
+  }),
+});
 const LIVE_JSON = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
 const liveJson = (res, status, body) => { res.writeHead(status, LIVE_JSON); res.end(JSON.stringify(body)); };
 // Feed modules call fetch with no signal; undici can wait ~300 s and the DNS-fallback
@@ -1058,9 +1066,12 @@ async function handleLiveStreams(res, url) {
   if (!adapter || !id) return liveJson(res, 404, { error: 'unknown adapter or id' });
   try {
     const streams = await withDeadline(adapter.streamsFor(id), LIVE_FEED_DEADLINE_MS, `${adapter.name} streams`);
+    const ranked = await liveHealth.rank(streams);
+    const counts = ranked.reduce((acc, s) => { acc[s.health] = (acc[s.health] || 0) + 1; return acc; }, {});
+    console.log(`[live] streams ${adapter.name}:${id.slice(0, 40)} total=${streams.length} kept=${ranked.length} ${JSON.stringify(counts)}`);
     // The client never sees upstream URLs or headers; only signed relay paths.
-    liveJson(res, 200, { streams: streams.sort((a, b) => (b.rank || 0) - (a.rank || 0)).map(s => ({
-      label: s.label, language: s.language, quality: s.quality, rank: s.rank,
+    liveJson(res, 200, { streams: ranked.map(s => ({
+      label: s.label, language: s.language, quality: s.quality, rank: s.rank, health: s.health,
       play: relayPath('hls', { u: s.url, ref: s.referer, org: s.origin }, LIVE_SECRET),
     })) });
   } catch (err) { liveJson(res, isLiveTimeout(err) ? 504 : 502, { error: String(err.message || err) }); }
@@ -1142,17 +1153,28 @@ async function handleLiveHls(req, res, url) {
   }
 }
 
+const LIVE_SEG_HEADERS_DEADLINE_MS = 10000;
 async function handleLiveSeg(req, res, url) {
   const p = liveRelayParams(url);
   if (p.error) return liveJson(res, 403, { error: p.error });
   const ac = new AbortController();
   req.on('close', () => ac.abort());
+  // A dead segment CDN must fail fast: upstream response headers (after every
+  // redirect hop) must arrive within this deadline. The body stream itself stays
+  // unbounded; a client disconnect already aborts it.
+  let headersTimedOut = false;
+  const headersTimer = setTimeout(() => { headersTimedOut = true; ac.abort(); }, LIVE_SEG_HEADERS_DEADLINE_MS);
   let upstream;
   try { ({ upstream } = await fetchUpstreamGuarded(p.u, upstreamHeaders(p.ref, p.org), ac.signal)); }
   catch (err) {
     if (err.status === 403) console.log(`[live] 403 ${err.message}`);
-    if (!res.headersSent) liveJson(res, err.status || 502, { error: String(err.message || err) });
+    if (!res.headersSent) {
+      if (headersTimedOut) liveJson(res, 504, { error: 'upstream timeout' });
+      else liveJson(res, err.status || 502, { error: String(err.message || err) });
+    }
     return;
+  } finally {
+    clearTimeout(headersTimer);
   }
   if (!upstream.ok) { res.writeHead(upstream.status, LIVE_JSON); return res.end(); }
   const headers = { 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'content-type': (upstream.headers && upstream.headers.get && upstream.headers.get('content-type')) || 'video/mp2t' };
