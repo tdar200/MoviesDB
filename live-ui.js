@@ -54,7 +54,7 @@ export function createLiveCard(card, onSelect) {
   const caption = element('div', 'tv-card-caption');
   const kicker = isChannel ? 'Channel' : (live.league || 'Football');
   const label = isChannel ? '' : kickoffLabel(live.kickoff, Date.now()).relative;
-  const details = isChannel ? '24/7 sports channel' : [label, (live.broadcasters || []).slice(0, 2).join(', ')].filter(Boolean).join('  ·  ') || 'Football';
+  const details = isChannel ? (live.height ? `${live.height}p  ·  24/7 sports channel` : '24/7 sports channel') : [label, (live.broadcasters || []).slice(0, 2).join(', ')].filter(Boolean).join('  ·  ') || 'Football';
   const footer = element('span', 'tv-card-footer');
   footer.append(
     element('span', 'tv-card-year', isChannel ? 'Live' : live.state === 'in' ? 'In play' : live.state === 'post' ? 'Finished' : 'Upcoming'),

@@ -164,7 +164,7 @@ test('probeStream cancels the body of a non-ok response', async () => {
 test('probeStream reports the best variant height of a master playlist', async () => {
   const fetchUpstream = fakeUpstream({
     [S.url]: { status: 200, body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=700000,RESOLUTION=960x540\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080\nhigh.m3u8\n' },
-    'https://nuviosports.xyz/api/low.m3u8': { status: 200, body: '#EXTM3U\n#EXTINF:4,\nhttps://cdn.example/1.ts\n' },
+    'https://nuviosports.xyz/api/high.m3u8': { status: 200, body: '#EXTM3U\n#EXTINF:4,\nhttps://cdn.example/1.ts\n' },
     'https://cdn.example/1.ts': { status: 200, body: [0x47] },
   });
   assert.deepEqual(await probeStream(S, { fetchUpstream }), { status: 'ok', detail: 'ts', height: 1080 });
@@ -181,4 +181,62 @@ test('createStreamHealth ranks working streams by height, then rank; probe heigh
     { url: 'e', rank: 60, height: 720 },
   ]);
   assert.deepEqual(out.map(s => [s.url, s.height, s.health]), [['b', 1080, 'ok'], ['e', 720, 'ok'], ['c', 720, 'ok'], ['a', 480, 'ok'], ['d', 1080, 'timeout']]);
+});
+
+// A segment hidden behind a fake image header: 42 bytes of RIFF/WEBP, then TS packets.
+function wrappedTs(prefix = 'RIFF\x22\x00\x00\x00WEBPVP8 ', packets = 4) {
+  const head = Buffer.from(prefix.padEnd(42, '\x00'), 'latin1');
+  const ts = Buffer.alloc(188 * packets, 0xff);
+  for (let i = 0; i < packets; i++) ts[i * 188] = 0x47;
+  return [...head, ...ts];
+}
+
+test('tsSyncOffset finds MPEG-TS packets after a fake image header', async () => {
+  const { tsSyncOffset } = await import('./live-health.mjs');
+  assert.equal(tsSyncOffset(Uint8Array.from(wrappedTs())), 42);
+  const plain = Buffer.alloc(188 * 3, 0xff); plain[0] = plain[188] = plain[376] = 0x47;
+  assert.equal(tsSyncOffset(plain), 0);
+  assert.equal(tsSyncOffset(Uint8Array.from(Buffer.from('RIFF....WEBP' + 'x'.repeat(2000), 'latin1'))), -1, 'a real image has no TS packets');
+});
+
+test('probeStream plays image-wrapped TS (hls.js skips the header) and measures the true height', async () => {
+  const measured = [];
+  const fetchUpstream = fakeUpstream({
+    [S.url]: { status: 200, body: '#EXTM3U\n#EXTINF:5,\nhttps://img.example/1.png#.ts\n' },
+    'https://img.example/1.png#.ts': { status: 200, body: wrappedTs() },
+  });
+  const measureHeight = async bytes => { measured.push(bytes[0]); return 1080; };
+  assert.deepEqual(await probeStream(S, { fetchUpstream, measureHeight }), { status: 'ok', detail: 'ts-wrapped', height: 1080 });
+  assert.deepEqual(measured, [0x47], 'measure gets the bytes from the first TS packet on');
+});
+
+test('probeStream: a measured height overrides the master playlist, and a real image is still dropped', async () => {
+  const fetchUpstream = fakeUpstream({
+    [S.url]: { status: 200, body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080\nhi.m3u8\n' },
+    'https://nuviosports.xyz/api/hi.m3u8': { status: 200, body: '#EXTM3U\n#EXTINF:4,\nhttps://cdn.example/1.ts\n' },
+    'https://cdn.example/1.ts': { status: 200, body: [0x47, 0x40, 0x11] },
+  });
+  assert.deepEqual(await probeStream(S, { fetchUpstream, measureHeight: async () => 720 }), { status: 'ok', detail: 'ts', height: 720 });
+  assert.deepEqual(await probeStream(S, { fetchUpstream, measureHeight: async () => 0 }), { status: 'ok', detail: 'ts', height: 1080 }, 'unmeasurable -> keep the advertised height');
+  assert.deepEqual(await probeStream(S, { fetchUpstream, measureHeight: async () => { throw new Error('ffprobe missing'); } }), { status: 'ok', detail: 'ts', height: 1080 });
+  const image = fakeUpstream({ [S.url]: { status: 200, body: '#EXTM3U\n#EXTINF:4,\nhttps://img.example/x.png\n' }, 'https://img.example/x.png': { status: 200, body: 'RIFF\x00\x00\x00\x00WEBP' + 'z'.repeat(500) } });
+  assert.deepEqual(await probeStream(S, { fetchUpstream: image }), { status: 'wrapped', detail: 'wrapped' });
+});
+
+test('probeStream follows the highest variant of a master playlist, not the first', async () => {
+  const calls = [];
+  const fetchUpstream = fakeUpstream({
+    [S.url]: { status: 200, body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=426x240\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nhigh.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720\nmid.m3u8\n' },
+    'https://nuviosports.xyz/api/high.m3u8': { status: 200, body: '#EXTM3U\n#EXTINF:4,\nhttps://cdn.example/h.ts\n' },
+    'https://cdn.example/h.ts': { status: 200, body: [0x47] },
+  }, calls);
+  assert.deepEqual(await probeStream(S, { fetchUpstream, measureHeight: async () => 1080 }), { status: 'ok', detail: 'ts', height: 1080 });
+  assert.ok(calls.some(c => c.url.endsWith('/high.m3u8')) && !calls.some(c => c.url.endsWith('/low.m3u8')));
+});
+
+test('bestVariantUri picks by resolution, then bandwidth, and falls back to the first', async () => {
+  const { bestVariantUri } = await import('./live-health.mjs');
+  assert.equal(bestVariantUri('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=9\nb.m3u8\n'), 'b.m3u8');
+  assert.equal(bestVariantUri('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=9,RESOLUTION=640x360\na.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1280x720\nb.m3u8\n'), 'b.m3u8');
+  assert.equal(bestVariantUri('#EXTM3U\n#EXTINF:4,\nseg.ts\n'), null);
 });

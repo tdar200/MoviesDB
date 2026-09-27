@@ -46,15 +46,35 @@ function headersFor(stream) {
   return h;
 }
 
-async function readFirstBytes(res, n = 16) {
+// Offset of the first MPEG-TS packet: three 0x47 sync bytes 188 apart, within
+// the first 4 KB. Several sources hide each segment behind a small fake image
+// header (RIFF/WEBP, PNG); hls.js skips it and plays the TS, so we must too.
+export function tsSyncOffset(b) {
+  const limit = Math.min(4096, b.length - 377);
+  for (let k = 0; k <= limit; k++) if (b[k] === 0x47 && b[k + 188] === 0x47 && b[k + 376] === 0x47) return k;
+  return -1;
+}
+
+// Enough of the first segment to classify it and, with ffprobe, read the SPS
+// (width/height), which sits at the start of the first keyframe.
+const SEGMENT_SAMPLE_BYTES = 256 * 1024;
+
+async function readFirstBytes(res, n = SEGMENT_SAMPLE_BYTES) {
   if (res.body && typeof res.body.getReader === 'function') {
     const reader = res.body.getReader();
+    const chunks = []; let total = 0;
     try {
-      const { value } = await reader.read();
-      return value ? value.subarray(0, n) : new Uint8Array(0);
+      while (total < n) {
+        const { value, done } = await reader.read();
+        if (done || !value) break;
+        chunks.push(value); total += value.length;
+      }
     } finally {
       reader.cancel().catch(() => {});
     }
+    const out = new Uint8Array(Math.min(total, n)); let at = 0;
+    for (const c of chunks) { const take = Math.min(c.length, out.length - at); out.set(c.subarray(0, take), at); at += take; if (at >= out.length) break; }
+    return out;
   }
   return new Uint8Array(await res.arrayBuffer()).subarray(0, n);
 }
@@ -77,7 +97,25 @@ export function maxVariantHeight(text) {
   return max;
 }
 
-export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = {}) {
+// URI of the sharpest variant in a master playlist (by RESOLUTION height, then
+// BANDWIDTH), or null for a media playlist. Probing the first variant measured
+// the lowest rung of many ladders (e.g. 240p for a 1080p channel).
+export function bestVariantUri(text) {
+  const lines = String(text || '').split('\n').map(l => l.replace(/\r$/, '').trim());
+  let best = null;
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].startsWith('#EXT-X-STREAM-INF:')) continue;
+    let j = i + 1;
+    while (j < lines.length && (!lines[j] || lines[j].startsWith('#'))) j++;
+    if (j >= lines.length) break;
+    const h = Number((/RESOLUTION=\d+x(\d+)/.exec(lines[i]) || [])[1] || 0);
+    const bw = Number((/[^-]BANDWIDTH=(\d+)/.exec(',' + lines[i].slice(18)) || [])[1] || 0);
+    if (!best || h > best.h || (h === best.h && bw > best.bw)) best = { uri: lines[j], h, bw };
+  }
+  return best ? best.uri : null;
+}
+
+export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000, measureHeight = null } = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const headers = headersFor(stream);
@@ -92,10 +130,10 @@ export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = 
     let url = stream.url;
     let text = await getPlaylist(url, 'playlist');
     let first = firstMediaUri(text);
-    const height = maxVariantHeight(text);
+    let height = maxVariantHeight(text);
     const ok = detail => (height ? { status: 'ok', detail, height } : { status: 'ok', detail });
     if (first && first.isVariant) {
-      url = new URL(first.uri, url).href;
+      url = new URL(bestVariantUri(text) || first.uri, url).href;
       text = await getPlaylist(url, 'variant');
       first = firstMediaUri(text);
     }
@@ -104,8 +142,21 @@ export async function probeStream(stream, { fetchUpstream, timeoutMs = 5000 } = 
     const segUrl = new URL(first.uri, url).href;
     const seg = await fetchUpstream(segUrl, headers, ac.signal);
     if (!seg.ok) { discardBody(seg); return { status: 'http-error', detail: `segment ${seg.status}` }; }
-    const kind = classifySegmentBytes(await readFirstBytes(seg));
-    if (kind === 'ts' || kind === 'fmp4' || kind === 'id3') return ok(kind);
+    const bytes = await readFirstBytes(seg);
+    let kind = classifySegmentBytes(bytes);
+    let media = bytes;
+    if (kind === 'wrapped' || kind === 'unknown') {
+      const at = tsSyncOffset(bytes);
+      if (at > 0) { kind = 'ts-wrapped'; media = bytes.subarray(at); }
+    }
+    if (kind === 'ts' || kind === 'ts-wrapped' || kind === 'fmp4' || kind === 'id3') {
+      // Labels and even master RESOLUTION lie (measured 27 Sep 2026); the
+      // segment's own SPS does not. A failed or empty measurement keeps what we had.
+      if (measureHeight && (kind === 'ts' || kind === 'ts-wrapped')) {
+        try { const h = await measureHeight(media); if (h > 0) height = h; } catch { /* keep advertised height */ }
+      }
+      return ok(kind);
+    }
     if (kind === 'wrapped') return { status: 'wrapped', detail: 'wrapped' };
     return { status: 'error', detail: `segment ${kind}` };
   } catch (err) {

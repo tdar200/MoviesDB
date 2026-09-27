@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // check-live.mjs — which live-football source rotted? One line per source.
 //   npm run check-live
-// Exit 1 when the primary adapter (nuvio) cannot list matches or streams.
+// Exit 1 when no match source (Highfly, Nuvio) can list matches and streams.
 import { createNuvioAdapter } from './live-source-nuvio.mjs';
+import { createHighflyAdapter } from './live-source-highfly.mjs';
 import { createSourceRegistry } from './live-sources.mjs';
 import { createChannelFeed } from './live-channels.mjs';
 
 export async function runLiveCheck({ fetchImpl = fetch, log = console.log } = {}) {
-  const registry = createSourceRegistry([createNuvioAdapter({ fetchImpl })]);
+  const registry = createSourceRegistry([createHighflyAdapter({ fetchImpl }), createNuvioAdapter({ fetchImpl })]);
   const sources = {};
   for (const adapter of registry.list()) {
     const r = { ok: false, matches: 0, streams: 0, error: null };
@@ -29,8 +30,8 @@ export async function runLiveCheck({ fetchImpl = fetch, log = console.log } = {}
     if (!channels.ok) channels.error = stale ? 'download failed' : 'no channel alive';
   } catch (err) { channels.error = String(err.message || err); }
   log(`channels ${channels.ok ? 'ok ' : 'BAD'} alive=${channels.count}${channels.error ? ' error=' + channels.error : ''}`);
-  const primary = sources.nuvio;
-  return { ok: !!(primary && primary.ok), sources, channels };
+  // Healthy when at least one match source works (Highfly and Nuvio overlap).
+  return { ok: Object.values(sources).some(r => r.ok), sources, channels };
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop())) {

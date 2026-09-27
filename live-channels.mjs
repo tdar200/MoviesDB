@@ -10,12 +10,31 @@ import { isPublicHttpUrl } from './live-relay.mjs';
 
 export const SPORTS_M3U_URL = 'https://iptv-org.github.io/iptv/categories/sports.m3u';
 
-export const CHANNEL_ALLOWLIST = [
-  /setanta sports/i, /digi ?sport/i, /bein/i, /golazo/i, /premier sports/i, /sportitalia/i,
-  /\bmutv\b/i, /real madrid tv/i, /inter tv/i, /\bespn/i, /fox soccer/i, /sky sport/i, /tnt sport/i,
-  /\bdazn\b/i, /\beleven\b/i, /\bsport ?tv\b/i, /futbol/i, /\bfoot\b/i, /la ?liga tv/i, /bundesliga/i,
-  /premier league/i, /fifa/i, /uefa/i, /soccer/i,
-];
+export const UK_M3U_URL = 'https://iptv-org.github.io/iptv/countries/uk.m3u';
+
+// Official or broadcaster-run free streams that carry football, verified
+// reachable from the UK and measured (true resolution) on 27 Sep 2026. An exact
+// id list, because the old name patterns ("Sky Sport", "Setanta", "DAZN", ...)
+// now match almost nothing but unauthorised restreams and slide-looping fakes.
+export const CHANNEL_IDS = new Set([
+  'TVRSport.ro@SD', 'Teledeporte.es@SD', 'KTVSport.kw@SD', 'DDSports.in@SD', 'Sportitalia.it@SD',
+  'InterTV.it@SD', 'geFast.br@SD', 'ElHeddafTV.dz@SD', 'AlIraqiaSport.iq@SD', 'TraceSportStars.fr@HD',
+  'talkSPORT.uk@SD', 'beINSPORTSXTRA.us@SD', 'Africa24Sport.fr@SD', 'HTSporTV.tr@SD', 'RealMadridTV.es@SD',
+  'MUTV.uk@SD', 'FIFAPlus.uk@English', 'FIFAPlus.uk@Spain', 'FIFAPlus.uk@Italy', 'FIFAPlus.uk@German',
+  'FIFAPlus.uk@French', 'FIFAPlus.uk@Portuguese', 'FIFAPlus.uk@HispanicAmerica', 'FIFAPlus.uk@UnitedStates',
+  'FIFAPlusWomen.uk@English', 'GolazoNetwork.us@SD',
+]);
+
+// Safety net even for listed ids: bare IP hosts and known restream hosts.
+const DENIED_HOSTS = [/(^|\.)mcquack\.net$/, /(^|\.)megogo\.xyz$/, /siauliai/, /(^|\.)uplink\.kz$/, /(^|\.)streamhostingcdn\.top$/,
+  /(^|\.)s\.gy$/, /(^|\.)freeott\.top$/, /(^|\.)workers\.dev$/, /(^|\.)highfly\.dev$/, /(^|\.)dstv\.cx$/, /(^|\.)antik\.sk$/];
+
+export function isDeniedHost(raw) {
+  let h;
+  try { h = new URL(raw).hostname.toLowerCase(); } catch { return true; }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.startsWith('[')) return true;
+  return DENIED_HOSTS.some(re => re.test(h));
+}
 
 const ATTR = /([a-zA-Z0-9-]+)="([^"]*)"/g;
 
@@ -44,7 +63,12 @@ export function parseM3u(text) {
 }
 
 export function filterFootballChannels(list) {
-  return list.filter(c => !c.geoBlocked && CHANNEL_ALLOWLIST.some(re => re.test(c.name) || re.test(c.tvgId)));
+  const seen = new Set();
+  return list.filter(c => {
+    if (c.geoBlocked || !CHANNEL_IDS.has(c.tvgId) || isDeniedHost(c.url) || seen.has(c.url)) return false;
+    seen.add(c.url);
+    return true;
+  });
 }
 
 export function channelId(ch) {
@@ -80,18 +104,31 @@ export async function mapLimit(items, limit, fn) {
   return out;
 }
 
-export function createChannelFeed({ fetchImpl = fetch, probe = probeHls, now = Date.now, ttlMs = 900_000 } = {}) {
+export function createChannelFeed({ fetchImpl = fetch, probe = probeHls, now = Date.now, ttlMs = 900_000, concurrency = 8 } = {}) {
   let cache = null; // { at, channels }
   async function fetchChannels() {
     if (cache && now() - cache.at < ttlMs) return { channels: cache.channels, stale: false, fetchedAt: new Date(cache.at).toISOString() };
     try {
       const res = await fetchImpl(SPORTS_M3U_URL, { headers: { 'User-Agent': CHROME_UA } });
       if (!res.ok) throw new Error(`iptv-org ${res.status}`);
-      const candidates = filterFootballChannels(parseM3u(await res.text()));
+      let text = await res.text();
+      // The UK list adds FIFA+ UK and other UK-only entries; optional.
+      try { const uk = await fetchImpl(UK_M3U_URL, { headers: { 'User-Agent': CHROME_UA } }); if (uk.ok) text += '\n' + await uk.text(); } catch { /* sports list alone is fine */ }
+      const candidates = filterFootballChannels(parseM3u(text));
       // A playlist entry pointing at a private/loopback/multicast target is treated
       // as dead without any request: the probe must not become an SSRF vector.
-      const alive = await mapLimit(candidates, 8, async ch => (isPublicHttpUrl(ch.url) && await probe(ch.url, fetchImpl)) ? ch : null);
-      const channels = alive.filter(Boolean).map(ch => ({ id: channelId(ch), name: ch.name, logo: ch.logo || null, url: ch.url }));
+      // The probe answers true/false (playlist alive) or { status, height } (segment
+      // probed and measured). Alive channels are listed sharpest first.
+      const alive = await mapLimit(candidates, concurrency, async ch => {
+        if (!isPublicHttpUrl(ch.url)) return null;
+        const r = await probe(ch.url, fetchImpl);
+        const ok = r === true || (r && r.status === 'ok');
+        return ok ? { ch, height: (r && r.height) || 0 } : null;
+      });
+      const channels = alive.filter(Boolean)
+        .map((a, i) => ({ id: channelId(a.ch), name: a.ch.name, logo: a.ch.logo || null, url: a.ch.url, height: a.height, order: i }))
+        .sort((a, b) => b.height - a.height || a.order - b.order)
+        .map(({ order, ...c }) => c);
       cache = { at: now(), channels };
       return { channels, stale: false, fetchedAt: new Date(cache.at).toISOString() };
     } catch (err) {

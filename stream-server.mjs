@@ -44,6 +44,8 @@ import { createNuvioAdapter } from './live-source-nuvio.mjs';
 import { selectTodayFixtures, joinFixtures, sortMatches } from './live-match.mjs';
 import { createChannelFeed } from './live-channels.mjs';
 import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHeaders } from './live-relay.mjs';
+import { measureTsHeight } from './live-measure.mjs';
+import { createHighflyAdapter } from './live-source-highfly.mjs';
 import { probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
@@ -105,8 +107,23 @@ const LIVE_ALLOW_PRIVATE = process.env.LIVE_RELAY_ALLOW_PRIVATE === '1'; // inte
 // forbids routing around ISP blocks, so there is no public-DNS fallback here.
 const liveFetch = (url, opts) => fetch(url, opts);
 const liveFixtures = createFixturesFeed({ fetchImpl: liveFetch });
-const liveSources = createSourceRegistry([createNuvioAdapter({ fetchImpl: liveFetch })]);
-const liveChannels = createChannelFeed({ fetchImpl: liveFetch });
+// Highfly first: it states true resolution and delivered 1080p for every live
+// Nations League match on 27 Sep 2026; Nuvio covers more matches at lower quality.
+const liveSources = createSourceRegistry([createHighflyAdapter({ fetchImpl: liveFetch }), createNuvioAdapter({ fetchImpl: liveFetch })]);
+// Channels are probed down to a segment and measured, so the Channels row can
+// list the sharpest first; 16 at a time keeps the first (cold) fetch near 20 s.
+const liveChannels = createChannelFeed({
+  fetchImpl: liveFetch,
+  concurrency: 16,
+  probe: url => probeStream({ url, referer: '', origin: '' }, {
+    fetchUpstream: async (u, headers, signal) => {
+      if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(u)) throw Object.assign(new Error('non-public target'), { name: BLOCKED_TARGET });
+      return (await fetchUpstreamGuarded(u, { ...upstreamHeaders('', ''), ...headers }, signal)).upstream;
+    },
+    timeoutMs: 6000,
+    measureHeight: bytes => measureTsHeight(bytes),
+  }),
+});
 // Probe each stream once (2-min cache) so /live/streams drops broken ones and
 // lists playable ones first; see live-health.mjs for the 2026-09-27 measurements.
 const liveHealth = createStreamHealth({
@@ -121,6 +138,8 @@ const liveHealth = createStreamHealth({
     // Nuvio's playlist wrapper took 1.7-7.8 s at peak (27 Sep 2026); 5 s marked
     // working streams as timed out. 12 s covers the playlist plus first bytes.
     timeoutMs: 12000,
+    // Read the real height from the segment (labels were wrong for most streams).
+    measureHeight: bytes => measureTsHeight(bytes),
   }),
   // One wave for a typical match list, so the longer probe does not add waves.
   concurrency: 32,
@@ -131,7 +150,7 @@ const liveJson = (res, status, body) => { res.writeHead(status, LIVE_JSON); res.
 // call a route awaits gets a deadline here.
 // A polling TV must never pile up hung requests.
 const LIVE_FEED_DEADLINE_MS = 8000;
-const LIVE_CHANNELS_DEADLINE_MS = 20000; // first fetch probes ~60 channels, 8 at a time, 4 s each
+const LIVE_CHANNELS_DEADLINE_MS = 30000; // first fetch probes each listed channel (6 s + measure), 16 at a time
 // Nuvio resolves streams on demand; measured 5-37 s per match at peak (27 Sep 2026).
 const LIVE_STREAMS_DEADLINE_MS = 45000;
 // Source catalogs: the Nuvio adapter gives up after 10 s and serves its last good
@@ -1105,7 +1124,7 @@ async function handleLiveChannels(res) {
   }
   const { channels, stale, fetchedAt } = feed;
   console.log(`[live] channels=${channels.length} stale=${stale}`);
-  liveJson(res, 200, { channels: channels.map(c => ({ id: c.id, name: c.name, logo: c.logo, play: relayPath('hls', { u: c.url, ref: '', org: '' }, LIVE_SECRET) })), stale, fetchedAt });
+  liveJson(res, 200, { channels: channels.map(c => ({ id: c.id, name: c.name, logo: c.logo, height: c.height || 0, play: relayPath('hls', { u: c.url, ref: '', org: '' }, LIVE_SECRET) })), stale, fetchedAt });
 }
 
 function liveRelayParams(url) {

@@ -20,6 +20,7 @@ const ALIASES = {
   'bayern': 'bayern munich', 'fc bayern munchen': 'bayern munich', 'bayern munchen': 'bayern munich',
   'barca': 'barcelona', 'fc barcelona': 'barcelona',
   'real': 'real madrid', 'juve': 'juventus',
+  'republic of ireland': 'ireland', 'rep of ireland': 'ireland', 'ireland republic': 'ireland',
 };
 // Club-name furniture that differs between feeds. Single letters are NOT stripped
 // (a team literally named "B" in tests, "W" in women's feeds would vanish).
@@ -87,7 +88,11 @@ export function joinFixtures(fixtures, sourceMatches, { now = Date.now() } = {})
   for (const fx of fixtures) {
     const sources = [];
     for (const sm of sourceMatches) {
-      if (claimed.has(sm) || !sameTeams(fx, sm) || !closeKickoff(fx.kickoff, sm.kickoff)) continue;
+      // A source that only says "LIVE" (no kick-off) joins a fixture that is in play.
+      // Also a fixture about to start: sources say LIVE once pre-match coverage begins.
+      const soon = fx.state === 'pre' && Date.parse(fx.kickoff) - nowMs <= 90 * 60_000;
+      const liveNoTime = !sm.kickoff && sm.status === 'in' && (fx.state === 'in' || soon);
+      if (claimed.has(sm) || !sameTeams(fx, sm) || !(liveNoTime || closeKickoff(fx.kickoff, sm.kickoff))) continue;
       claimed.add(sm);
       sources.push({ adapter: sm.adapter, sourceId: sm.sourceId });
     }

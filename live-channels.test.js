@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseM3u, filterFootballChannels, probeHls, mapLimit, channelId, createChannelFeed, SPORTS_M3U_URL } from './live-channels.mjs';
+import { parseM3u, filterFootballChannels, probeHls, mapLimit, channelId, createChannelFeed, SPORTS_M3U_URL, UK_M3U_URL, CHANNEL_IDS, isDeniedHost } from './live-channels.mjs';
 
 const M3U = [
   '#EXTM3U',
@@ -27,9 +27,37 @@ test('parseM3u handles CRLF, attributes and name tags', () => {
   assert.deepEqual(parseM3u(''), []);
 });
 
-test('filterFootballChannels keeps allowlisted football channels and drops geo-blocked ones', () => {
+test('filterFootballChannels keeps only listed official channel ids, never geo-blocked or restream hosts', () => {
   const names = filterFootballChannels(parseM3u(M3U)).map(c => c.name);
-  assert.deepEqual(names, ['beIN SPORTS XTRA (1080p)', 'Digi Sport 2 (720p)']);
+  assert.deepEqual(names, ['beIN SPORTS XTRA (1080p)'], 'Digi Sport 2 has no listed id and a bare-IP host');
+  const listed = parseM3u([
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="Teledeporte.es@SD",Teledeporte (1080p)', 'https://rtve01p.origin.c21livecloud.com/tdp/main.m3u8',
+    '#EXTINF:-1 tvg-id="Sportitalia.it@SD",Sportitalia (1080p)', 'http://1.2.3.4:8080/sportitalia.m3u8',
+    '#EXTINF:-1 tvg-id="SkySportsMainEvent.uk@HD",Sky Sports Main Event', 'https://stream.mcquack.net/sky/index.m3u8',
+  ].join('\n'));
+  assert.deepEqual(filterFootballChannels(listed).map(c => c.tvgId), ['Teledeporte.es@SD']);
+  assert.ok(CHANNEL_IDS.has('FIFAPlus.uk@English'));
+  assert.ok(!CHANNEL_IDS.has('DigiSport2.ro@SD'));
+});
+
+test('isDeniedHost refuses bare IPs and known restream hosts', () => {
+  for (const u of ['http://89.1.2.3:8080/x.m3u8', 'https://stream.mcquack.net/a.m3u8', 'https://forever.megogo.xyz/a', 'https://abc.workers.dev/a', 'https://leaf.highfly.dev/a', 'https://fs.uplink.kz/a', 'not a url']) assert.equal(isDeniedHost(u), true, u);
+  for (const u of ['https://bein-xtra-bein.amagi.tv/playlist.m3u8', 'https://d3k8wzt41aflvx.cloudfront.net/INTERTV/Live.m3u8', 'https://tvr-sport.lg.mncdn.com/x.m3u8']) assert.equal(isDeniedHost(u), false, u);
+});
+
+test('createChannelFeed ranks alive channels by probed height, sharpest first', async () => {
+  const m3u = ['#EXTM3U',
+    '#EXTINF:-1 tvg-id="RealMadridTV.es@SD",Real Madrid TV', 'https://rmtv.akamaized.net/a.m3u8',
+    '#EXTINF:-1 tvg-id="TVRSport.ro@SD",TVR Sport', 'https://tvr-sport.lg.mncdn.com/b.m3u8',
+    '#EXTINF:-1 tvg-id="InterTV.it@SD",Inter TV', 'https://d3k8wzt41aflvx.cloudfront.net/c.m3u8',
+    '#EXTINF:-1 tvg-id="talkSPORT.uk@SD",talkSPORT', 'https://talk.wurl.com/d.m3u8',
+  ].join('\r\n');
+  const heights = { 'https://rmtv.akamaized.net/a.m3u8': 720, 'https://tvr-sport.lg.mncdn.com/b.m3u8': 1440, 'https://d3k8wzt41aflvx.cloudfront.net/c.m3u8': 1080 };
+  const probe = async url => (url in heights ? { status: 'ok', height: heights[url] } : { status: 'timeout' });
+  const feed = createChannelFeed({ fetchImpl: async () => ({ ok: true, status: 200, text: async () => m3u }), probe });
+  const { channels } = await feed.fetchChannels();
+  assert.deepEqual(channels.map(c => [c.name, c.height]), [['TVR Sport', 1440], ['Inter TV', 1080], ['Real Madrid TV', 720]]);
 });
 
 test('channelId prefers tvg-id and otherwise hashes the url stably', () => {
@@ -60,7 +88,8 @@ test('createChannelFeed downloads, filters, probes, caches for the TTL and serve
   let clock = 0; let downloads = 0; let fail = false;
   const probed = [];
   const fetchImpl = async url => {
-    assert.equal(url, SPORTS_M3U_URL);
+    assert.ok(url === SPORTS_M3U_URL || url === UK_M3U_URL, url);
+    if (url === UK_M3U_URL) return { ok: true, status: 200, text: async () => '#EXTM3U' };
     downloads++;
     if (fail) throw new TypeError('fetch failed');
     return { ok: true, status: 200, text: async () => M3U };
@@ -73,7 +102,7 @@ test('createChannelFeed downloads, filters, probes, caches for the TTL and serve
   assert.equal(a.channels[0].logo, 'https://i.ibb.co/HT49GPmB/XTRA-2.png');
   assert.equal(a.stale, false);
   assert.equal(a.fetchedAt, new Date(0).toISOString());
-  assert.deepEqual(probed.sort(), ['http://89.1.2.3:8080/digi2/index.m3u8', 'https://bein-xtra-bein.amagi.tv/playlist.m3u8']);
+  assert.deepEqual(probed.sort(), ['https://bein-xtra-bein.amagi.tv/playlist.m3u8'], 'unlisted and bare-IP channels are never probed');
   clock = 600_000;
   await feed.fetchChannels();
   assert.equal(downloads, 1, 'cached inside the 15 minute TTL');
@@ -90,16 +119,16 @@ test('createChannelFeed downloads, filters, probes, caches for the TTL and serve
 test('createChannelFeed treats private, loopback and multicast channel URLs as dead without probing them', async () => {
   const m3u = [
     '#EXTM3U',
-    '#EXTINF:-1 tvg-id="beIN.a",beIN Sports 1', 'https://bein.example/a.m3u8',
-    '#EXTINF:-1 tvg-id="beIN.b",beIN Sports 2', 'http://192.168.0.1/b.m3u8',
-    '#EXTINF:-1 tvg-id="beIN.c",beIN Sports 3', 'http://127.0.0.1:8123/c.m3u8',
-    '#EXTINF:-1 tvg-id="beIN.d",beIN Sports 4', 'http://239.255.255.250/d.m3u8',
-    '#EXTINF:-1 tvg-id="beIN.e",beIN Sports 5', 'rtmp://bein.example/e',
+    '#EXTINF:-1 tvg-id="beINSPORTSXTRA.us@SD",beIN Sports 1', 'https://bein.example/a.m3u8',
+    '#EXTINF:-1 tvg-id="InterTV.it@SD",beIN Sports 2', 'http://192.168.0.1/b.m3u8',
+    '#EXTINF:-1 tvg-id="talkSPORT.uk@SD",beIN Sports 3', 'http://127.0.0.1:8123/c.m3u8',
+    '#EXTINF:-1 tvg-id="MUTV.uk@SD",beIN Sports 4', 'http://239.255.255.250/d.m3u8',
+    '#EXTINF:-1 tvg-id="TVRSport.ro@SD",beIN Sports 5', 'rtmp://bein.example/e',
   ].join('\n');
   const probed = [];
   const probe = async url => { probed.push(url); return true; };
   const feed = createChannelFeed({ fetchImpl: async () => ({ ok: true, status: 200, text: async () => m3u }), probe, now: () => 0 });
   const { channels } = await feed.fetchChannels();
   assert.deepEqual(probed, ['https://bein.example/a.m3u8']);
-  assert.deepEqual(channels.map(c => c.id), ['beIN.a']);
+  assert.deepEqual(channels.map(c => c.id), ['beINSPORTSXTRA.us@SD']);
 });

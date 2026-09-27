@@ -4187,7 +4187,7 @@ async function renderLiveHome() {
   const [matchesRes, channelsRes] = await Promise.all([
     fetchLiveJson('/live/matches').catch(error => ({ error })),
     // /live/channels can take ~20 s on a cold cache (it probes every stream).
-    fetchLiveJson('/live/channels', 25000).catch(error => ({ error })),
+    fetchLiveJson('/live/channels', 40000).catch(error => ({ error })),
   ]);
   if (token !== tvHomeToken || !liveHomeCurrent()) return;
   const now = Date.now();

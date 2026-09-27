@@ -113,3 +113,31 @@ test('sortMatches: live first, then upcoming by kick-off, then finished; priorit
   ]);
   assert.deepEqual(out.map(x => x.id), ['in-pl', 'in-friendly', 'pre-friendly', 'pre-pl-late', 'pre-ucl-late', 'post-pl']);
 });
+
+test('joinFixtures joins a LIVE source match with no kick-off to the same teams in play, from several adapters', () => {
+  const now = Date.parse('2026-09-27T18:00:00Z');
+  const fx = fixture(1, 'Denmark', 'Wales', '2026-09-27T16:45:00Z', { state: 'in', clock: "70'" });
+  const nuvio = source('n1', 'Wales', 'Denmark', '2026-09-27T16:45:00Z');
+  const highfly = { adapter: 'highfly', sourceId: 'streamed:denmark-vs-wales-1', title: 'Denmark vs Wales', league: null, kickoff: null, home: 'Denmark', away: 'Wales', poster: null, status: 'in' };
+  const [m] = joinFixtures([fx], [nuvio, highfly], { now });
+  assert.deepEqual(m.sources, [{ adapter: 'nuvio', sourceId: 'n1' }, { adapter: 'highfly', sourceId: 'streamed:denmark-vs-wales-1' }]);
+  // Without a kick-off and not live, there is nothing to anchor the join.
+  const notLive = { ...highfly, status: null };
+  const out = joinFixtures([{ ...fx, state: 'pre' }], [notLive], { now });
+  assert.equal(out.length, 2);
+});
+
+test('joinFixtures joins a LIVE-only source to a fixture kicking off within 90 minutes (pre-match coverage)', () => {
+  const now = Date.parse('2026-09-27T18:25:00Z');
+  const fx = fixture(1, 'Israel', 'Republic of Ireland', '2026-09-27T18:45:00Z', { state: 'pre' });
+  const hf = { adapter: 'highfly', sourceId: 'streamed:israel-vs-ireland', title: 'Israel vs Ireland', league: null, kickoff: null, home: 'Israel', away: 'Ireland', poster: null, status: 'in' };
+  const out = joinFixtures([fx], [hf], { now });
+  assert.equal(out.length, 1, 'one card, not an ESPN card plus a source card');
+  assert.deepEqual(out[0].sources, [{ adapter: 'highfly', sourceId: 'streamed:israel-vs-ireland' }]);
+  const far = joinFixtures([{ ...fx, kickoff: '2026-09-27T21:00:00Z' }], [hf], { now });
+  assert.equal(far.length, 2, 'a fixture hours away is a different game');
+});
+
+test('normaliseTeam treats Republic of Ireland and Ireland as the same team', () => {
+  assert.equal(normaliseTeam('Republic of Ireland'), normaliseTeam('Ireland'));
+});

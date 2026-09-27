@@ -36,7 +36,7 @@ export function matchToCard(m, nowMs) {
 }
 
 export function channelToCard(c) {
-  return { id: `ch:${c.id}`, title: c.name, image_url: c.logo || null, kind: 'channel', vote_average: 0, live: { state: 'channel' }, raw: c };
+  return { id: `ch:${c.id}`, title: c.name, image_url: c.logo || null, kind: 'channel', vote_average: 0, live: { state: 'channel', height: c.height || 0 }, raw: c };
 }
 
 const RECENT_POST_MS = 2 * 3_600_000 + 130 * 60_000; // finished within the last ~2 h
