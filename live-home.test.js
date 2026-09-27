@@ -76,3 +76,21 @@ test('restoreFocusById focuses the card with that id and reports whether it foun
     assert.equal(restoreFocusById(''), false);
   } finally { if (prev === undefined) delete globalThis.document; else globalThis.document = prev; }
 });
+
+test('buildLiveRows keeps streamed matches, keeps stream-less ones only for top leagues, and caps match rows at 60', () => {
+  const noPriority = match('np', 'pre', '2026-09-27T15:00:00Z', { hasStream: false });
+  delete noPriority.priority;
+  const rows = buildLiveRows([
+    match('top', 'pre', '2026-09-27T15:00:00Z', { hasStream: false, priority: 1 }),
+    match('minor', 'pre', '2026-09-27T15:00:00Z', { hasStream: false, priority: 50 }),
+    noPriority,
+    match('streamed', 'pre', '2026-09-27T15:00:00Z', { hasStream: true, priority: 50 }),
+    match('live-minor', 'in', '2026-09-27T13:00:00Z', { hasStream: false, priority: 40 }),
+  ], [], now);
+  assert.deepEqual(rows.map(r => [r.key, r.items.map(i => i.id)]), [['today', ['top', 'streamed']]]);
+
+  const many = Array.from({ length: 70 }, (_, i) => match(`m${i}`, 'pre', '2026-09-27T15:00:00Z', { priority: 50 }));
+  const [today] = buildLiveRows(many, [], now);
+  assert.equal(today.key, 'today');
+  assert.deepEqual(today.items.map(i => i.id), many.slice(0, 60).map(m => m.id));
+});

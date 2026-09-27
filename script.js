@@ -4119,8 +4119,7 @@ let onLiveSelect = card => { console.log('[live] select', card.kind, card.id); }
 async function renderLiveHome() {
   stopLiveHomeRefresh();
   const token = ++tvHomeToken;
-  const focusedId = document.activeElement?.closest?.('.tv-card')?.dataset.movieId || '';
-  if (!main.querySelector('.tv-row')) { main.textContent = ''; main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: 'Loading live football…' })); }
+  if (liveHomeCurrent() && !main.querySelector('.tv-row')) { main.textContent = ''; main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: 'Loading live football…' })); }
   const [matchesRes, channelsRes] = await Promise.all([
     fetchLiveJson('/live/matches').catch(error => ({ error })),
     // /live/channels can take ~20 s on a cold cache (it probes every stream).
@@ -4129,6 +4128,10 @@ async function renderLiveHome() {
   if (token !== tvHomeToken || !liveHomeCurrent()) return;
   const now = Date.now();
   const rows = buildLiveRows(matchesRes.matches || [], channelsRes.channels || [], now);
+  // Read focus NOW, not before the fetch: the old rows stayed on screen for up to
+  // 25 s and the user may have moved (or left the rows for the kind nav).
+  const focusedCard = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.tv-card') : null;
+  const focusedId = (focusedCard && focusedCard.dataset.movieId) || '';
   main.textContent = '';
   if (!rows.some(r => r.key === 'live-now' || r.key === 'today')) {
     main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: matchesRes.error ? 'Could not reach the stream helper.' : 'No football with a free stream right now.' }));
@@ -4137,11 +4140,14 @@ async function renderLiveHome() {
   const status = liveStatusText(matchesRes, channelsRes);
   if (status) main.append(Object.assign(document.createElement('p'), { className: 'tv-live-status', textContent: status }));
   if (focusedId) restoreFocusById(focusedId);
-  liveHomeTimer = setTimeout(() => {
+  // Refresh tick: bail if the user left the Live home; while the player or a
+  // details panel is open on top, re-check later instead of repainting under it.
+  const tick = () => {
     if (!liveHomeCurrent() || token !== tvHomeToken) return;
-    if (playerModalOpen || document.querySelector('.tv-details:not([hidden])')) { liveHomeTimer = setTimeout(() => renderLiveHome(), LIVE_HOME_REFRESH_MS); return; }
+    if (playerModalOpen || document.querySelector('.tv-details:not([hidden])')) { liveHomeTimer = setTimeout(tick, LIVE_HOME_REFRESH_MS); return; }
     renderLiveHome();
-  }, LIVE_HOME_REFRESH_MS);
+  };
+  liveHomeTimer = setTimeout(tick, LIVE_HOME_REFRESH_MS);
 }
 window.__renderLiveHome = renderLiveHome; // e2e hook
 

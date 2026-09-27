@@ -41,16 +41,29 @@ export function channelToCard(c) {
 
 const RECENT_POST_MS = 2 * 3_600_000 + 130 * 60_000; // finished within the last ~2 h
 
+// ESPN lists every fixture worldwide; a remote cannot page through hundreds.
+// Anything with a free stream stays; stream-less fixtures only for the top
+// competitions (helper priority 1-12: Premier League ... International Friendly).
+const STREAMLESS_MAX_PRIORITY = 12;
+const MATCH_ROW_CAP = 60;
+
+function worthListing(m) {
+  if (m.hasStream === true) return true;
+  const priority = typeof m.priority === 'number' ? m.priority : 50;
+  return priority <= STREAMLESS_MAX_PRIORITY;
+}
+
 export function buildLiveRows(matches, channels, nowMs) {
   const live = [], today = [];
   for (const m of matches || []) {
+    if (!worthListing(m)) continue;
     if (m.state === 'in') live.push(matchToCard(m, nowMs));
     else if (m.state === 'pre') today.push(matchToCard(m, nowMs));
     else if (m.state === 'post' && nowMs - Date.parse(m.kickoff || '') < RECENT_POST_MS) today.push(matchToCard(m, nowMs));
   }
   const rows = [
-    { key: 'live-now', title: 'Live now', items: live, noSort: true },
-    { key: 'today', title: 'Today', items: today, noSort: true },
+    { key: 'live-now', title: 'Live now', items: live.slice(0, MATCH_ROW_CAP), noSort: true },
+    { key: 'today', title: 'Today', items: today.slice(0, MATCH_ROW_CAP), noSort: true },
     { key: 'channels', title: 'Channels', items: (channels || []).map(channelToCard), noSort: true },
   ];
   return rows.filter(r => r.items.length);
