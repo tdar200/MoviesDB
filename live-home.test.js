@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kickoffLabel, matchToCard, channelToCard, buildLiveRows } from './live-home.mjs';
+import { kickoffLabel, matchToCard, channelToCard, buildLiveRows, buildCricketRows } from './live-home.mjs';
 
 const now = Date.parse('2026-09-27T14:00:00Z');
 const match = (id, state, kickoff, extra = {}) => ({
@@ -140,4 +140,31 @@ test('restoreFocusById prefers the TV remote focus routine (it re-anchors the ra
 test('channel cards describe the channel by its own category, not as a sports channel', () => {
   assert.equal(channelToCard({ id: 'a', name: 'CBS News', category: 'News', height: 720 }).live.category, 'News');
   assert.equal(channelToCard({ id: 'b', name: 'X', height: 1080 }).live.category, null);
+});
+
+test('buildCricketRows lists only cricket: live, then today, with 24/7 channels split into their own row', () => {
+  const cricket = (id, title, state, kickoff) => match(id, title === 'x' ? 'x' : state, kickoff, { title, sport: 'cricket', league: 'ODI', clock: null });
+  const rows = buildCricketRows([
+    match('f1', 'in', '2026-09-27T13:00:00Z'),
+    cricket('c1', 'South Africa vs Australia', 'in', '2026-09-30T11:30:00Z'),
+    cricket('c2', 'Pakistan vs Bangladesh', 'pre', '2026-10-01T00:00:00Z'),
+    cricket('c3', 'NSW W vs Queensland Fire W', 'pre', '2026-09-30T23:30:00Z'),
+    cricket('ch1', 'Willow', 'pre', null),
+    cricket('ch2', 'Fox Cricket', 'pre', null),
+  ], [{ id: 'sky1', name: 'Sky Sports Main Event' }], now);
+  assert.deepEqual(rows.map(r => r.key), ['live-cricket', 'today-cricket', 'channels-cricket']);
+  assert.deepEqual(rows[0].items.map(c => c.id), ['c1']);
+  assert.deepEqual(rows[1].items.map(c => c.id), ['c2', 'c3'], 'scheduled matches only, in feed order');
+  assert.deepEqual(rows[2].items.map(c => c.id), ['ch1', 'ch2'], '24/7 networks are not matches');
+  assert.ok(rows.every(r => r.noSort));
+  assert.deepEqual(buildCricketRows([match('f1', 'in', '2026-09-27T13:00:00Z')], [], now), [], 'no cricket -> no rows');
+});
+
+test('buildLiveRows also keeps cricket networks out of the Cricket - Today match row', () => {
+  const rows = buildLiveRows([
+    match('c2', 'pre', '2026-10-01T00:00:00Z', { sport: 'cricket' }),
+    match('ch1', 'pre', null, { sport: 'cricket', title: 'Willow' }),
+  ], [], now);
+  assert.deepEqual(rows.find(r => r.key === 'today-cricket').items.map(c => c.id), ['c2']);
+  assert.deepEqual(rows.find(r => r.key === 'channels-cricket').items.map(c => c.id), ['ch1']);
 });

@@ -18,7 +18,8 @@
     "prestart": "npm run build:tv",
     "test:tv": "TV_E2E=1 node --test --test-concurrency=1 tv-e2e.test.js tv-player-e2e.test.js tv-provider-popup.test.js tv-live-e2e.test.js",
     "package:tv": "npm run build:tv && ares-package webos-app --outdir dist",
-    "build:web": "npm run build:tv && rm -rf public && mkdir -p public/webos-app && cp tv.css style.css tv-bundle.js public/ && esbuild node_modules/hls.js/dist/hls.min.js --minify --target=chrome79 --log-level=warning --outfile=public/hls.min.js && cp webos-app/icon.png public/webos-app/icon.png && node scripts/version-web.mjs"
+    "build:web": "npm run build:tv && rm -rf public && mkdir -p public/webos-app && cp tv.css style.css tv-bundle.js public/ && esbuild node_modules/hls.js/dist/hls.min.js --minify --target=chrome79 --log-level=warning --outfile=public/hls.min.js && cp webos-app/icon.png public/webos-app/icon.png && node scripts/copy-catalog-snapshots.mjs && node scripts/version-web.mjs",
+    "build:catalog": "node scripts/build-catalog-snapshots.mjs --all-tabs"
   },
   "keywords": [
     "movies",

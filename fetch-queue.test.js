@@ -289,3 +289,33 @@ test('a hung request times out and frees its slot for the next one', async () =>
   await assert.rejects(q.fetchJson('https://api/hang'), /timed out/);
   assert.deepEqual(await q.fetchJson('https://api/fine'), { ok: 1 });
 });
+
+test('expired page memo reaches the API again instead of making a stale category refresh look fresh', async () => {
+  let clock = 0, calls = 0;
+  const q = createFetchQueue({ now: () => clock, memoTtlMs: 100, fetchImpl: async () => jsonResponse({ generation: ++calls }) });
+  assert.equal((await q.fetchJson('https://api/page')).generation, 1);
+  clock = 99;
+  assert.equal((await q.fetchJson('https://api/page')).generation, 1);
+  clock = 100;
+  assert.equal((await q.fetchJson('https://api/page')).generation, 2);
+});
+
+test('page memo evicts the least recently used URL within its memory limit', async () => {
+  let calls = 0;
+  const q = createFetchQueue({ maxMemoEntries: 2, fetchImpl: async url => { calls++; return jsonResponse({ url }); } });
+  await q.fetchJson('https://api/a'); await q.fetchJson('https://api/b');
+  await q.fetchJson('https://api/a'); // retain this active page
+  await q.fetchJson('https://api/c');
+  await q.fetchJson('https://api/a');
+  assert.equal(calls, 3);
+  await q.fetchJson('https://api/b');
+  assert.equal(calls, 4);
+});
+
+test('a non-memoized empty response can recover on the next request', async () => {
+  let calls = 0;
+  const q = createFetchQueue({ shouldMemoize: json => json.results.length > 0, fetchImpl: async () => jsonResponse({ results: ++calls === 1 ? [] : [{ id: 1 }] }) });
+  assert.deepEqual((await q.fetchJson('https://api/feed')).results, []);
+  assert.deepEqual((await q.fetchJson('https://api/feed')).results, [{ id: 1 }]);
+  assert.equal(calls, 2);
+});

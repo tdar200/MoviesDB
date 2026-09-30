@@ -3,11 +3,63 @@
   "buildCommand": "echo prebuilt-static",
   "installCommand": "echo skip-install",
   "outputDirectory": "public",
-  "github": { "silent": true },
+  "github": {
+    "silent": true
+  },
   "headers": [
-    { "source": "/tv.html", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
-    { "source": "/tv-bundle.js", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
-    { "source": "/tv.css", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
-    { "source": "/style.css", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] }
+    {
+      "source": "/tv.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/tv-bundle.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/tv.css",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/style.css",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/catalog-cache/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, stale-while-revalidate=86400"
+        }
+      ]
+    },
+    {
+      "source": "/hls.min.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
   ]
 }

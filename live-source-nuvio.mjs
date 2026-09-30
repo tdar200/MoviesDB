@@ -12,14 +12,18 @@ import { withHostFailover } from './live-sources.mjs';
 import { CHROME_UA } from './live-fixtures.mjs';
 
 export const NUVIO_HOSTS = ['https://nuviosports.xyz'];
-const SPORTS = [{ sport: 'football', genre: 'Football' }, { sport: 'cricket', genre: 'Cricket' }];
+// `upcoming`: the live catalog only lists matches already in play, so scheduled
+// fixtures come from nuvio_sports_upcoming (measured 30 Sep 2026: Pakistan v
+// Bangladesh and NSW W v Queensland Fire W were there, absent from live).
+// Cricket only; football keeps its live-catalog behaviour.
+const SPORTS = [{ sport: 'football', genre: 'Football' }, { sport: 'cricket', genre: 'Cricket', upcoming: true }];
 
 // Names and descriptions are decorated with emoji, flag "tag" characters
 // (U+E0000..U+E007F) and variation selectors. Strip all of it.
 export function stripDecorations(text) {
   return String(text || '')
     .replace(/[\u{E0000}-\u{E007F}]/gu, '')
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, '')
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{23E9}-\u{23FF}]/gu, '')
     .replace(/[️‍]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -120,9 +124,12 @@ export function createNuvioAdapter({ fetchImpl = fetch, hosts = NUVIO_HOSTS, now
     if (lastGood && now() - lastGood.at < CATALOG_TTL_MS) return lastGood.list;
     try {
       // Football and cricket; one failing sport does not hide the other.
-      const results = await Promise.allSettled(SPORTS.map(s => getJson(`/catalog/tv/nuvio_sports_live/genre=${s.genre}.json`, catalogTimeoutMs).then(j => parseNuvioCatalog(j, s.sport))));
+      const catalogs = SPORTS.flatMap(s => [{ s, path: `/catalog/tv/nuvio_sports_live/genre=${s.genre}.json` }, ...(s.upcoming ? [{ s, path: `/catalog/tv/nuvio_sports_upcoming/genre=${s.genre}.json` }] : [])]);
+      const results = await Promise.allSettled(catalogs.map(c => getJson(c.path, catalogTimeoutMs).then(j => parseNuvioCatalog(j, c.s.sport))));
       if (results.every(r => r.status === 'rejected')) throw results[0].reason;
-      const list = results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
+      // A match in both catalogs is kept once; the live catalog is listed first, so its entry wins.
+      const seen = new Set();
+      const list = results.flatMap(r => (r.status === 'fulfilled' ? r.value : [])).filter(m => { const key = m.sport + '|' + m.sourceId; return !seen.has(key) && seen.add(key); });
       lastGood = { at: now(), list };
       return list;
     } catch (err) {

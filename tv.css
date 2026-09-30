@@ -178,33 +178,12 @@ body.tv-mode { background: #141414; color: #f5f5f1; font-family: Arial, sans-ser
 .tv-details-recommendations .tv-rail { width: 92vw; box-sizing: border-box; }
 @media(max-width: 1100px) { .tv-details-body { max-width: 80%; } }
 
-/* ===== Navy blue theme — matches the web app (#22254b primary / #373b69 panels),
-   swapping the Netflix red accents for blue. Appended last so it wins. ===== */
-body.tv-mode { background: #22254b; }
-.tv-mode header { background: #22254b; }
-.tv-mode.tv-controls-open header { background: #2a2e5e; }
-.tv-mode h1 { color: #6ea8ff; }
-.tv-mode .tv-card { background: #373b69; }
-.tv-mode .tv-card-art, .tv-mode .tv-card-noart { background: #2a2e5e; }
-.tv-mode .filter-select, .tv-mode .filter-input, .tv-mode .search, .tv-mode .exclude-btn { background: #373b69; border-color: #4a4f86; }
-.tv-mode .tv-picker { background: #2a2e5e; }
-.tv-mode .tv-picker button { background: #373b69; }
-.tv-mode .modal-content { background: #22254b; }
-.tv-mode .modal.tv-native-player, .tv-mode .tv-native-player .modal-content { background: #000; } /* video stays black */
+/* ===== Structure kept from the earlier theme layer (colours now live in the navy theme block at the end). ===== */
 .tv-more, .tv-picker button { color: #fff; }
-/* Blue accents in place of red */
-.tv-mode .app-tab.active, .tv-mode .tv-kind-tab.active { border-bottom: 3px solid #6ea8ff; color: #fff; }
-.tv-mode #tv-clear-filters { background: #2f6fed; }
-.tv-mode button:focus, .tv-mode a:focus, .tv-mode select:focus, .tv-mode input:focus, .tv-mode [tabindex]:focus { box-shadow: 0 0 0 4px #fff, 0 0 0 8px rgba(110,168,255,.7); }
-.tv-mode .tv-card:focus { box-shadow: none; }
-.tv-hero::before { background: linear-gradient(90deg, #22254b 3%, rgba(34,37,75,.88) 30%, rgba(34,37,75,.12) 85%), linear-gradient(0deg, #22254b, transparent 45%); }
 /* Top nav: hide the old view tabs (still in the DOM for the app's wiring) and show
    the All / Movies / TV kind switcher in their place. */
 .tv-mode .app-tabs { display: none !important; }
-.tv-mode .tv-kind-nav { display: flex; gap: 8px; align-items: center; }
-/* Remaining red accents from the old theme, recoloured blue. */
-.tv-mode .tv-season-chip.active { background: #2f6fed; }
-.tv-mode .tv-progress-fill { background: #6ea8ff; }
+.tv-mode .tv-kind-nav { display: flex; align-items: center; }
 
 /* Live football cards */
 .tv-card-live .tv-card-visual { height: 12vw; min-height: 150px; max-height: 235px; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at top, #24304a, #141826 70%); }
@@ -245,3 +224,162 @@ body.tv-mode { background: #22254b; }
 .tv-card-channel .tv-card-overview { min-height: 0; -webkit-line-clamp: 1; font-size: 14px; margin-top: 4px; }
 .tv-card-channel .tv-card-footer { display: none; }
 .tv-episode-empty { font-size: 20px; color: #bbb; padding: 16px 0; }
+
+/* ===================== Streaming-style upgrade =====================
+   Sizes are in vw so the layout scales with the TV. webOS 6 is Chromium 79: no flex
+   gap, no aspect-ratio, no inset shorthand. Spacing uses margins and fixed tile sizes. */
+:root { --pad: 4vw; --tile-w: 17.2vw; --tile-h: 9.68vw;
+  --bg: #22254b; --panel: #373b69; --panel-2: #2a2e5e; --line: #4a4f86; --accent: #6ea8ff; --accent-strong: #2f6fed; --ink: #eef1ff; --ink-dim: #b9bfe3; }
+.tv-mode .header-top { gap: 0; }
+.tv-mode .header-top > *, .tv-mode .header-top > * + * { margin-left: 0; margin-right: 1.8vw; }
+.tv-mode .tv-kind-nav { gap: 0; }
+.tv-mode .tv-kind-nav > *, .tv-mode .tv-kind-nav > * + * { margin: 0 .25vw 0 0; }
+
+/* --- Top bar: a gradient over the billboard, not a slab --- */
+.tv-mode header { position: absolute; top: 0; left: 0; right: 0; z-index: 60; padding: 1.3vw var(--pad) 3.6vw; background: linear-gradient(to bottom, rgba(16,18,42,.94) 0%, rgba(16,18,42,.62) 55%, rgba(16,18,42,0) 100%); }
+.tv-mode.tv-controls-open header { position: relative; background: var(--panel-2); padding-bottom: 28px; }
+.tv-mode h1 { color: var(--accent); font-size: 2.3vw; font-weight: 900; letter-spacing: .1vw; }
+.tv-mode .tv-kind-nav button, .tv-mode #tv-browse-controls { background: transparent; color: #d4d9f5; font-size: 1.22vw; font-weight: 600; padding: .6vw 1.05vw; border: 0; border-bottom: 0; border-radius: 999px; text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+.tv-mode .tv-kind-nav button.active { color: #fff; font-weight: 800; border-bottom: 0; }
+.tv-mode .tv-kind-nav button:focus, .tv-mode #tv-browse-controls:focus { background: #fff; color: #000; box-shadow: none; text-shadow: none; }
+
+/* --- Home layout --- */
+.tv-mode #main { display: block; padding: 6.4vw var(--pad) 5vw; }
+.tv-mode.tv-controls-open #main { padding-top: 0; }
+.tv-mode #main > * { margin-bottom: 0; }
+
+/* --- Billboard --- */
+.tv-hero { width: calc(100% + 8vw); margin: -6.4vw -4vw 0; flex: none; min-height: 600px; height: 68vh; align-items: flex-end; background-position: center 18%; }
+.tv-hero::before { background: linear-gradient(90deg, rgba(34,37,75,.96) 0%, rgba(34,37,75,.82) 26%, rgba(34,37,75,.25) 58%, rgba(34,37,75,0) 78%), linear-gradient(0deg, var(--bg) 0%, rgba(34,37,75,.55) 16%, rgba(34,37,75,0) 42%), linear-gradient(180deg, rgba(16,18,42,.6) 0%, rgba(16,18,42,0) 20%); }
+.tv-hero-copy { width: 46%; max-width: 50vw; padding: 0 var(--pad) 8vh; }
+.tv-eyebrow { font-size: 1.3vw; letter-spacing: 0; color: #e6e9ff; font-weight: 700; margin: 0 0 .7vw; text-shadow: 0 .1vw .5vw rgba(0,0,0,.7); }
+.tv-hero h2 { font-size: 4.4vw; font-weight: 800; line-height: 1.04; letter-spacing: -.08vw; margin: 0 0 .9vw; text-shadow: 0 .2vw 1.2vw rgba(0,0,0,.6); }
+.tv-hero-meta { font-size: 1.15vw; font-weight: 700; color: #e6e9ff; margin: 0 0 .9vw; }
+.tv-synopsis { font-size: 1.3vw; line-height: 1.45; max-width: 36vw; color: var(--ink); margin: 0 0 1.5vw; text-shadow: 0 .1vw .6vw rgba(0,0,0,.7); }
+.tv-hero-actions { gap: 0; }
+.tv-hero-actions > *, .tv-details-actions > * { margin: 0 .8vw 0 0; }
+.tv-play, .tv-more-info { font-size: 1.45vw; font-weight: 800; padding: .7vw 2vw; border-radius: .35vw; }
+.tv-play { background: #fff; color: #000; }
+.tv-more-info { background: rgba(84,96,170,.78); color: #fff; }
+.tv-mode .tv-play:focus, .tv-mode .tv-more-info:focus { transform: scale(1.08); box-shadow: 0 0 0 .22vw var(--bg), 0 0 0 .46vw #fff; }
+.tv-mode .tv-more-info:focus { background: #fff; color: #000; }
+
+/* --- Rows and tiles --- */
+.tv-row { margin: 0; }
+.tv-row h2 { font-size: 1.5vw; font-weight: 700; color: #e6e9ff; margin: 1.2vw 0 0; }
+.tv-rail { margin: 0 calc(-1 * var(--pad)); padding: 1.2vw var(--pad) 1.8vw; overflow: hidden; contain: paint; }
+.tv-rail-track { position: relative; }
+.tv-rail-track > * { margin-right: .6vw; }
+.tv-mode .tv-card:not(.tv-card-live) { flex: 0 0 var(--tile-w); width: var(--tile-w); min-width: 0; height: var(--tile-h); border: 0; border-radius: .3vw; background: var(--panel-2); contain: layout paint style; transition: transform .14s ease-out; }
+.tv-mode .tv-card:not(.tv-card-live) .tv-card-visual { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+.tv-mode .tv-card:not(.tv-card-live) .tv-card-visual::after { display: none; }
+.tv-mode .tv-card:not(.tv-card-live) .tv-card-art { width: 100%; height: 100%; min-height: 0; max-height: none; object-fit: cover; object-position: center 22%; background: var(--panel-2); }
+.tv-mode .tv-card:not(.tv-card-live) .tv-card-caption { position: absolute; left: 0; right: 0; bottom: 0; min-height: 0; padding: 2.4vw .8vw .6vw; background: linear-gradient(to top, rgba(14,16,40,.94) 0%, rgba(14,16,40,.58) 55%, rgba(14,16,40,0) 100%); }
+.tv-mode .tv-card:not(.tv-card-live) .tv-card-title { font-size: 1.12vw; margin: 0; text-shadow: 0 .1vw .4vw rgba(0,0,0,.85); }
+.tv-mode .tv-card:not(.tv-card-live) .tv-card-kicker { display: block; opacity: 0; margin-top: .2vw; font-size: .9vw; font-weight: 600; letter-spacing: 0; text-transform: none; color: #d0d6f2; }
+.tv-mode .tv-card:not(.tv-card-live):focus .tv-card-kicker { opacity: 1; }
+.tv-mode .tv-card:not(.tv-card-live) .tv-card-badge { top: .45vw; left: .45vw; font-size: .85vw; padding: .18vw .45vw; border-radius: .2vw; background: rgba(0,0,0,.72); color: #ffd166; }
+.tv-card-new { position: absolute; top: .45vw; right: .45vw; z-index: 2; background: var(--accent-strong); color: #fff; font-size: .85vw; font-weight: 800; letter-spacing: .05vw; padding: .18vw .5vw; border-radius: .2vw; }
+.tv-card-rank { position: absolute; left: .6vw; bottom: .1vw; z-index: 2; font-size: 5.6vw; line-height: 1; font-weight: 900; letter-spacing: -.25vw; color: rgba(34,37,75,.85); -webkit-text-stroke: .14vw #e6e9ff; text-shadow: .12vw .12vw .5vw rgba(0,0,0,.9); }
+.tv-mode .tv-card-ranked:not(.tv-card-live) .tv-card-caption { padding-left: 5.6vw; }
+.tv-mode .tv-card-ranked:not(.tv-card-live) .tv-card-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.12; }
+.tv-card-progress { position: absolute; left: 0; right: 0; bottom: 0; height: .32vw; background: rgba(255,255,255,.35); z-index: 3; }
+.tv-card-progress > span { display: block; height: 100%; background: var(--accent); }
+/* The focused tile lifts (scale, a GPU-only transform: nothing reflows) with a white edge. */
+.tv-mode .tv-card:not(.tv-card-live):focus { transform: scale(1.1); z-index: 6; outline: .2vw solid #fff; outline-offset: -.2vw; box-shadow: none; will-change: transform; }
+
+/* --- Details --- */
+.tv-details-body { max-width: 52%; padding: 40vh var(--pad) 6vh; }
+.tv-mode .tv-details-title { font-size: 4.4vw; font-weight: 800; letter-spacing: -.08vw; margin: 0 0 .8vw; }
+.tv-details-meta { font-size: 1.2vw; font-weight: 600; color: #d2d8f3; margin: 0 0 1vw; }
+.tv-details-synopsis { font-size: 1.35vw; line-height: 1.45; -webkit-line-clamp: 4; max-width: 44vw; margin: 0 0 1.4vw; }
+.tv-details-actions { gap: 0; margin: 0 0 1vw; }
+.tv-details-actions button { font-size: 1.3vw; font-weight: 800; padding: .7vw 1.6vw; border-radius: .35vw; }
+.tv-details-actions .tv-details-play { background: #fff; color: #000; }
+.tv-mode .tv-details-actions button:focus { transform: scale(1.06); box-shadow: 0 0 0 .22vw var(--bg), 0 0 0 .46vw #fff; }
+.tv-details-cast { font-size: 1.05vw; color: var(--ink-dim); margin: 0 0 1.6vw; }
+.tv-details-episodes-heading { font-size: 1.7vw; font-weight: 700; margin: .4vw 0 .8vw; }
+.tv-season-chips { gap: 0; margin: 0 0 .8vw; }
+.tv-season-chip { margin: 0 .5vw 0 0; background: transparent; color: #a4abd6; border-radius: .3vw; padding: .45vw 1.1vw; font-size: 1.2vw; font-weight: 700; border-bottom: .22vw solid transparent; }
+.tv-mode .tv-season-chip.active { background: transparent; color: #fff; border-bottom-color: var(--accent); }
+.tv-mode .tv-season-chip:focus { background: #fff; color: #000; }
+.tv-details-episode-list { gap: 0; max-width: 58vw; }
+.tv-episode { background: transparent; border-radius: .3vw; padding: .8vw; margin: 0; border-bottom: 1px solid var(--line); }
+.tv-episode-still { flex: 0 0 13vw; height: 7.3vw; margin-right: 1.2vw; border-radius: .3vw; }
+.tv-episode-title { font-size: 1.3vw; }
+.tv-episode-overview { font-size: 1.05vw; line-height: 1.35; color: var(--ink-dim); }
+.tv-episode.current { background: var(--panel); box-shadow: inset .28vw 0 0 var(--accent); }
+.tv-details-recommendations { width: 92vw; margin: 2vw 0 .6vw; }
+.tv-details-recommendations-heading { font-size: 1.6vw; margin: 0; }
+.tv-details-recommendations .tv-rail { width: 92vw; margin: 0 0 0 -1vw; padding: 1.2vw 1vw 1.8vw; }
+
+/* --- Player: a clean overlay (title, progress, icon controls) that fades with inactivity --- */
+.tv-native-player .tv-player-hud { padding: 9vw 4vw 2.4vw; background: linear-gradient(to top, rgba(0,0,0,.94) 0%, rgba(0,0,0,.72) 45%, rgba(0,0,0,0) 100%); }
+.tv-player-hud h2 { font-size: 1.9vw; font-weight: 700; margin: 0 0 .9vw; text-shadow: 0 .1vw .5vw rgba(0,0,0,.8); }
+#tv-progress { position: relative; display: block; width: 100%; height: .5vw; margin: 0; padding: 0; border: 0; border-radius: .3vw; background: rgba(255,255,255,.3); }
+.tv-progress-fill { position: relative; display: block; height: 100%; width: 0; background: var(--accent); border-radius: .3vw; }
+.tv-progress-fill::after { content: ''; position: absolute; right: -.55vw; top: 50%; width: 1.1vw; height: 1.1vw; margin-top: -.55vw; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 .18vw rgba(0,0,0,.45); }
+.tv-mode #tv-progress:focus { box-shadow: none; height: .85vw; border-radius: .45vw; }
+.tv-mode #tv-progress:focus .tv-progress-fill::after { width: 1.7vw; height: 1.7vw; margin-top: -.85vw; right: -.85vw; background: #fff; }
+.tv-player-time { margin: .5vw 0 0; font-size: 1.1vw; color: #dde1fa; text-align: right; }
+.tv-player-actions { display: flex; align-items: flex-start; margin: .6vw 0 0; }
+.tv-player-actions button, .tv-mode .tv-player-actions #tv-play-pause { display: flex; flex-direction: column; align-items: center; min-width: 0; min-height: 0; padding: .6vw 1.1vw .5vw; margin: 0 1vw 0 0; background: transparent; color: #fff; border: 0; border-radius: .4vw; font-size: 1vw; font-weight: 600; }
+.tv-hud-icon { display: block; width: 2.6vw; height: 2.6vw; fill: currentColor; }
+.tv-hud-label { display: block; margin-top: .2vw; font-size: 1vw; white-space: nowrap; }
+.tv-mode .tv-player-actions button:focus { background: #fff; color: #000; box-shadow: none; transform: scale(1.08); }
+.tv-player-help { display: none; }
+.tv-mode .tv-native-player #close-modal { top: 2.4vw; left: 3vw; right: auto; width: auto; min-width: 0; padding: .5vw 1.3vw; font-size: 1.5vw; font-weight: 700; background: rgba(0,0,0,.55); border-radius: 999px; }
+.tv-mode .tv-native-player #close-modal:focus { background: #fff; color: #000; box-shadow: none; }
+
+/* --- Loading rows show blank tiles (a skeleton), not a line of text. An error keeps its text. --- */
+.tv-row:not([data-row-loading="0"]) > p[role="status"] { height: var(--tile-h); margin: 1.2vw 0 1.8vw; font-size: 0; line-height: 0; color: transparent; overflow: hidden; border-radius: .3vw; background: repeating-linear-gradient(90deg, var(--panel-2) 0, var(--panel-2) var(--tile-w), transparent var(--tile-w), transparent calc(var(--tile-w) + .6vw)); }
+
+
+/* ===================== Navy theme (the app's own palette) =====================
+   Near-black defaults from the earlier rules become navy; accents are blue. */
+body.tv-mode { background: var(--bg); color: var(--ink); }
+.tv-mode.tv-controls-open header { background: var(--panel-2); }
+.tv-mode h1 { color: var(--accent); }
+.tv-mode .filter-select, .tv-mode .filter-input, .tv-mode .search, .tv-mode .exclude-btn { background: var(--panel); border-color: var(--line); }
+.tv-mode .tv-picker { background: var(--panel-2); }
+.tv-mode .tv-picker button { background: var(--panel); }
+.tv-mode .modal-content { background: var(--bg); }
+.tv-mode .modal.tv-native-player, .tv-mode .tv-native-player .modal-content { background: #000; } /* video stays black */
+.tv-details { background: var(--bg); }
+.tv-details-scrim { background: linear-gradient(90deg, rgba(34,37,75,.94) 0%, rgba(34,37,75,.55) 40%, rgba(34,37,75,.06) 68%, transparent 100%), linear-gradient(0deg, var(--bg) 0%, rgba(34,37,75,.55) 18%, transparent 42%); }
+.tv-card { background: var(--panel); }                          /* live / channel cards */
+.tv-card-art, .tv-card-noart { background: var(--panel-2); }
+.tv-episode-still { background-color: var(--panel-2); }
+.tv-more, .tv-search-notice button, #tv-provider-controls button { background: var(--panel); }
+.tv-mode #tv-clear-filters { background: var(--accent-strong); }
+.tv-mode button:focus, .tv-mode a:focus, .tv-mode select:focus, .tv-mode input:focus, .tv-mode [tabindex]:focus { box-shadow: 0 0 0 4px #fff, 0 0 0 8px rgba(110,168,255,.7); }
+.tv-mode .tv-card:focus { box-shadow: none; }
+.tv-mode .tv-card-live:focus { box-shadow: inset 0 -6px 0 var(--accent); }
+.tv-play, .tv-details-actions .tv-details-play { color: var(--bg); }
+.tv-native-player .tv-player-hud { background: linear-gradient(to top, rgba(10,12,32,.95) 0%, rgba(10,12,32,.72) 45%, rgba(10,12,32,0) 100%); }
+
+/* --- Polish: an identity of its own --- */
+.tv-details-actions button { background: rgba(84,96,170,.78); }
+.tv-mode header h1::before { content: '\25B6'; display: inline-block; font-size: .5em; margin-right: .55vw; vertical-align: .22em; }
+.tv-mode .tv-kind-nav button.active { background: rgba(110,168,255,.2); }
+.tv-mode .tv-kind-nav button.active:focus { background: #fff; color: var(--bg); }
+.tv-mode .tv-kind-nav button:focus, .tv-mode #tv-browse-controls:focus { color: var(--bg); }
+.tv-eyebrow { color: #9cc3ff; }
+.tv-row h2::before { content: ''; display: inline-block; width: .26vw; height: 1.15vw; margin-right: .7vw; vertical-align: -.12vw; border-radius: .1vw; background: var(--accent); }
+.tv-mode .tv-card:not(.tv-card-live) { border-radius: .45vw; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+.tv-mode .tv-card:not(.tv-card-live):focus { box-shadow: 0 0 0 .2vw var(--accent); }
+.tv-card-rank { color: rgba(34,37,75,.9); }
+.tv-more-info:focus, .tv-mode .tv-more-info:focus { color: var(--bg); }
+.tv-season-chip.active, .tv-mode .tv-season-chip.active { color: #fff; }
+.tv-episode.current { background: var(--panel); }
+.tv-progress-fill, .tv-card-progress > span { background: var(--accent); }
+
+/* A TV has no use for a page scrollbar: the remote scrolls, and the bar only clutters the edge. */
+html::-webkit-scrollbar, .tv-mode ::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* --- Details: a show with many seasons is a dropdown (the TV picker lists every one); episodes draw a page at a time. --- */
+.tv-mode .tv-season-select { -webkit-appearance: none; appearance: none; display: block; min-height: 0; width: auto; max-width: 100%; margin: 0 0 .9vw; padding: .65vw 3.2vw .65vw 1.3vw; font-size: 1.3vw; font-weight: 700; color: #fff; background: var(--panel) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path fill='%23ffffff' d='M7 10l5 5 5-5z'/></svg>") no-repeat right .7vw center / 1.6vw; border: 0; border-radius: .4vw; }
+.tv-mode .tv-season-select:focus { background-color: #fff; color: var(--bg); box-shadow: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path fill='%2322254b' d='M7 10l5 5 5-5z'/></svg>"); }
+.tv-episode { contain: layout style; } /* not paint: the focus ring is drawn outside the box */
+.tv-details-trailer-hint { position: absolute; top: 2.6vw; right: 4vw; z-index: 2; padding: .4vw 1vw; border-radius: 999px; background: rgba(16,18,42,.7); color: #cfd6ff; font-size: 1.05vw; font-weight: 600; opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+.tv-details.trailer-loading .tv-details-trailer-hint { opacity: 1; }

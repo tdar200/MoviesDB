@@ -58,18 +58,27 @@ const SPORT_LABEL = { football: 'Football', cricket: 'Cricket' };
 export function buildLiveRows(matches, channels, nowMs) {
   const live = { football: [], cricket: [] };
   const today = { football: [], cricket: [] };
+  const networks = []; // 24/7 cricket channels (Willow, Fox Cricket): no kickoff, not a match
   for (const m of matches || []) {
     if (!worthListing(m)) continue;
     const sport = m.sport === 'cricket' ? 'cricket' : 'football';
     if (m.state === 'in') live[sport].push(matchToCard(m, nowMs));
+    else if (m.state === 'pre' && sport === 'cricket' && !m.kickoff) networks.push(matchToCard(m, nowMs));
     else if (m.state === 'pre') today[sport].push(matchToCard(m, nowMs));
     else if (m.state === 'post' && nowMs - Date.parse(m.kickoff || '') < RECENT_POST_MS) today[sport].push(matchToCard(m, nowMs));
   }
   const rows = [];
   for (const sport of ['football', 'cricket']) rows.push({ key: `live-${sport}`, title: `${SPORT_LABEL[sport]} · Live now`, items: live[sport].slice(0, MATCH_ROW_CAP), noSort: true });
   for (const sport of ['football', 'cricket']) rows.push({ key: `today-${sport}`, title: `${SPORT_LABEL[sport]} · Today`, items: today[sport].slice(0, MATCH_ROW_CAP), noSort: true });
+  rows.push({ key: 'channels-cricket', title: 'Cricket · 24/7 channels', items: networks.slice(0, MATCH_ROW_CAP), noSort: true });
   rows.push({ key: 'channels', title: 'Sports channels', items: (channels || []).map(c => channelToCard({ category: 'Sports', ...c })), noSort: true });
   return rows.filter(r => r.items.length);
+}
+
+// The Cricket tab: the cricket rows of the Live home and nothing else (no
+// football, no general sports-channel list).
+export function buildCricketRows(matches, channels, nowMs) {
+  return buildLiveRows(matches, channels, nowMs).filter(r => /-cricket$/.test(r.key));
 }
 
 // After a 60 s refresh re-renders the rows, put focus back on the same card so

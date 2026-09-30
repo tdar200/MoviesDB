@@ -1,5 +1,5 @@
 import { installProviderControls } from './tv-provider-controls.js';
-import { createTvPlayer } from './tv-player.js';
+import { createTvPlayer, setHudButton } from './tv-player.js';
 // Spatial focus navigation for LG's D-pad, keyboard, and pointer remote.
 const selector = 'button:not(:disabled), a[href], input:not([type="hidden"]):not(:disabled), select:not(:disabled), [tabindex="0"], video[controls]';
 const visible = node => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
@@ -37,7 +37,7 @@ export function installTvRemote() {
   // in the DOM (hidden) because the rest of the app wires to them by id.
   const kindNav = document.createElement('div');
   kindNav.className = 'tv-kind-nav';
-  [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV'], ['live', 'Live'], ['channels', 'Channels']].forEach(([kind, label], i) => {
+  [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV'], ['live', 'Live'], ['cricket', 'Cricket'], ['channels', 'Channels']].forEach(([kind, label], i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'app-tab tv-kind-tab' + (i === 0 ? ' active' : '');
@@ -46,10 +46,16 @@ export function installTvRemote() {
     b.onclick = () => {
       toggleControls(false);
       kindNav.querySelector('.tv-top250-tab')?.classList.remove('active');
+      rowMemory.clear(); // another tab has other rows: start them at their first card
       if (window.__setTvMediaKind) window.__setTvMediaKind(kind);
     };
     kindNav.append(b);
   });
+  // The tab the viewer was last on (script.js saves it and opens that home).
+  let savedKind = null;
+  try { savedKind = localStorage.getItem('tvMediaKind'); } catch { /* storage blocked */ }
+  const savedTab = Array.from(kindNav.querySelectorAll('.tv-kind-tab')).find(b => b.dataset.kind === savedKind);
+  if (savedTab) kindNav.querySelectorAll('.tv-kind-tab').forEach(b => b.classList.toggle('active', b === savedTab));
   const imdbTop250 = document.createElement('button');
   imdbTop250.type = 'button';
   imdbTop250.className = 'app-tab tv-top250-tab';
@@ -121,7 +127,7 @@ export function installTvRemote() {
   const playback = document.createElement('button');
   playback.id = 'tv-play-pause';
   playback.type = 'button';
-  playback.textContent = 'Play / pause';
+  setHudButton(playback, 'play', 'Play');
   playback.style.display = 'none';
   playback.onclick = () => {
     if (nativeVideo.paused) nativeVideo.play().catch(() => {});
@@ -136,7 +142,7 @@ export function installTvRemote() {
     }, 0);
     nativeWasVisible = nowVisible;
     playback.style.display = visible(nativeVideo) ? '' : 'none';
-    playback.textContent = nativeVideo.paused ? '▶ Play' : 'Ⅱ Pause';
+    setHudButton(playback, nativeVideo.paused ? 'play' : 'pause', nativeVideo.paused ? 'Play' : 'Pause');
   };
   new MutationObserver(syncPlayback).observe(nativeVideo, { attributes: true, attributeFilter: ['style'] });
   nativeVideo.addEventListener('play', syncPlayback);
@@ -149,9 +155,24 @@ export function installTvRemote() {
   // The last card the user was on, tracked however focus arrived (D-pad or pointer).
   // Used to return focus after the details screen or player closes.
   let lastCardFocus = null;
+  // Every row remembers the card you were on, so moving up/down lands on THAT row's own
+  // position (its first card if you have never been there) and not on the column you
+  // happened to be in. Keyed by row title: the rows of one tab have unique titles.
+  const rowMemory = new Map();
+  const cardsOf = section => Array.from(section.querySelectorAll('.tv-card'));
+  const rememberedCard = section => {
+    const cards = cardsOf(section);
+    const memo = rowMemory.get(section.dataset.tvRow);
+    if (!memo || !cards.length) return cards[0] || null;
+    return cards.find(c => c.dataset.movieId === memo.id) || cards[Math.min(memo.index, cards.length - 1)];
+  };
   document.addEventListener('focusin', event => {
     const t = event.target;
-    if (t && t.classList && t.classList.contains('tv-card')) lastCardFocus = t;
+    if (t && t.classList && t.classList.contains('tv-card')) {
+      lastCardFocus = t;
+      const section = t.closest('.tv-row');
+      if (section && section.dataset.tvRow) rowMemory.set(section.dataset.tvRow, { id: t.dataset.movieId, index: cardsOf(section).indexOf(t) });
+    }
   });
   // Capture before async metadata/search rendering can remove the focused card.
   document.addEventListener('click', event => {
@@ -203,62 +224,63 @@ export function installTvRemote() {
   // Netflix-style anchored rail: the focused card holds a fixed left gutter and the
   // whole track glides under it (CSS transitions the transform). Clamped so it never
   // scrolls past the first or last card.
+  //
+  // Pure arithmetic on layout offsets: a card's offsetLeft/offsetWidth are unaffected by the
+  // track's transform, by the focus scale and by an in-flight transition, so no
+  // getBoundingClientRect / getComputedStyle per key press (each forced a layout on the TV).
+  // The rail's gutter and width are measured once per rail and again only after a resize.
+  let railMetrics = new WeakMap();
+  const metricsOf = rail => {
+    let m = railMetrics.get(rail);
+    if (!m) { m = { gutter: parseFloat(getComputedStyle(rail).paddingLeft) || 0, width: rail.clientWidth }; railMetrics.set(rail, m); }
+    return m;
+  };
   const anchorRail = card => {
     const rail = card.closest('.tv-rail');
     const track = rail && rail.querySelector('.tv-rail-track');
-    if (!rail || !track) { card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' }); return null; }
-    const gutter = 12;
+    if (!rail || !track) { card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' }); return; }
+    const { gutter, width } = metricsOf(rail);
     const tx = parseFloat(track.dataset.tx || '0');
-    const railRect = rail.getBoundingClientRect();
-    const cardRect = card.getBoundingClientRect();
-    // While the track is still gliding (CSS transition) the card's rect is at the
-    // ANIMATED offset, not at the target tx. Measuring from it on rapid presses
-    // over- or under-shot and left the focused card clipped at the rail edge.
-    // Re-base the card onto the target transform before computing the move.
-    const shown = getComputedStyle(track).transform;
-    const shownTx = shown && shown !== 'none' ? parseFloat(shown.split(',')[4]) || 0 : 0;
-    const left = cardRect.left - shownTx + tx;
-    const right = cardRect.right - shownTx + tx;
-    let delta = 0;
-    if (left < railRect.left + gutter) delta = (railRect.left + gutter) - left;
-    else if (right > railRect.right - gutter) delta = (railRect.right - gutter) - right;
-    let next = tx + delta;
-    // Clamp so the LAST card stops at the gutter. clientWidth - scrollWidth ignored
-    // the rail's padding and the trailing card margin, so the end of every row left
-    // the focused last card clipped ~12 px by the rail edge.
+    const left = card.offsetLeft;
+    const right = left + card.offsetWidth;
+    // The track starts at the rail's padding edge (the gutter), so the visible window in
+    // TRACK coordinates is [0, width - 2 * gutter].
+    const span = width - 2 * gutter;
+    let next = tx;
+    if (left + tx < 0) next = -left;
+    else if (right + tx > span) next = span - right;
+    // Clamp so the LAST card stops at the gutter (and the first never passes it).
     const last = track.lastElementChild;
-    const lastRight = last ? last.getBoundingClientRect().right - shownTx + tx : railRect.right;
-    const min = Math.min(0, tx + (railRect.right - gutter) - lastRight);
+    const min = Math.min(0, span - (last.offsetLeft + last.offsetWidth));
     if (next > 0) next = 0;
     if (next < min) next = min;
-    track.dataset.tx = String(next);
-    track.style.transform = `translateX(${next}px)`;
-    return cardRect;
+    if (next !== tx) {
+      track.dataset.tx = String(next);
+      track.style.transform = `translateX(${next}px)`;
+    }
   };
-  // The header's positioning only changes with the viewport; read it once.
-  let headerPinned = null;
-  window.addEventListener('resize', () => { headerPinned = null; });
+  window.addEventListener('resize', () => { railMetrics = new WeakMap(); });
+  // Horizontal moves never change a card's vertical position, so the row is only placed
+  // when focus ENTERS it (or comes from outside the rails).
+  let lastFocusedRow = null;
   const focus = node => {
     if (!node) return;
     node.focus({ preventScroll: true });
     if (node.classList && node.classList.contains('tv-card')) {
-      const rect = anchorRail(node);
-      // The rail transform owns horizontal movement. Vertically, keep the whole
-      // row visible: its title must not end up above the viewport (or under a
-      // sticky header) and the card must not be cut off at the bottom. Only
-      // scroll when needed; a scroll on every left/right press forces a second
-      // full layout on older webOS Chromium.
-      if (rect) {
-        const section = node.closest('.tv-row');
-        const header = document.querySelector('header');
-        if (header && headerPinned === null) headerPinned = getComputedStyle(header).position !== 'static';
-        const hr = header && headerPinned ? header.getBoundingClientRect() : null;
-        const topLimit = hr && hr.bottom > 0 ? hr.bottom + 8 : 8;
-        const sectionTop = section ? section.getBoundingClientRect().top : rect.top;
-        if (sectionTop < topLimit) window.scrollBy(0, sectionTop - topLimit);
-        else if (rect.bottom > window.innerHeight - 16) window.scrollBy(0, rect.bottom - window.innerHeight + 24);
+      anchorRail(node);
+      const section = node.closest('.tv-row');
+      if (!section) { lastFocusedRow = null; node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' }); return; }
+      if (section !== lastFocusedRow) {
+        lastFocusedRow = section;
+        // Like a streaming home: the row you enter sits about a third of the way down with
+        // the next row peeking in below it, instead of being pinned to the screen edge.
+        // One layout read per row change; the scroll itself glides on the compositor.
+        const want = Math.round(window.innerHeight * 0.3);
+        const delta = section.getBoundingClientRect().top - want;
+        if (Math.abs(delta) > 6) window.scrollTo({ top: Math.max(0, window.scrollY + delta), behavior: 'smooth' });
       }
     } else {
+      lastFocusedRow = null;
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
     }
   };
@@ -316,6 +338,8 @@ export function installTvRemote() {
       tvPlayer.open();
       focus(visible(nativeVideo) ? playback : document.getElementById('close-modal'));
     } else {
+      // Back from the player re-opens that title's details (script.js closePlayer); they own focus.
+      if (detailsOpen()) return;
       const row = Array.from(document.querySelectorAll('[data-tv-row]')).find(r => r.dataset.tvRow === previousRow);
       const matchingCard = scope => Array.from(scope.querySelectorAll('.tv-card')).find(c => c.dataset.movieId === previousMovieId);
       const replacement = previousMovieId && ((row && matchingCard(row)) || matchingCard(document));
@@ -410,6 +434,11 @@ export function installTvRemote() {
       focus(document.querySelector('.app-tab.active'));
       return;
     }
+    // From the hero's buttons, Down goes to the first row (at the position that row was left).
+    if (!modalOpen() && !picker && !detailsOpen() && key === 'ArrowDown' && active?.closest('.tv-hero')) {
+      const firstRow = document.querySelector('#main .tv-row');
+      if (firstRow) { focus(rememberedCard(firstRow)); return; }
+    }
     // Move between catalogue rows by column. Geometry-scoring every focusable
     // card made each up/down press scan 800+ cards once the full home loaded.
     if (!modalOpen() && !picker && !detailsOpen() && !horizontal && active?.classList.contains('tv-card')) {
@@ -418,9 +447,7 @@ export function installTvRemote() {
       const rowIndex = rows.indexOf(section);
       const targetRow = rows[rowIndex + sign];
       if (targetRow) {
-        const column = Array.from(section.querySelectorAll('.tv-card')).indexOf(active);
-        const targetCards = Array.from(targetRow.querySelectorAll('.tv-card'));
-        focus(targetCards[Math.min(Math.max(0, column), targetCards.length - 1)]);
+        focus(rememberedCard(targetRow));
       } else if (sign < 0) {
         focus(document.querySelector('.tv-play') || homeAnchor());
       }

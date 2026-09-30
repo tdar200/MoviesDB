@@ -11,3 +11,5 @@ com.moviesdb.tv_*.ipk
 videasy-test.png
 vidfast-*.png
 iframe-test.png
+
+/catalog-cache/**

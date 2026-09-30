@@ -18,6 +18,17 @@ ares-install --device lgtv dist/com.moviesdb.tv_1.2.0_all.ipk
 ares-launch --device lgtv com.moviesdb.tv
 ```
 
+Category browsing uses complete, pre-ranked hosted snapshots for cold starts and an IndexedDB cache that survives app launches. Fresh cached categories avoid all page fetching and sorting; categories older than 24 hours refresh in the background without moving visible cards. Only one background category refresh runs at a time. Memory retains 12 category snapshots and 256 TMDB pages; disk retains up to 64 categories or 120,000 titles, evicting least recently used entries. Storage or snapshot failures fall back to complete source fetching, and temporary empty feeds are not retained. JavaScript, CSS and HLS assets use versioned URLs and long browser cache lifetimes.
+
+Before deploying a fresh set of catalogue snapshots, run:
+
+```bash
+npm run build:catalog
+npm run build:web
+```
+
+`build:catalog` fetches all accessible pages for All, Movies and TV and writes 113 generated category files into the ignored `catalog-cache/` directory. `build:web` copies those into the static site. Browser background refreshes keep device caches current between releases. The shared page memo expires after 15 minutes so it cannot make a later refresh reuse old API responses. See [performance measurements](docs/playback-validation/2026-09-29-category-cache-performance.json).
+
 The host URL is configured in `webos-app/index.html`. Repackage after changing it. The installed shell checks connectivity and offers Retry if the host cannot be reached. LG Developer Mode must remain enabled for development-installed apps.
 
 ## Remote
@@ -28,7 +39,7 @@ The host URL is configured in `webos-app/index.html`. Repackage after changing i
 - Back closes an option menu, leaves fullscreen, closes playback, closes filters, then returns focus to navigation. Closing playback restores the selected title.
 - Playback fills the screen. The timeline and transport controls hide after 4.5 seconds while playing. OK toggles playback when controls are hidden; Left/Right seek backward/forward. Playback options opens source, quality, subtitle, and episode menus. Back closes options before leaving playback.
 - Quality, subtitles, season, and episode selectors use the same remote option menu.
-- Load more titles fetches another catalogue batch. TV mode avoids the desktop's large background catalogue expansion.
+- Category rows fetch every available page from each movie/show source before sorting by weighted rating. Each category keeps its full membership, including titles in other categories. Cards render in windows of 12; more categories load as focus moves down. Failed category loads offer Retry category. TMDB limits each feed to 500 accessible pages; feeds exceeding that are limited to the titles the API exposes.
 
 ## Playback and limits
 

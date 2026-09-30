@@ -1,0 +1,156 @@
+{
+  "checkedAt": "2026-09-29T20:47:18.829Z",
+  "host": "https://moviesdb-tv.vercel.app",
+  "environment": "Headless desktop Chrome, 1920x1080, new browser profile then reload",
+  "cold": {
+    "heroMs": 830,
+    "firstCategoryMs": 1321,
+    "categoriesMs": 2809,
+    "categoryRequests": 0,
+    "snapshotRequests": 12
+  },
+  "warm": {
+    "heroMs": 121,
+    "categoriesMs": 259,
+    "categoryRequests": 0,
+    "snapshotRequests": 0
+  },
+  "rows": [
+    {
+      "title": "Trending This Week",
+      "total": 8558,
+      "pages": "500",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Popular Now",
+      "total": 17616,
+      "pages": "1000",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Top Rated",
+      "total": 11858,
+      "pages": "629",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "New Releases & Episodes",
+      "total": 6253,
+      "pages": "389",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Critically Acclaimed",
+      "total": 4370,
+      "pages": "220",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Oscar Best Picture Winners",
+      "total": 99,
+      "pages": "5",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Golden Globe Winners (Drama)",
+      "total": 68,
+      "pages": "4",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Palme d'Or Winners · Cannes",
+      "total": 91,
+      "pages": "5",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Oscar-Winning Documentaries",
+      "total": 78,
+      "pages": "4",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "AFI Most Thrilling Films",
+      "total": 100,
+      "pages": "5",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Biggest Blockbusters",
+      "total": 50,
+      "pages": "3",
+      "cached": true,
+      "sorted": true
+    },
+    {
+      "title": "Action & Adventure",
+      "total": 3899,
+      "pages": "196",
+      "cached": true,
+      "sorted": true
+    }
+  ],
+  "errors": [],
+  "snapshotResponses": [
+    {
+      "path": "/catalog-cache/v1-20d5839b4928de65.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-ecbda18f7a43ee61.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-11bb689f1198ce09.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-1a86e85a6afc3744.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-deb01cedec03e68b.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-14cb71bb376b5a81.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-0920a77a6e73ee90.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-13b3e148db18ba06.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-a563bcd52833b6df.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-64268b7671d722ec.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-a22683d256f61a54.json",
+      "status": 200
+    },
+    {
+      "path": "/catalog-cache/v1-e50d43f32d6fc0b1.json",
+      "status": 200
+    }
+  ],
+  "snapshotFailures": []
+}

@@ -20,3 +20,6 @@
 /public/
 
 .env*
+
+# Generated complete category snapshots (rebuild with npm run build:catalog)
+/catalog-cache/

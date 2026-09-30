@@ -30,7 +30,7 @@ test('TV native player fills the screen, hides controls, seeks, pauses, and retu
     return r.fulfill({status:range?206:200,contentType:'video/mp4',body:range?bytes.subarray(range.start,range.end+1):bytes,headers:{'access-control-allow-origin':'*','accept-ranges':'bytes',...(range?{'content-range':`bytes ${range.start}-${range.end}/${bytes.length}`}:{})}});
   });
   await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
-  await page.waitForSelector('.tv-card');
+  await page.waitForSelector('.tv-card[data-movie-id="9001"]');
   await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await page.waitForFunction(()=>document.getElementById('player-video').currentTime>0.5);
   assert.equal(await page.locator(':focus').getAttribute('id'),'tv-play-pause');
@@ -85,7 +85,7 @@ test('ending an episode autoplays the next one, discards stale lookup, and prefe
   await page.route('**/hls/start?*',r=>{starts.push(new URL(r.request().url()).searchParams.get('hash'));return r.fulfill({status:504,json:{error:'Test source unavailable'}});});
   await page.route('**/subtitles?*',r=>r.fulfill({json:{tracks:[]}}));
   await page.goto(`${process.env.TV_TEST_URL||'http://127.0.0.1:8123'}/tv.html?source=TV%20(Torrent)`);
-  await page.waitForSelector('.tv-card');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+  await page.waitForSelector('.tv-card[data-movie-id="9002"]');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await firstRequest;
   await page.waitForSelector('#tv-next',{state:'visible'});
   await page.locator('#player-video').evaluate(video=>video.dispatchEvent(new Event('ended')));
@@ -111,7 +111,7 @@ test('native HLS televisions prepare movie playback through HLS at 1080p', {skip
   await page.route('**/subtitles?*',r=>r.fulfill({json:{tracks:[]}}));
   await page.route('**/stream-status?*',r=>r.fulfill({json:{state:'ready',peers:100}}));
   await page.goto(`${process.env.TV_TEST_URL||'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
-  await page.waitForSelector('.tv-card');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+  await page.waitForSelector('.tv-card[data-movie-id="9003"]');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await page.waitForFunction(()=>document.getElementById('player-video').src.includes('/hls/fixture/index.m3u8'));
   assert.equal(starts[0],'a'.repeat(40), 'movie playback must begin with 1080p before any fixture-error fallback');
  }finally{await browser.close();}
@@ -130,7 +130,7 @@ test('overlapping subtitle lookups keep only the latest menu', {skip:!process.en
   await page.route('**/subtitles?*',async r=>{const first=++calls===1;if(first){firstSeen();await gate;}await r.fulfill({json:{duration:60,tracks:[{id:'f1',label:first?'Spanish':'English',lang:first?'es':'en'}]}});});
   await page.route('**/subtitle?*',r=>r.fulfill({contentType:'text/vtt',body:'WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nCaption\n'}));
   await page.goto(`${process.env.TV_TEST_URL||'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
-  await page.waitForSelector('.tv-card');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await firstRequest;
+  await page.waitForSelector('.tv-card[data-movie-id="9004"]');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await firstRequest;
   await page.locator('#quality-select').evaluate(el=>el.dispatchEvent(new Event('change',{bubbles:true})));
   await page.waitForFunction(()=>document.getElementById('subtitle-select').textContent.includes('English'));
   releaseFirst();await page.waitForTimeout(500);
@@ -172,7 +172,7 @@ for (const kind of ['movie', 'tv', 'movie-alternate']) test(`111Movies fallback 
   await page.route('**/yts?*',r=>r.fulfill({json:{title:movie.title,torrents:kind==='movie-alternate'?[]:[{hash:'a'.repeat(40),quality:'720p',seeds:100,video_codec:'x264'}]}}));
   await page.route('**/subtitles?*',r=>r.fulfill({json:{tracks:[]}}));
   let requested;await page.route('**/hls/start?*',r=>{requested=new URL(r.request().url());return r.fulfill({status:503,json:{error:'Fixture stops after verifying the requested position'}});});
-  await page.goto((process.env.TV_TEST_URL||'http://127.0.0.1:8123')+'/tv.html?source=111Movies');await page.waitForSelector('.tv-card');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+  await page.goto((process.env.TV_TEST_URL||'http://127.0.0.1:8123')+'/tv.html?source=111Movies');await page.waitForSelector('.tv-card[data-movie-id="9006"]');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await page.locator('#tv-provider-alternate').waitFor({state:'visible'});
   await page.waitForFunction(()=>document.getElementById('player-iframe').contentWindow!==null);
   for(let i=0;i<50&&!page.frames().some(f=>f.url().includes('player.vidlove.cc'));i++)await page.waitForTimeout(100);

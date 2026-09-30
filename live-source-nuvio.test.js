@@ -97,7 +97,7 @@ test('listMatches caches the catalog for 60 s and serves the last good list when
   const first = await adapter.listMatches();
   assert.ok(first.length >= 2);
   clock = 30_000; await adapter.listMatches();
-  assert.equal(calls, 2, 'football + cricket, then served from cache inside 60 s');
+  assert.equal(calls, 3, 'football + cricket + upcoming cricket, then served from cache inside 60 s');
   clock = 61_000; mode = 'fail';
   assert.deepEqual(await adapter.listMatches(), first, 'network error -> last good list');
   mode = 'http'; clock = 130_000;
@@ -108,6 +108,40 @@ test('listMatches caches the catalog for 60 s and serves the last good list when
   assert.ok(Date.now() - t0 < 1000);
   clock = 200_000 + 31 * 60_000; mode = 'fail';
   await assert.rejects(() => adapter.listMatches(), /fetch failed/, 'a list older than 30 min is not served');
+});
+
+test('listMatches also reads the upcoming cricket catalog, de-duplicating and surviving its failure', async () => {
+  const meta = (id, name, released, status) => ({ id, name, released, description: `League: ODI Category: CRICKET Status: ${status}` });
+  const live = { metas: [meta('sa-aus', 'LIVE: South Africa vs Australia', '2026-09-30T11:30:00.000Z', 'LIVE NOW')] };
+  const upcoming = { metas: [
+    meta('sa-aus', 'South Africa vs Australia', '2026-09-30T11:30:00.000Z', 'Kickoff at 11:30'),
+    meta('pak-ban', 'Pakistan vs Bangladesh', '2026-10-01T00:00:00.000Z', 'Kickoff at 12:00'),
+  ] };
+  const urls = []; let upcomingDown = false;
+  const fetchImpl = async url => {
+    urls.push(url);
+    if (url.endsWith('/nuvio_sports_live/genre=Cricket.json')) return { ok: true, status: 200, json: async () => live };
+    if (url.endsWith('/nuvio_sports_upcoming/genre=Cricket.json')) {
+      if (upcomingDown) return { ok: false, status: 502, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => upcoming };
+    }
+    return { ok: true, status: 200, json: async () => ({ metas: [] }) };
+  };
+  let clock = 0;
+  const adapter = createNuvioAdapter({ fetchImpl, now: () => clock });
+  const list = (await adapter.listMatches()).filter(m => m.sport === 'cricket');
+  assert.deepEqual(list.map(m => m.sourceId).sort(), ['pak-ban', 'sa-aus'], 'upcoming fixture added, duplicate collapsed');
+  assert.equal(list.find(m => m.sourceId === 'sa-aus').status, 'in', 'the live entry wins over the upcoming copy');
+  assert.equal(list.find(m => m.sourceId === 'pak-ban').kickoff, '2026-10-01T00:00:00Z');
+  assert.ok(!urls.some(u => u.includes('nuvio_sports_upcoming/genre=Football')), 'football behaviour unchanged');
+  clock = 61_000; upcomingDown = true;
+  const after = (await adapter.listMatches()).filter(m => m.sport === 'cricket');
+  assert.deepEqual(after.map(m => m.sourceId), ['sa-aus'], 'a failing upcoming catalog does not hide live matches');
+});
+
+test('stripDecorations drops the stopwatch symbol Nuvio puts before upcoming fixtures', async () => {
+  const { stripDecorations } = await import('./live-source-nuvio.mjs');
+  assert.equal(stripDecorations('\u23F1\uFE0F Pakistan vs Bangladesh'), 'Pakistan vs Bangladesh');
 });
 
 test('listMatches with no cached list propagates the failure', async () => {

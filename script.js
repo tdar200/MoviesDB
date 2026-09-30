@@ -4,16 +4,20 @@ import { getRecommendations, getRecommendationRows, clearRecommendationCache } f
 import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
 import { playbackHealth, bufferRecovery } from './playback-health.js';
-import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow, sortTvTrackByRating } from './tv-ui.js';
+import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow, ensureTvHero, syncPersonalRows } from './tv-ui.js';
 import { createTvDetails, mergeTitleRecommendations } from './tv-details.js';
-import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows, staticHomeRows, rowSourcesAtPage } from './tv-rows.mjs';
+import { rankTrailerVideos } from './tv-trailers.js';
+import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows, staticHomeRows } from './tv-rows.mjs';
 import { fetchTmdbJson } from './tmdb-queue.js';
+import { fetchCompleteTvRow } from './tv-catalog.mjs';
+import { createTvCatalogCache } from './tv-catalog-cache.mjs';
+import { createTvCatalogStore } from './tv-catalog-store.mjs';
 import { decodeImportPayload, mergeImportIntoStores } from './profile-import.js';
 import { describeYtsLookupFailure, describeImdbLookupFailure, describeTvTorrentFailure } from './yts-status.js';
 import { dedupeTrackLabels } from './subtitles.js';
 import { IMDB_TOP_250 } from './imdb-top250.js';
 import { EMMY_WINNERS } from './emmy-winners.js';
-import { buildLiveRows, restoreFocusById, findCurrentMatch, channelToCard } from './live-home.mjs';
+import { buildLiveRows, buildCricketRows, restoreFocusById, findCurrentMatch, channelToCard } from './live-home.mjs';
 import { gatherEarly } from './live-match.mjs';
 import { createLiveDetails } from './live-details.mjs';
 import { createLivePlayer } from './live-player.mjs';
@@ -209,10 +213,10 @@ function upgradeHelperToLan() {
 }
 
 // fetch with an abort timeout (webOS's fetch has no timeout option).
-function fetchWithTimeout(url, ms) {
+function fetchWithTimeout(url, ms, options = {}) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), ms);
-  return fetch(url, { signal: ac.signal, cache: 'no-store' }).finally(() => clearTimeout(t));
+  return fetch(url, { cache: 'no-store', ...options, signal: ac.signal }).finally(() => clearTimeout(t));
 }
 
 // Kick the probe off at load so the fast path is resolved before playback.
@@ -416,6 +420,12 @@ function getResume(movie) {
     if (e.durationSec && e.positionSec > e.durationSec * 0.95) return null;
     return e;
   } catch { return null; }
+}
+
+// How far through a title the viewer is (0..1): the progress bar on its Continue Watching tile.
+function watchedFraction(movie) {
+  const e = getResume(movie);
+  return e && e.durationSec ? Math.min(1, e.positionSec / e.durationSec) : 0;
 }
 
 // Save the position periodically while watching, and it's also saved on close.
@@ -2642,6 +2652,7 @@ function handleEpisodeChange(episodeNum) {
 }
 
 async function openPlayer(movie, target = null) {
+  detailsReturnMovie = null; // only the details screen's Play (which sets it after this call) returns to details
   // Begin engagement capture for this title. Watched status is NOT set on open — it is
   // committed later by flushDwell() once enough active watch-tab time has accrued.
   livePlayer.stop(); // an on-demand title replaces any live stream that did not close cleanly
@@ -2886,6 +2897,11 @@ function closePlayer() {
   currentSeasonData = null;
   document.body.style.overflow = '';
   if (recommendationsChanged) onSignalChanged();
+  // Back from the player unwinds one level: the details screen of what was playing (its
+  // Resume label and episode list are current), without restarting its trailer.
+  const returnTo = detailsReturnMovie;
+  detailsReturnMovie = null;
+  if (TV_MODE && returnTo && tvDetails) tvDetails.open(returnTo, { trailer: false });
 }
 
 // Show/hide loading state
@@ -3657,7 +3673,9 @@ async function renderRecommendationsRow() {
 // re-render whichever recommendation surface is currently showing so the change applies.
 function onSignalChanged() {
   if (TV_MODE && tvHomeIsCurrent()) {
-    renderTvHome(lastTrendingSeed);
+    // Only Continue Watching / My List depend on the signals: patch those rows in place.
+    // A full repaint threw away the rail positions, row windows and focus the viewer had.
+    refreshTvPersonalRows();
     return;
   }
   if (tabRecommended.classList.contains('active')) {
@@ -3665,6 +3683,12 @@ function onSignalChanged() {
   } else if (currentApp === 'movies' && !isWatchedMode && !isFavoritesMode && !isSearchMode && !isTop250Mode) {
     renderRecommendationsRow();
   }
+}
+
+function refreshTvPersonalRows() {
+  const personal = signalRows({ continueWatching: getWatchedHistory(), myList: getStarredList() }, TV_HOME_CARD_LIMIT);
+  personal.forEach(r => { if (r.key === 'continue') r.progressOf = watchedFraction; });
+  syncPersonalRows(main, personal, { onSelect: openDetails });
 }
 
 // Render the full themed Recommendation page (stacked rails) into #main.
@@ -3964,11 +3988,58 @@ async function fetchDetailsRecommendations(type, id) {
   ]);
   return mergeTitleRecommendations(recommended, similar, { id, media_type: type }, 20);
 }
+// Candidate trailer keys for the details screen, best first (see tv-trailers.js). A long-running show often has
+// no trailer on the show itself (Grey's Anatomy lists one Clip), but its newest seasons may: try the last two.
+// Memoised per title: the keys are also prefetched while a tile rests under focus (below), so pressing OK
+// finds them ready instead of paying a TMDB round trip (and, for long-running shows, up to three more) first.
+const trailerKeyCache = new Map();
+function fetchTrailerKeys(type, id) {
+  const cacheKey = `${type}:${id}`;
+  if (trailerKeyCache.has(cacheKey)) return trailerKeyCache.get(cacheKey);
+  const promise = fetchTrailerKeysUncached(type, id).then(keys => { if (!keys.length) trailerKeyCache.delete(cacheKey); return keys; });
+  trailerKeyCache.set(cacheKey, promise);
+  if (trailerKeyCache.size > 60) trailerKeyCache.delete(trailerKeyCache.keys().next().value);
+  return promise;
+}
+if (TV_MODE) {
+  let trailerPrefetchTimer = null;
+  document.addEventListener('focusin', event => {
+    clearTimeout(trailerPrefetchTimer);
+    const card = event.target && event.target.closest ? event.target.closest('.tv-card') : null;
+    const movie = card && card.__movie;
+    if (!movie || movie.id == null) return;
+    const type = movie.media_type === 'tv' || (movie.name && !movie.title) ? 'tv' : 'movie';
+    trailerPrefetchTimer = setTimeout(() => { fetchTrailerKeys(type, movie.id).catch(() => {}); }, 600);
+  });
+}
+async function fetchTrailerKeysUncached(type, id) {
+  try {
+    const data = await fetchTmdbJson(ENDPOINTS.videos(type, id));
+    let keys = rankTrailerVideos(data && data.results);
+    if (!keys.length && type === 'tv') {
+      const show = await fetchTvDetails(id).catch(() => null);
+      const last = show && show.number_of_seasons;
+      for (let n = last; n >= 1 && n > last - 2 && !keys.length; n--) {
+        const season = await fetchTmdbJson(`${CONFIG.BASE_URL}/tv/${id}/season/${n}/videos?api_key=${CONFIG.API_KEY}`).catch(() => null);
+        keys = rankTrailerVideos(season && season.results);
+      }
+    }
+    return keys;
+  } catch (error) {
+    console.error('Error fetching trailer candidates:', error);
+    return [];
+  }
+}
+// The title whose details screen started the player in progress: Back from the player
+// returns there (card -> details -> player is a stack), not to the home.
+let detailsReturnMovie = null;
 const tvDetails = TV_MODE ? createTvDetails({
-  fetchCast, fetchTrailer: fetchTrailers, fetchTvDetails, fetchSeasonDetails,
+  fetchCast, fetchTrailer: fetchTrailerKeys, fetchTvDetails, fetchSeasonDetails,
   fetchRecommendations: fetchDetailsRecommendations,
-  onPlay: (movie, target) => { tvDetails.close(); openPlayer(movie, target); },
+  // openPlayer clears detailsReturnMovie when it starts, so the marker is set after the call.
+  onPlay: (movie, target) => { tvDetails.close(); openPlayer(movie, target); detailsReturnMovie = movie; },
   getResume,
+  getProgress: movie => getWatchProgress(movie.id),
   isStarred, toggleStar, isDownvoted, toggleDownvote, onSignalChanged,
 }) : null;
 
@@ -4058,10 +4129,8 @@ function tvHomeIsCurrent() {
   return TV_MODE && browseGridOwnsMain() && !isSearchMode && !tvFiltersActive();
 }
 
-// Render the TV home from genuinely distinct TMDB feeds, deduped across rows, with
-// Continue Watching + My List first. Rows paint as each feed arrives so the screen
-// fills top-down rather than waiting on eight requests. `seed` reuses the trending
-// page loadTrending already fetched, so that request is not repeated.
+// Render complete category feeds with Continue Watching + My List first.
+// Each category paints once fully fetched and sorted; seed supplies the hero.
 // Which slice of the catalogue the home shows: 'all' | 'movie' | 'tv' (top nav).
 // Live home refresh state lives up here so setTvMediaKind/renderTvHome can call
 // stopLiveHomeRefresh() before the live block below has been evaluated.
@@ -4071,10 +4140,14 @@ function stopLiveHomeRefresh() { clearTimeout(liveHomeTimer); liveHomeTimer = nu
 
 // 'live' (football) and 'channels' (the category channel grid) share the live
 // home machinery: its guards, 60 s refresh, focus restore and player.
-function isLiveKind(kind) { return kind === 'live' || kind === 'channels'; }
-let tvMediaKind = 'all';
+function isLiveKind(kind) { return kind === 'live' || kind === 'channels' || kind === 'cricket'; }
+// The tab the viewer was last on is reopened on the next launch.
+let tvMediaKind = (() => {
+  try { const k = localStorage.getItem('tvMediaKind'); return TV_MODE && (k === 'movie' || k === 'tv' || isLiveKind(k)) ? k : 'all'; } catch { return 'all'; }
+})();
 function setTvMediaKind(kind) {
   tvMediaKind = (kind === 'movie' || kind === 'tv' || isLiveKind(kind)) ? kind : 'all';
+  try { localStorage.setItem('tvMediaKind', tvMediaKind); } catch { /* storage blocked: remembering is best-effort */ }
   document.querySelectorAll('.tv-kind-tab').forEach(b => b.classList.toggle('active', b.dataset.kind === tvMediaKind));
   window.scrollTo(0, 0);
   if (isLiveKind(tvMediaKind)) { setLoading(false); renderLiveHome(); }
@@ -4098,26 +4171,19 @@ let lastTrendingSeed = null;
 // front would cost the TV's scarce memory and a burst of TMDB requests.
 const TV_HOME_ROW_LIMIT = 12;
 const TV_HOME_ROW_BATCH = 8;
-const TV_HOME_ROW_PAGES = 3;
 let tvHomeLoadMore = null;
 const TV_HOME_CARD_LIMIT = 12;
 const TV_HOME_RECOMMENDATION_LIMIT = TV_HOME_CARD_LIMIT * 10;
-// One page of a TV home row. A mixed All row (films AND shows) has a movie and a
-// tv feed; both are fetched for the same page number and merged, each item
-// stamped with its media type so playback takes the right path. `more` is true
-// while any feed has pages left.
-async function fetchTvRowPage(def, page) {
-  const pages = await Promise.all(rowSourcesAtPage(def, page).map(async src => {
-    try {
-      const data = await fetchTmdbJson(src.url);
-      let list = (data && (data.results || data.items)) || []; // curated lists use `items`
-      if (src.mediaType) list = list.map(it => (it.media_type ? it : { ...it, media_type: src.mediaType }));
-      const paged = /[?&]page=\d+/.test(src.url);
-      return { list, more: paged && list.length > 0 && page < ((data && data.total_pages) || 1) };
-    } catch (e) { return { list: [], more: false, failed: true }; }
-  }));
-  return { items: pages.flatMap(p => p.list), more: pages.some(p => p.more), failed: pages.every(p => p.failed) };
-}
+const tvCatalogCache = createTvCatalogCache({
+  store: createTvCatalogStore(),
+  fetchRow: (def, options) => fetchCompleteTvRow(def, fetchTmdbJson, options),
+  loadSnapshot: async key => {
+    // Hosted production snapshots are separate from local fixture/development feeds.
+    if (!location.hostname.endsWith('.vercel.app')) return null;
+    const response = await fetchWithTimeout(`/catalog-cache/${key}.json`, 8000, { cache: 'default' });
+    return response.ok ? response.json() : null;
+  },
+});
 
 async function renderTvHome(seed) {
   stopLiveHomeRefresh();
@@ -4131,11 +4197,19 @@ async function renderTvHome(seed) {
   const onPlay = (movie) => openPlayer(movie);
   const kind = tvMediaKind;
   const personal = signalRows({ continueWatching: getWatchedHistory(), myList: getStarredList() }, TV_HOME_CARD_LIMIT);
+  personal.forEach(r => { if (r.key === 'continue') r.progressOf = watchedFraction; });
   // The trending seed is all-media, so only use it as the hero under the "All" tab;
   // under Movies/TV let renderTvRows pick the hero from the first kind-appropriate row.
-  const featured = (kind === 'all' && seed && seed.length && seed[0]) || (personal[0] && personal[0].items[0]) || null;
+  const featured = (kind === 'all' && seed && seed.length && seed[0]) || (personal[0] && personal[0].items[0]) || (kind === 'all' && IMDB_TOP_250[0]) || null;
 
-  renderTvRows(main, personal, { onSelect, onPlay, featured });
+  // The billboard says what it is: the trending #1, or the last title the viewer was watching.
+  const heroEyebrow = featured && seed && seed.length && featured === seed[0] && kind === 'all' ? '#1 in Trending Today'
+    : personal[0] && featured === personal[0].items[0] ? 'Continue Watching' : 'FEATURED';
+  renderTvRows(main, personal, { onSelect, onPlay, featured, eyebrow: heroEyebrow });
+  if (kind === 'all' && !(seed && seed.length) && !personal.length) {
+    const hero = main.querySelector('.tv-hero');
+    if (hero) hero.dataset.provisional = '1';
+  }
 
   const seen = new Set();
   dedupeAcrossRows(personal).forEach(r => r.items.forEach(it => seen.add(titleKey(it))));
@@ -4144,37 +4218,16 @@ async function renderTvHome(seed) {
   // deliberately bypass cross-row dedupe so their curated membership stays intact.
   const staticCollections = { imdbTop250: IMDB_TOP_250, emmyWinners: EMMY_WINNERS };
   const staticCollectionLimit = Math.max(IMDB_TOP_250.length, EMMY_WINNERS.length);
-  for (const row of staticHomeRows(kind, staticCollections, staticCollectionLimit)) {
-    appendTvRow(main, row, onSelect);
-  }
-
-  // Append one endless row: paint it AND stamp it so it can page as the user scrolls.
-  const appendEndless = (def, items) => {
-    if (def.mediaType) items = items.map(it => (it.media_type ? it : { ...it, media_type: def.mediaType }));
-    // Dedupe the whole fetch, not just its first 12: a row whose leading titles
-    // already appear above still fills its window from the titles after them.
-    const unique = dedupeItems(items, new Set(seen));
-    const rowSeen = new Set(seen); // what this row must not repeat: earlier rows + its own cards
-    const shown = unique.slice(0, TV_HOME_CARD_LIMIT);
-    // Reserve every fetched title for this row, including the ones it shows only
-    // after a scroll right; otherwise they could also appear in the next row.
-    unique.forEach(it => seen.add(titleKey(it)));
-    shown.forEach(it => rowSeen.add(titleKey(it)));
-    const section = appendTvRow(main, { key: def.key, title: def.title, items: shown }, onSelect);
-    if (section) {
-      // The rest of the fetch is shown before the next page is requested. It used to
-      // be dropped: paging jumped to page 2, so items 13-20 of every row's first page
-      // never appeared, and fast Right presses stalled at card 12 waiting on the network.
-      section.__pageRest = unique.slice(TV_HOME_CARD_LIMIT);
-      section.dataset.rowUrl = def.url;
-      section.dataset.rowPage = '1';
-      if (def.mediaType) section.dataset.rowMedia = def.mediaType;
-      // Seed with a snapshot of everything shown across rows so far, so paging deep
-      // into this rail doesn't reintroduce titles already shown in an earlier row.
-      tvRowSeen.set(section, rowSeen);
+  // They sit below the top category rows (Trending, New, Best New, Popular, Top Rated...), not
+  // above them: a first row of all-time classics read as "new releases" full of Shawshank.
+  const staticSections = [];
+  {
+    const holder = document.createElement('div');
+    for (const row of staticHomeRows(kind, staticCollections, staticCollectionLimit)) {
+      const section = appendTvRow(holder, row, onSelect);
+      if (section) staticSections.push(section);
     }
-    return section;
-  };
+  }
 
   // Recommended row: use the same aggregate taste engine as the full recommendation
   // page. Every watched title contributes; no single recent film can dictate the rail.
@@ -4185,61 +4238,130 @@ async function renderTvHome(seed) {
   // one card). Skip the row until there is something to recommend from.
   const signals = buildSignalItems();
   const hasTasteSignal = signals.basket.length > 0 || signals.watched.length > 0 || signals.seen.length > 0;
-  if (hasTasteSignal) try {
-    // Ask for extra candidates so Movies/TV tabs can filter by media type and
-    // still fill the expanded 120-card recommendation rail.
-    const ranked = await getRecommendations(signals, { limit: TV_HOME_RECOMMENDATION_LIMIT * 2 });
-    let candidates = ranked.map(rec => rec && rec.movie).filter(Boolean);
-    if (kind !== 'all') {
-      candidates = candidates.filter(movie => {
-        const type = (movie.media_type === 'tv' || (movie.name && !movie.title)) ? 'tv' : 'movie';
-        return type === kind;
-      });
-    }
-    if (candidates.length && token === tvHomeToken && tvHomeIsCurrent()) {
-      const items = dedupeItems(candidates, new Set(seen)).slice(0, TV_HOME_RECOMMENDATION_LIMIT);
-      items.forEach(item => seen.add(titleKey(item)));
-      appendTvRow(main, { key: 'recommended', title: 'Recommended for You', items }, onSelect);
-    }
-  } catch { /* no recommendations; skip the row */ }
+  let recommendedPlaceholder = null;
+  if (hasTasteSignal) {
+    recommendedPlaceholder = document.createElement('section');
+    recommendedPlaceholder.className = 'tv-row';
+    recommendedPlaceholder.dataset.tvRow = 'Recommended for You';
+    const heading = document.createElement('h2');
+    heading.textContent = 'Recommended for You';
+    // Same skeleton as a loading category row (role=status paragraph, styled as blank tiles).
+    const recommendedStatus = document.createElement('p');
+    recommendedStatus.setAttribute('role', 'status');
+    recommendedPlaceholder.append(heading, recommendedStatus);
+    main.append(recommendedPlaceholder);
+  }
+  const loadRecommendations = async () => {
+    if (hasTasteSignal) try {
+      // Ask for extra candidates so Movies/TV tabs can filter by media type and
+      // still fill the expanded 120-card recommendation rail.
+      const ranked = await getRecommendations(signals, { limit: TV_HOME_RECOMMENDATION_LIMIT * 2 });
+      let candidates = ranked.map(rec => rec && rec.movie).filter(Boolean);
+      if (kind !== 'all') {
+        candidates = candidates.filter(movie => {
+          const type = (movie.media_type === 'tv' || (movie.name && !movie.title)) ? 'tv' : 'movie';
+          return type === kind;
+        });
+      }
+      if (candidates.length && token === tvHomeToken && tvHomeIsCurrent()) {
+        const items = dedupeItems(candidates, new Set(seen)).slice(0, TV_HOME_RECOMMENDATION_LIMIT);
+        items.forEach(item => seen.add(titleKey(item)));
+        const holder = document.createElement('div');
+        const section = appendTvRow(holder, { key: 'recommended', title: 'Recommended for You', items }, onSelect);
+        if (section) recommendedPlaceholder.replaceWith(section);
+        else recommendedPlaceholder.remove();
+      } else if (token === tvHomeToken) recommendedPlaceholder.remove();
+    } catch { recommendedPlaceholder?.remove(); }
+  };
+  // Personal recommendations never block complete cached category rows.
+  loadRecommendations();
 
   const defs = catalogRowDefs(CONFIG.API_KEY, CONFIG.BASE_URL, kind);
+  const isCurrent = () => token === tvHomeToken && tvHomeIsCurrent();
   let nextDef = 0;
-  const loadRows = async (count) => {
-    const end = Math.min(defs.length, nextDef + count);
-    while (nextDef < end) {
-      const def = defs[nextDef++];
-      if (token !== tvHomeToken || !tvHomeIsCurrent()) return; // user navigated away
-      let items = [];
-      let pagesLoaded = 1;
-      if (def.key === 'trending' && kind === 'all' && seed && seed.length) {
-        items = seed.slice(0, 40);
-      } else {
-        // Rating-sorted rows overlap: the top dramas already sit in Top Rated Shows,
-        // so after cross-row dedupe page 1 can leave a single card. Pull further
-        // pages (up to TV_HOME_ROW_PAGES) until the row has a full window of new titles.
-        for (let page = 1; page <= TV_HOME_ROW_PAGES; page++) {
-          const { items: batch, more } = await fetchTvRowPage(def, page);
-          if (batch.length) pagesLoaded = page;
-          items = items.concat(batch);
-          if (!batch.length || !more) break;
-          if (items.filter(it => it && it.id != null && !seen.has(titleKey(it))).length >= TV_HOME_CARD_LIMIT) break;
-          if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
+  const loadCategory = async (def, placeholder) => {
+    const status = placeholder.querySelector('p');
+    const restoreFocus = placeholder.contains(document.activeElement);
+    placeholder.dataset.rowLoading = '1';
+    placeholder.querySelector('button')?.remove();
+    try {
+      const row = await tvCatalogCache.getRow(def, {
+        isCurrent,
+        onProgress: ({ loadedPages, totalPages }) => {
+          if (isCurrent()) status.textContent = `Loading category… ${loadedPages} / ${totalPages} pages`;
+        },
+      });
+      if (!isCurrent()) return;
+      // Preserve full category membership, even when another category has the
+      // same title. buildRow renders only a small window of the sorted collection.
+      const holder = document.createElement('div');
+      const section = appendTvRow(holder, { key: def.key, title: def.title, items: row.items, noSort: true }, onSelect);
+      if (section) {
+        if (def.key === 'trending' && row.items.length) {
+          if (kind === 'all') lastTrendingSeed = row.items;
+          ensureTvHero(main, row.items[0], { onSelect, onPlay, eyebrow: '#1 in Trending Today' });
         }
-      }
-      if (token !== tvHomeToken || !tvHomeIsCurrent()) return;
-      const section = appendEndless(def, items);
-      if (section) section.__rowDef = def;
-      if (section && pagesLoaded > 1) section.dataset.rowPage = String(pagesLoaded);
+        section.dataset.rowComplete = '1';
+        section.dataset.rowCached = row.cached ? '1' : '0';
+        section.dataset.rowSavedAt = String(row.savedAt);
+        section.dataset.rowPages = String(row.loadedPages);
+        section.dataset.rowLimited = row.limited ? '1' : '0';
+        placeholder.replaceWith(section);
+        if (restoreFocus && (document.activeElement === document.body || placeholder.contains(document.activeElement))) {
+          section.querySelector('.tv-card')?.focus({ preventScroll: true });
+        }
+      } else placeholder.remove();
+    } catch (error) {
+      if (!isCurrent() || error.name === 'AbortError') return;
+      status.textContent = 'Could not load the complete category.';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'tv-more-info';
+      retry.textContent = 'Retry category';
+      retry.addEventListener('click', () => loadCategory(def, placeholder));
+      placeholder.append(retry);
+    } finally {
+      placeholder.dataset.rowLoading = '0';
     }
+  };
+  const loadRows = async (count) => {
+    if (!isCurrent()) return;
+    const pending = defs.slice(nextDef, nextDef + count).map(def => {
+      const placeholder = document.createElement('section');
+      placeholder.className = 'tv-row';
+      placeholder.dataset.tvRow = def.title;
+      const heading = document.createElement('h2');
+      heading.textContent = def.title;
+      const status = document.createElement('p');
+      status.setAttribute('role', 'status');
+      status.textContent = 'Loading category…';
+      placeholder.append(heading, status);
+      main.append(placeholder);
+      if (def.key === 'weighted_top') staticSections.splice(0).forEach(section => main.append(section));
+      return { def, placeholder };
+    });
+    nextDef += pending.length;
+    // Categories finish independently; a large Popular feed cannot block an
+    // award or genre row. All requests still use the shared paced TMDB queue.
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(3, pending.length) }, async () => {
+      while (next < pending.length && isCurrent()) {
+        const { def, placeholder } = pending[next++];
+        await loadCategory(def, placeholder);
+      }
+    }));
   };
   let loadingMore = false;
   tvHomeLoadMore = async () => {
-    if (loadingMore || nextDef >= defs.length || token !== tvHomeToken) return;
+    if (loadingMore || nextDef >= defs.length || !isCurrent()) return;
     loadingMore = true;
     try { await loadRows(TV_HOME_ROW_BATCH); } finally { loadingMore = false; }
+    requestMoreTvCategories(document.activeElement);
   };
-  await loadRows(TV_HOME_ROW_LIMIT);
+  loadingMore = true;
+  try { await loadRows(TV_HOME_ROW_LIMIT); } finally { loadingMore = false; }
+  if (isCurrent()) staticSections.splice(0).forEach(section => main.append(section)); // safety: never drop them
+  requestMoreTvCategories(document.activeElement);
 }
 
 // ---- Live football home -------------------------------------------------------
@@ -4330,11 +4452,12 @@ async function renderLiveHome() {
   const token = ++tvHomeToken;
   const kind = tvMediaKind;
   const channelsMode = kind === 'channels';
+  const cricketMode = kind === 'cricket'; // the Cricket tab: cricket rows of the live feed only
   const stillCurrent = () => token === tvHomeToken && liveHomeCurrent();
   // Switching Live <-> Channels must never leave the other tab's rows on screen.
   if (liveHomeCurrent() && (!liveHomeOwnsMain() || liveRenderedKind !== kind)) {
     main.textContent = '';
-    main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: channelsMode ? 'Loading channels…' : 'Loading live sport…' }));
+    main.append(Object.assign(document.createElement('p'), { className: 'tv-live-empty', textContent: channelsMode ? 'Loading channels…' : cricketMode ? 'Loading cricket…' : 'Loading live sport…' }));
     window.scrollTo(0, 0);
   }
   liveRenderedKind = kind;
@@ -4346,16 +4469,16 @@ async function renderLiveHome() {
   } else {
     // Matches paint as soon as they arrive; the sports channel list can take
     // ~20 s on a cold cache, so it joins the page when it lands.
-    const channelsP = fetchLiveJson('/live/channels', 40000).catch(error => ({ error }));
+    const channelsP = cricketMode ? Promise.resolve({ channels: [] }) : fetchLiveJson('/live/channels', 40000).catch(error => ({ error }));
     const matchesRes = await fetchLiveJson('/live/matches').catch(error => ({ error }));
     if (!stillCurrent()) return;
     const paint = channelsRes => {
-      const rows = buildLiveRows(matchesRes.matches || [], (channelsRes && channelsRes.channels) || [], Date.now());
+      const rows = (cricketMode ? buildCricketRows : buildLiveRows)(matchesRes.matches || [], (channelsRes && channelsRes.channels) || [], Date.now());
       const hasMatches = rows.some(r => r.key.indexOf('live-') === 0 || r.key.indexOf('today-') === 0);
       const hasCricket = rows.some(r => /-cricket$/.test(r.key));
       const notes = [liveStatusText(matchesRes, channelsRes || {})];
-      if (!matchesRes.error && !hasCricket) notes.push('Cricket: nothing live or scheduled with a free stream right now.');
-      paintLiveRows(rows, hasMatches ? '' : (matchesRes.error ? 'Could not reach the stream helper.' : 'No live sport with a free stream right now.'), notes.filter(Boolean).join('   ·   '));
+      if (!cricketMode && !matchesRes.error && !hasCricket) notes.push('Cricket: nothing live or scheduled with a free stream right now.');
+      paintLiveRows(rows, hasMatches ? '' : (matchesRes.error ? 'Could not reach the stream helper.' : cricketMode ? 'No cricket live or scheduled with a free stream right now.' : 'No live sport with a free stream right now.'), notes.filter(Boolean).join('   ·   '));
     };
     const early = await Promise.race([channelsP, Promise.resolve(null)]);
     paint(early);
@@ -4372,75 +4495,21 @@ async function renderLiveHome() {
 }
 window.__renderLiveHome = renderLiveHome; // e2e hook
 
-// Per-row dedupe sets for endless paging: keyed by the row's <section>.
-const tvRowSeen = new WeakMap();
-
-// Fetch the next page of a row's feed and append it. Called as the user nears the
-// end of a rail, so every category (Comedies, Top Rated, …) scrolls endlessly
-// instead of stopping at the first page.
-async function extendTvRow(section) {
-  if (!section || section.dataset.rowLoading === '1' || section.dataset.rowDone === '1') return;
-  const base = section.dataset.rowUrl;
-  if (!base) return;
-  if (section.__pageRest && section.__pageRest.length) {
-    const rest = section.__pageRest;
-    section.__pageRest = null;
-    const seen = tvRowSeen.get(section) || new Set();
-    const fresh = dedupeItems(rest, seen);
-    tvRowSeen.set(section, seen);
-    const track = section.querySelector('.tv-rail-track');
-    if (track && fresh.length) {
-      fresh.forEach(m => track.append(createTvCard(m, openDetails)));
-      sortTvTrackByRating(track);
-      return;
-    }
-  }
-  const page = Number(section.dataset.rowPage || '1') + 1;
-  section.dataset.rowLoading = '1';
-  try {
-    // Mixed All rows page their movie and tv feeds together.
-    const def = section.__rowDef || { url: base, mediaType: section.dataset.rowMedia };
-    const { items, more, failed } = await fetchTvRowPage(def, page);
-    if (failed) return; // transient; a later scroll retries this page
-    const seen = tvRowSeen.get(section) || new Set();
-    const fresh = dedupeItems(items, seen);
-    tvRowSeen.set(section, seen);
-    const track = section.querySelector('.tv-rail-track');
-    if (track) {
-      fresh.forEach(m => track.append(createTvCard(m, openDetails)));
-      sortTvTrackByRating(track);
-    }
-    section.dataset.rowPage = String(page);
-    // Stop when a page adds nothing new (empty page, or an endpoint that ignores
-    // ?page= and re-returns the same items — all deduped away), or past total_pages.
-    // Without the fresh===0 guard such a row would refetch forever on every scroll.
-    if (!items.length || fresh.length === 0 || !more) section.dataset.rowDone = '1';
-  } catch { /* transient; a later scroll retries */ } finally {
-    section.dataset.rowLoading = '0';
-  }
-}
-
-// Trigger the fetch when focus lands within the last few cards of a rail. Installed
-// once; harmless off the TV home (rows without rowUrl are ignored).
+// Category cards are already complete and sorted. Focus only grows their DOM
+// window and requests more categories as the viewer approaches the bottom.
 let tvEndlessInstalled = false;
+function requestMoreTvCategories(target) {
+  const section = target?.closest?.('[data-tv-row]');
+  if (!section || !tvHomeLoadMore || !main.contains(section)) return;
+  // Loading placeholders have no cards and cannot receive remote focus. Count
+  // only navigable rows so they cannot block requests for later categories.
+  const rows = Array.from(main.querySelectorAll('[data-tv-row]')).filter(row => row.querySelector('.tv-card'));
+  if (rows.indexOf(section) >= rows.length - 3) tvHomeLoadMore();
+}
 function installTvEndlessRows() {
   if (tvEndlessInstalled) return;
   tvEndlessInstalled = true;
-  document.addEventListener('focusin', (event) => {
-    const card = event.target?.closest?.('.tv-card');
-    const section = card?.closest?.('[data-tv-row]');
-    if (!card || !section) return;
-    // Near the bottom of the home: fetch the next batch of rows.
-    if (tvHomeLoadMore && main.contains(section)) {
-      const rows = main.querySelectorAll('[data-tv-row]');
-      if (Array.prototype.indexOf.call(rows, section) >= rows.length - 3) tvHomeLoadMore();
-    }
-    if (!section.dataset.rowUrl) return;
-    // Render the row's own windowed cards before fetching another page.
-    if (section.__rest && section.__rest.length) return;
-    const cards = section.querySelectorAll('.tv-card');
-    if (Array.prototype.indexOf.call(cards, card) >= cards.length - 6) extendTvRow(section);
-  });
+  document.addEventListener('focusin', event => requestMoreTvCategories(event.target));
 }
 
 // Create movie card element
@@ -4796,6 +4865,17 @@ async function loadTrending() {
     isTop250Mode = false;
     top250Btn.classList.remove('active');
     updateQueryParams();
+
+    // Let module initialization finish before reading the later tab controls.
+    await Promise.resolve();
+
+    // A TV home comes from complete cached categories, including Trending. Do
+    // not gate it on ten preliminary TMDB pages just to obtain a hero image.
+    if (tvHomeIsCurrent()) {
+      setLoading(false);
+      await renderTvHome(lastTrendingSeed);
+      return;
+    }
 
     // Determine how many pages to fetch based on filters
     // High vote filters have limited results, so fetch fewer pages

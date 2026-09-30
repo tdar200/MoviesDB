@@ -59,11 +59,17 @@ test('TV remote: rails, player, Back, search, and option selection', { skip: !pr
     assert.ok(await page.locator(':focus').evaluate(node => !!node.closest('#player-modal')));
     await page.keyboard.press('Escape');
     await page.waitForSelector('#player-modal', { state: 'hidden' });
+    // Back from the player lands on that title's details; Back again returns to its card.
+    await page.waitForSelector('.tv-details:not([hidden])');
+    assert.equal(await focused(), 'tv-details-play');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.tv-details', { state: 'hidden' });
+    await page.waitForFunction(id => document.activeElement && document.activeElement.dataset.movieId === id, selected); // restore is deferred one tick
     assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), selected);
     await page.keyboard.press('Escape');
     assert.equal(await onHomeAnchor(), true);
-    // All -> Movies -> TV -> Live -> Channels -> IMDb Top 250 -> Search & filters.
-    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowRight');
+    // All -> Movies -> TV -> Live -> Cricket -> Channels -> IMDb Top 250 -> Search & filters.
+    for (let i = 0; i < 7; i++) await page.keyboard.press('ArrowRight');
     assert.equal(await page.locator(':focus').getAttribute('id'), 'tv-browse-controls');
     await page.keyboard.press('Enter');
     // Opening the panel focuses its first filter, not the search box (which would pop
@@ -204,17 +210,19 @@ test('111Movies toolbar works with D-pad and Enter across the provider frame', {
   await frame.locator('video').evaluate(v=>{v.tabIndex=0;v.focus();});
   await page.keyboard.press('Enter');await frame.waitForFunction(()=>document.querySelector('video').paused);
   await page.keyboard.press('Escape');await page.waitForSelector('#player-modal',{state:'hidden'});
+  await page.waitForSelector('.tv-details:not([hidden])');await page.keyboard.press('Escape');await page.waitForSelector('.tv-details',{state:'hidden'});
+  await page.waitForFunction(()=>document.activeElement&&document.activeElement.dataset.movieId==='9005'); // restore is deferred one tick
   assert.equal(await page.locator(':focus').getAttribute('data-movie-id'),'9005');
  } finally {await browser.close();}
 });
 
-test('TV home shows distinct, deduped rows and Back from details returns to the card', { skip: !process.env.TV_E2E }, async () => {
+test('TV home keeps complete category membership and Back from details returns to the card', { skip: !process.env.TV_E2E }, async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    const mk = (start, n, mt) => Array.from({ length: n }, (_, i) => ({ id: start + i, title: `T${start + i}`, name: `T${start + i}`, media_type: mt, vote_average: 8, vote_count: 1000, popularity: 100, genre_ids: [18], release_date: '2024-01-01', first_air_date: '2024-01-01', overview: 'Row fixture.', poster_path: null, backdrop_path: null }));
+    const mk = (start, n, mt) => Array.from({ length: n }, (_, i) => ({ id: start + i, title: `T${start + i}`, name: `T${start + i}`, media_type: mt, vote_average: 8, vote_count: 1000, popularity: 100, genre_ids: [18], release_date: new Date().toISOString().slice(0, 10), first_air_date: '2024-01-01', overview: 'Row fixture.', poster_path: null, backdrop_path: null }));
     await page.route('https://api.themoviedb.org/**', async route => {
       const url = route.request().url();
       let body = { results: [], page: 1, total_pages: 1 };
@@ -231,22 +239,19 @@ test('TV home shows distinct, deduped rows and Back from details returns to the 
     await page.waitForSelector('.tv-card');
     // Rows paint progressively; wait for the last fixture-backed one (every later
     // discover row repeats the same ids and is deduped away) before reading them all.
-    await page.waitForFunction(() => [...document.querySelectorAll('.tv-row h2')].some(h => h.textContent === 'Critically Acclaimed'));
+    await page.waitForFunction(() => [...document.querySelectorAll('.tv-row')].some(r => r.dataset.tvRow === 'Highest Weighted Rating' && r.dataset.rowComplete === '1'));
     // Several distinct rows, not slices of one feed.
     const headings = await page.locator('.tv-row h2').allTextContents();
-    for (const h of ['Trending This Week', 'Popular Now', 'Top Rated', 'New Releases & Episodes', 'Critically Acclaimed']) assert.ok(headings.includes(h), `missing row ${h}`);
+    for (const h of ['Trending This Week', 'Popular Now', 'Top Rated', 'New Releases & Episodes', 'Highest Weighted Rating']) assert.ok(headings.includes(h), `missing row ${h}`);
     // A fresh profile has no taste signal, so no unpersonalised "Recommended" row
     // swallows the catalogue rows above.
     assert.ok(!headings.includes('Recommended for You'));
-    // No title appears in more than one catalogue row. Rows are windowed, so read
-    // each row's full item list, not only the rendered cards. The curated IMDb/Emmy
-    // collections deliberately bypass cross-row dedupe and are excluded.
-    const ids = await page.locator('.tv-row').evaluateAll(rows => rows
-      .filter(row => !/IMDb Top 250|Emmy Award Winners/.test(row.querySelector('h2').textContent))
-      .flatMap(row => [...row.querySelectorAll('.tv-card')].map(c => c.dataset.movieId).concat((row.__rest || []).map(m => String(m.id)))));
-    assert.equal(new Set(ids).size, ids.length, 'a title was repeated across rows');
-    // The two ids that overlapped trending must not reappear under Popular.
-    assert.equal(ids.filter(id => id === '3').length, 1);
+    // A category keeps its complete membership, including titles that also
+    // belong to Trending. Duplicates are removed within each category only.
+    const popularIds = await page.locator('[data-tv-row="Popular Now"]').evaluate(row =>
+      [...row.querySelectorAll('.tv-card')].map(c => c.dataset.movieId).concat((row.__rest || []).map(m => String(m.id))));
+    assert.deepEqual(popularIds, ['3', '4', '100', '101', '102', '103']);
+    assert.equal(new Set(popularIds).size, popularIds.length);
 
     // Back from the details screen returns focus to the exact card.
     await page.locator('.tv-card[data-movie-id="200"]').first().focus();
@@ -347,7 +352,7 @@ async function navigationFixture(page, bytes) {
   // Registered first: Playwright tries the most recently added route first, so the
   // specific helper routes below (on the https helper origin) must come after this.
   await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
-  const feeds = [[/\/trending\//, 1000], [/\/movie\/popular/, 2000], [/\/movie\/top_rated/, 3000], [/\/movie\/now_playing/, 4000], [/sort_by=vote_average/, 5000], [/with_genres=28&/, 6000], [/with_genres=35&/, 7000]];
+  const feeds = [[/\/trending\//, 1000], [/\/movie\/popular/, 2000], [/\/movie\/top_rated/, 3000], [/\/movie\/now_playing/, 4000], [/sort_by=vote_count/, 5000], [/with_genres=28&/, 6000], [/with_genres=35&/, 7000]];
   await page.route('https://api.themoviedb.org/**', route => {
     const url = route.request().url();
     if (/\/external_ids/.test(url)) return route.fulfill({ json: { imdb_id: 'tt1234567' } });
@@ -410,13 +415,16 @@ test('TV focus returns to the same deep card after details, and rapid Right keep
     page.on('pageerror', error => errors.push(error.message));
     await navigationFixture(page, bytes);
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
-    // Wait until the fixture rows have painted (Critically Acclaimed = the 5000 feed).
+    // Wait until the fixture rows have painted (Highest Weighted Rating = the 5000 feed).
     await page.waitForSelector('.tv-card[data-movie-id="5000"]');
     await page.keyboard.press('ArrowDown'); // hero Play
     assert.equal(await page.evaluate(() => document.activeElement.className), 'tv-play');
     for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown'); // six rows deep
     for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight'); // eight cards across
+    await page.waitForTimeout(350); // let the rail's glide (and the page's smooth scroll) settle before measuring
+    const indexInRow = () => page.evaluate(() => [...document.activeElement.closest('.tv-rail-track').children].indexOf(document.activeElement));
     const deep = await focusedCardOnScreen(page);
+    const deepIndex = await indexInRow();
     assert.ok(deep.ok, 'deep: ' + deep.why);
     const row = await page.evaluate(() => document.activeElement.closest('.tv-row').dataset.tvRow);
     const tx = await page.evaluate(() => document.activeElement.closest('.tv-rail-track').dataset.tx);
@@ -427,6 +435,7 @@ test('TV focus returns to the same deep card after details, and rapid Right keep
     await page.waitForSelector('.tv-details', { state: 'hidden' });
     await page.waitForFunction(id => document.activeElement && document.activeElement.dataset.movieId === id, deep.id);
     assert.equal(await page.evaluate(() => document.activeElement.closest('.tv-row').dataset.tvRow), row);
+    await page.waitForTimeout(350);
     const back = await focusedCardOnScreen(page);
     assert.ok(back.ok, 'back: ' + back.why);
 
@@ -435,7 +444,7 @@ test('TV focus returns to the same deep card after details, and rapid Right keep
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     const rapid = await focusedCardOnScreen(page);
     assert.ok(rapid.ok, 'rapid: ' + rapid.why);
-    assert.ok(Number(rapid.id) > Number(deep.id), 'rapid Right moved along the row');
+    assert.ok(await indexInRow() > deepIndex, 'rapid Right moved along the row');
     for (let i = 0; i < 15; i++) await page.keyboard.down('ArrowRight');
     await page.keyboard.up('ArrowRight');
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -472,6 +481,9 @@ test('TV open -> play -> Back five times leaves one stopped player and the same 
       await step('playing', page.waitForFunction(() => document.getElementById('player-video').currentTime > 0.3, null, { timeout: 15000 }));
       await page.keyboard.press('Escape'); // leave playback
       await step('player closed', page.waitForSelector('#player-modal', { state: 'hidden', timeout: 10000 }));
+      await step('details shown again', page.waitForSelector('.tv-details:not([hidden])', { timeout: 10000 }));
+      await page.keyboard.press('Escape'); // leave details
+      await step('details closed', page.waitForSelector('.tv-details', { state: 'hidden', timeout: 10000 }));
       await step('focus restored', page.waitForFunction(() => document.activeElement && document.activeElement.dataset.movieId === '2003', null, { timeout: 10000 }));
       const state = await page.evaluate(() => ({
         videos: document.querySelectorAll('video').length,
@@ -507,20 +519,20 @@ test('TV home keeps loading category rows as focus moves down, up to the last on
       return route.fulfill({ json: { results, items: results, cast: [], page: 1, total_pages: 5 } });
     });
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
-    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Action & Adventure'), null, { timeout: 60000 });
-    const rowCount = () => page.evaluate(() => document.querySelectorAll('#main [data-tv-row]').length);
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Highest Weighted Rating' && r.dataset.rowComplete === '1'), null, { timeout: 60000 });
+    const rowCount = () => page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')).length);
     const initial = await rowCount();
     await page.keyboard.press('ArrowDown');
     // Walk down the home; batches of rows arrive as focus nears the bottom.
     // At the current last row, wait for the next batch before pressing on.
     for (let i = 0; i < 200; i++) {
-      if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+'))) break;
+      if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+' && r.dataset.rowComplete === '1'))) break;
       const before = await rowCount();
       await page.keyboard.press('ArrowDown');
-      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')]; return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
-      if (atBottom) await page.waitForFunction(n => document.querySelectorAll('#main [data-tv-row]').length > n, before, { timeout: 20000 }).catch(() => {});
+      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')); return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
+      if (atBottom) await page.waitForFunction(n => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')).length > n, before, { timeout: 20000 }).catch(() => {});
     }
-    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+'), null, { timeout: 30000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+' && r.dataset.rowComplete === '1'), null, { timeout: 30000 });
     const titles = await page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].map(r => r.dataset.tvRow));
     assert.ok(titles.length >= initial + 45, `rows ${initial} -> ${titles.length}`);
     for (const t of ['Oscar Best Picture Winners', 'Comedy', 'Bollywood & Indian', 'Pakistani', 'Heists', 'Hidden Gems', 'Documentaries']) assert.ok(titles.includes(t), t);
@@ -532,7 +544,7 @@ test('TV home keeps loading category rows as focus moves down, up to the last on
   } finally { await browser.close(); }
 });
 
-test('a row whose first page repeats an earlier row still fills its window from later pages', { skip: !process.env.TV_E2E, timeout: 120000 }, async () => {
+test('a category keeps overlapping titles and fetches its entire feed before ranking', { skip: !process.env.TV_E2E, timeout: 120000 }, async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
   try {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
@@ -559,20 +571,173 @@ test('a row whose first page repeats an earlier row still fills its window from 
     });
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
     // Drama is past the first batch of rows: walk down until it loads.
-    await page.waitForFunction(() => document.querySelectorAll('#main [data-tv-row]').length >= 10, null, { timeout: 60000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')).length >= 10, null, { timeout: 60000 });
     await page.keyboard.press('ArrowDown');
     for (let i = 0; i < 60; i++) {
       if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Drama'))) break;
-      const before = await page.evaluate(() => document.querySelectorAll('#main [data-tv-row]').length);
+      const before = await page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')).length);
       await page.keyboard.press('ArrowDown');
-      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')]; return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
-      if (atBottom) await page.waitForFunction(n => document.querySelectorAll('#main [data-tv-row]').length > n, before, { timeout: 20000 }).catch(() => {});
+      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')); return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
+      if (atBottom) await page.waitForFunction(n => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')).length > n, before, { timeout: 20000 }).catch(() => {});
     }
-    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Drama'), null, { timeout: 30000 });
-    const drama = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-tv-row]')].find(x => x.dataset.tvRow === 'Drama'); const c = [...r.querySelectorAll('.tv-card')]; return { n: c.length, ids: c.map(x => Number(x.dataset.movieId)), scores: c.map(x => Number(x.dataset.score)) }; });
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Drama' && r.dataset.rowComplete === '1'), null, { timeout: 30000 });
+    const drama = await page.evaluate(() => { const r = [...document.querySelectorAll('[data-tv-row]')].find(x => x.dataset.tvRow === 'Drama'); const c = [...r.querySelectorAll('.tv-card')]; return { n: c.length, total: r.__total, pages: r.dataset.rowPages, ids: c.map(x => Number(x.dataset.movieId)), scores: c.map(x => Number(x.dataset.score)) }; });
     assert.ok(drama.n >= 12, `Drama shows ${drama.n} cards`);
-    assert.ok(drama.ids.every(id => id >= 910000), 'none of the shows already in Top Rated');
+    assert.ok(drama.ids.every(id => id >= 900000 && id < 910000), 'category retains its top-rated shows even when also in Top Rated');
+    assert.equal(drama.total, 200, 'all ten category pages fetched');
+    assert.equal(drama.pages, '11', 'ten show pages and one movie page');
     assert.deepEqual(drama.scores, [...drama.scores].sort((a, b) => b - a), 'highest (weighted) rating first');
     assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('complete category ranking remains stable as scrolling renders more cards', { skip: !process.env.TV_E2E, timeout: 120000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+    const film = (id, rating) => ({ id, title: `Film ${id}`, media_type: 'movie', vote_average: rating, vote_count: 5000, popularity: 50, genre_ids: [18], release_date: '2020-01-01', overview: 'x', poster_path: null, backdrop_path: null });
+    const feedIds = new Map();
+    await page.route('https://api.themoviedb.org/**', route => {
+      const url = new URL(route.request().url());
+      const pg = Number(url.searchParams.get('page') || 1);
+      // Highest Weighted Rating, as on the TV: TMDB's order is not the row's weighted order. Cards
+      // 13-20 of page 1 outrate its first 12, and page 2 outrates all of page 1.
+      if (/\/discover\/movie/.test(url.pathname) && url.searchParams.get('sort_by') === 'vote_count.desc') {
+        const results = Array.from({ length: 20 }, (_, i) => pg === 1
+          ? film(700000 + i, i < 12 ? 7 - i * 0.01 : 8 - (i - 12) * 0.01)
+          : film(700000 + pg * 100 + i, 9.5 - pg * 0.2 - i * 0.01));
+        return route.fulfill({ json: { results, page: pg, total_pages: 5 } });
+      }
+      if (/\/discover\/tv/.test(url.pathname) && url.searchParams.get('sort_by') === 'vote_count.desc') return route.fulfill({ json: { results: [], page: pg, total_pages: 1 } });
+      url.searchParams.delete('api_key'); url.searchParams.delete('page');
+      const feed = url.pathname + url.search;
+      if (!feedIds.has(feed)) feedIds.set(feed, 100000 + feedIds.size * 1000);
+      const base = feedIds.get(feed) + (pg - 1) * 50;
+      const results = Array.from({ length: 20 }, (_, i) => film(base + i, 6.5));
+      return route.fulfill({ json: { results, items: results, cast: [], page: pg, total_pages: 5 } });
+    });
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
+    await page.waitForFunction(() => document.querySelector('[data-tv-row="Highest Weighted Rating"]')?.dataset.rowComplete === '1', null, { timeout: 60000 });
+    for (let i = 0; i < 20; i++) {
+      if (await page.evaluate(() => document.activeElement.closest && document.activeElement.closest('[data-tv-row]')?.dataset.tvRow === 'Highest Weighted Rating')) break;
+      await page.keyboard.press('ArrowDown');
+    }
+    const row = () => page.evaluate(() => {
+      const r = [...document.querySelectorAll('[data-tv-row]')].find(x => x.dataset.tvRow === 'Highest Weighted Rating');
+      return { ids: [...r.querySelectorAll('.tv-card')].map(c => c.dataset.movieId), loading: r.dataset.rowLoading === '1' };
+    });
+    const complete = await page.locator('[data-tv-row="Highest Weighted Rating"]').evaluate(r => ({ total: r.__total, ids: [...r.querySelectorAll('.tv-card')].map(c => Number(c.dataset.movieId)).concat(r.__rest.map(m => m.id)) }));
+    assert.equal(complete.total, 100, 'all five pages loaded before the first window');
+    assert.equal(complete.ids[0], 700200, 'higher-rated second page winner appears first');
+    let prev = (await row()).ids;
+    assert.equal(prev.length, 12, 'the row opens with one window of cards');
+    for (let step = 0; step < 45; step++) {
+      await page.keyboard.press('ArrowRight');
+      await page.waitForFunction(() => {
+        const r = [...document.querySelectorAll('[data-tv-row]')].find(x => x.dataset.tvRow === 'Highest Weighted Rating');
+        return r.dataset.rowLoading !== '1';
+      });
+      const now = (await row()).ids;
+      assert.deepEqual(now.slice(0, prev.length), prev, `step ${step + 1}: cards already in the row moved (${prev.length} before, ${now.length} now)`);
+      prev = now;
+    }
+    assert.ok(prev.length > 20, `the row paged past its first page (${prev.length} cards)`);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('failed category offers retry and never presents a partial ranking', { skip: !process.env.TV_E2E, timeout: 60000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    let failures = 0;
+    await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+    await page.route('https://api.themoviedb.org/**', route => {
+      const url = new URL(route.request().url());
+      const pg = Number(url.searchParams.get('page') || 1);
+      if (url.pathname.includes('/trending/')) return route.fulfill({ json: { results: [{ id: 999001, title: 'Trending fixture', vote_average: 7, vote_count: 60000 }], total_pages: 1 } });
+      if (url.pathname.endsWith('/discover/movie') && url.searchParams.get('sort_by') === 'vote_count.desc') {
+        if (pg === 2 && failures++ < 2) return route.fulfill({ status: 503, json: {} });
+        return route.fulfill({ json: { results: [{ id: 800000 + pg, title: `Movie ${pg}`, vote_average: pg === 2 ? 9 : 7, vote_count: 60000 }], total_pages: 3 } });
+      }
+      return route.fulfill({ json: { results: [], items: [], total_pages: 1, cast: [] } });
+    });
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html`);
+    const row = page.locator('[data-tv-row="Highest Weighted Rating"]');
+    await row.getByRole('button', { name: 'Retry category' }).waitFor();
+    assert.equal(await row.locator('.tv-card').count(), 0, 'failed page cannot produce a partial list');
+    await row.getByRole('button', { name: 'Retry category' }).click();
+    await page.waitForFunction(() => document.querySelector('[data-tv-row="Highest Weighted Rating"]')?.dataset.rowComplete === '1');
+    assert.deepEqual(await row.locator('.tv-card').evaluateAll(cards => cards.map(c => Number(c.dataset.movieId))), [800002, 800001, 800003]);
+    assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), '800002', 'retry restores remote focus to the completed category');
+  } finally { await browser.close(); }
+});
+
+test('TV complete category cache survives reload with zero category page refetches', { skip: !process.env.TV_E2E, timeout: 60000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    let categoryRequests = 0;
+    const feeds = new Map();
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+    await page.route('https://api.themoviedb.org/**', route => {
+      const url = new URL(route.request().url());
+      if (/\/genre\//.test(url.pathname)) return route.fulfill({ json: { genres: [] } });
+      categoryRequests++;
+      const pg = Number(url.searchParams.get('page') || 1);
+      url.searchParams.delete('page'); url.searchParams.delete('api_key'); url.searchParams.sort();
+      const key = url.toString();
+      if (!feeds.has(key)) feeds.set(key, 200000 + feeds.size * 1000);
+      const results = Array.from({ length: 20 }, (_, i) => ({ id: feeds.get(key) + pg * 20 + i, title: `Cached ${pg}-${i}`, vote_average: pg === 3 ? 9 - i * 0.01 : 7 - i * 0.01, vote_count: 60000, release_date: '2020-01-01' }));
+      return route.fulfill({ json: { results, items: results, page: pg, total_pages: 3 } });
+    });
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html`);
+    await page.waitForFunction(() => document.querySelectorAll('[data-row-complete="1"]').length >= 12);
+    assert.ok(categoryRequests >= 51, 'cold uncached fallback fetched complete source pages');
+    const before = await page.locator('[data-tv-row="Top Rated"]').evaluate(r => ({ total: r.__total, first: r.querySelector('.tv-card').dataset.movieId }));
+    await page.waitForFunction(() => new Promise(resolve => {
+      const request = indexedDB.open('moviesdb-category-cache', 1);
+      request.onsuccess = () => {
+        const db = request.result, tx = db.transaction('rows', 'readonly'), count = tx.objectStore('rows').count();
+        count.onsuccess = () => resolve(count.result >= 12);
+        tx.oncomplete = () => db.close();
+      };
+      request.onerror = () => resolve(false);
+    }));
+    categoryRequests = 0;
+    await page.reload();
+    await page.waitForFunction(() => document.querySelectorAll('[data-row-complete="1"]').length >= 12);
+    assert.equal(categoryRequests, 0, 'persistent reload needs no TMDB category fetches');
+    assert.equal(await page.locator('[data-row-cached="1"]').count(), 12);
+    const after = await page.locator('[data-tv-row="Top Rated"]').evaluate(r => ({ total: r.__total, first: r.querySelector('.tv-card').dataset.movieId }));
+    assert.deepEqual(after, before, 'entire membership and last-page winner survive caching');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('TV persistent cache evicts old categories within row and title budgets', { skip: !process.env.TV_E2E, timeout: 30000 }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage();
+    const origin = process.env.TV_TEST_URL || 'http://127.0.0.1:8123';
+    await page.route(origin + '/cache-store-test', r => r.fulfill({ contentType: 'text/html', body: '<title>Cache test</title>' }));
+    await page.goto(origin + '/cache-store-test');
+    const result = await page.evaluate(async origin => {
+      const { createTvCatalogStore } = await import(origin + '/tv-catalog-store.mjs');
+      const store = createTvCatalogStore({ maxRows: 2, maxItems: 4 });
+      const snapshot = id => ({ row: { items: [{ id }, { id: id + 1 }] } });
+      await store.set('a', snapshot(1));
+      await store.set('b', snapshot(3));
+      await new Promise(resolve => setTimeout(resolve, 5));
+      await store.get('a');
+      await store.set('c', snapshot(5));
+      return { a: !!await store.get('a'), b: !!await store.get('b'), c: !!await store.get('c') };
+    }, origin);
+    assert.deepEqual(result, { a: true, b: false, c: true });
   } finally { await browser.close(); }
 });

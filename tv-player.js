@@ -4,6 +4,22 @@ const timeText = value => {
   const seconds = Math.max(0, Math.floor(value || 0));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 };
+// Transport icons (24x24, filled with currentColor). A button is an icon over a small label.
+const ICONS = {
+  play: '<path d="M8 5v14l11-7z"/>',
+  pause: '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>',
+  back: '<path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/><text x="12" y="16.2" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor">10</text>',
+  forward: '<path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/><text x="12" y="16.2" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor">30</text>',
+  next: '<path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>',
+  options: '<path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM4 12h4v2H4v-2zm10 6H4v-2h10v2zm6 0h-4v-2h4v2zm0-4H10v-2h10v2z"/>',
+  retry: '<path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>',
+};
+export function setHudButton(button, icon, label) {
+  button.innerHTML = `<svg class="tv-hud-icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[icon] || ''}</svg><span class="tv-hud-label">${label}</span>`;
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+
 // What the HUD shows in live mode: no progress bar, no seek, a LIVE label.
 export function liveHudState(live) {
   return live
@@ -18,21 +34,20 @@ export function createTvPlayer(modal, video, playButton) {
   hud.innerHTML = '<h2 id="tv-now-playing"></h2><button id="tv-progress" role="slider" aria-label="Playback position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="tv-progress-fill"></span></button><div class="tv-player-time">0:00 / 0:00</div><div class="tv-player-actions"></div><p class="tv-player-help">← → Seek · OK Play / pause · Back Return</p>';
   modal.querySelector('.modal-content').append(hud);
   const actions = hud.querySelector('.tv-player-actions');
-  const add = (id, text, click) => {
-    const button = document.createElement('button'); button.id = id; button.type = 'button'; button.textContent = text; button.onclick = click; actions.append(button); return button;
+  const add = (id, icon, label, click) => {
+    const button = document.createElement('button'); button.id = id; button.type = 'button'; setHudButton(button, icon, label); button.onclick = click; actions.append(button); return button;
   };
   const seek = delta => document.dispatchEvent(new CustomEvent('tv-seek', { detail: delta }));
-  const rewind = add('tv-rewind', '↶ 10 seconds', () => seek(-10));
+  const rewind = add('tv-rewind', 'back', 'Back 10s', () => seek(-10));
   actions.append(playButton);
-  const forward = add('tv-forward', '30 seconds ↷', () => seek(30));
-  const settings = add('tv-player-settings', 'Audio, subtitles & episodes', () => {
+  const forward = add('tv-forward', 'forward', 'Forward 30s', () => seek(30));
+  const settings = add('tv-player-settings', 'options', 'Audio & Subtitles', () => {
     modal.classList.add('tv-settings-open');
     reveal();
     const options = Array.from(modal.querySelectorAll('.player-header select')).filter(el => el.getClientRects().length);
     (options.find(el => el.id === 'subtitle-select') || options[0])?.focus();
   });
-  settings.textContent = 'Playback options'; // No audio-track selector is implemented.
-  const retry = add('tv-retry', 'Retry playback', () => document.dispatchEvent(new Event('tv-retry-playback')));
+  const retry = add('tv-retry', 'retry', 'Retry', () => document.dispatchEvent(new Event('tv-retry-playback')));
   retry.style.display = 'none';
   const status = document.getElementById('yts-status');
   new MutationObserver(() => {
@@ -40,7 +55,7 @@ export function createTvPlayer(modal, video, playButton) {
     retry.style.display = error ? '' : 'none';
     if (error) reveal();
   }).observe(status, { attributes: true, attributeFilter: ['class', 'style'] });
-  const next = add('tv-next', 'Next episode →', () => document.getElementById('next-episode').click());
+  const next = add('tv-next', 'next', 'Next Episode', () => document.getElementById('next-episode').click());
   const progress = hud.querySelector('#tv-progress');
   progress.onclick = event => {
     if (!event.clientX) return;

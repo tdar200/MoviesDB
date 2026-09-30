@@ -11,10 +11,16 @@ import { createFetchQueue } from './fetch-queue.js';
 // pages) re-stringifying one big sessionStorage blob per response burns seconds of
 // main thread and blows the quota. In-memory memo still de-dupes within the page;
 // recommendations keeps its own bounded localStorage meta-cache for persistence.
+// Pages expire after 15 minutes so daily category refreshes actually reach TMDB;
+// the 256-entry LRU cap keeps background refresh from retaining every page.
 export const tmdbQueue = createFetchQueue({
-  fetchImpl: (url) => fetch(url),
+  fetchImpl: (url, options) => fetch(url, options),
   maxInflight: 16,
   minGapMs: 22,
+  memoTtlMs: 15 * 60 * 1000,
+  maxMemoEntries: 256,
+  // Empty feeds can recover immediately; do not cache an outage as no titles.
+  shouldMemoize: json => ![json && json.results, json && json.items].some(items => Array.isArray(items) && items.length === 0),
 });
 
 // Returns parsed JSON; throws after built-in 429 retries on persistent failure.

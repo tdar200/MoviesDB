@@ -1,0 +1,118 @@
+{
+  "checkedAt": "2026-09-29T19:56:10.819Z",
+  "host": "https://moviesdb-tv.vercel.app",
+  "elapsedSeconds": 86.911,
+  "catalogueRequests": 2960,
+  "rows": [
+    {
+      "title": "Trending This Week",
+      "total": 8933,
+      "rendered": 12,
+      "pages": 500,
+      "limited": false,
+      "sorted": true,
+      "firstId": "1396"
+    },
+    {
+      "title": "Popular Now",
+      "total": 17363,
+      "rendered": 12,
+      "pages": 1000,
+      "limited": true,
+      "sorted": true,
+      "firstId": "1396"
+    },
+    {
+      "title": "Top Rated",
+      "total": 11828,
+      "rendered": 12,
+      "pages": 629,
+      "limited": true,
+      "sorted": true,
+      "firstId": "1396"
+    },
+    {
+      "title": "New Releases & Episodes",
+      "total": 6175,
+      "rendered": 12,
+      "pages": 389,
+      "limited": false,
+      "sorted": true,
+      "firstId": "278"
+    },
+    {
+      "title": "Critically Acclaimed",
+      "total": 4370,
+      "rendered": 12,
+      "pages": 220,
+      "limited": false,
+      "sorted": true,
+      "firstId": "1396"
+    },
+    {
+      "title": "Oscar Best Picture Winners",
+      "total": 99,
+      "rendered": 12,
+      "pages": 5,
+      "limited": false,
+      "sorted": true,
+      "firstId": "238"
+    },
+    {
+      "title": "Golden Globe Winners (Drama)",
+      "total": 68,
+      "rendered": 12,
+      "pages": 4,
+      "limited": false,
+      "sorted": true,
+      "firstId": "238"
+    },
+    {
+      "title": "Palme d'Or Winners · Cannes",
+      "total": 91,
+      "rendered": 12,
+      "pages": 5,
+      "limited": false,
+      "sorted": true,
+      "firstId": "680"
+    },
+    {
+      "title": "Oscar-Winning Documentaries",
+      "total": 78,
+      "rendered": 12,
+      "pages": 4,
+      "limited": false,
+      "sorted": true,
+      "firstId": "293310"
+    },
+    {
+      "title": "AFI Most Thrilling Films",
+      "total": 100,
+      "rendered": 12,
+      "pages": 5,
+      "limited": false,
+      "sorted": true,
+      "firstId": "238"
+    },
+    {
+      "title": "Biggest Blockbusters",
+      "total": 50,
+      "rendered": 12,
+      "pages": 3,
+      "limited": false,
+      "sorted": true,
+      "firstId": "155"
+    },
+    {
+      "title": "Action & Adventure",
+      "total": 3899,
+      "rendered": 12,
+      "pages": 196,
+      "limited": false,
+      "sorted": true,
+      "firstId": "60625"
+    }
+  ],
+  "errors": [],
+  "failures": []
+}

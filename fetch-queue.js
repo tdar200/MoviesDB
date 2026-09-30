@@ -17,6 +17,9 @@ export function createFetchQueue({
   storage,
   delayImpl = defaultDelay,
   now = Date.now,
+  memoTtlMs = Infinity,
+  maxMemoEntries = Infinity,
+  shouldMemoize = () => true,
   // A black-holed connection must not hold a concurrency slot forever (every later
   // call would queue behind it and the UI spinner would never end).
   timeoutMs = 15000,
@@ -37,6 +40,7 @@ export function createFetchQueue({
       memo = {};
     }
   }
+  const memoTimes = new Map(Object.keys(memo).map(url => [url, now()]));
   let dirty = false;
   let flushScheduled = false;
 
@@ -59,6 +63,13 @@ export function createFetchQueue({
 
   function writeMemo(url, json) {
     memo[url] = json;           // synchronous in-memory write (dedup works immediately)
+    memoTimes.delete(url);
+    memoTimes.set(url, now());
+    while (memoTimes.size > maxMemoEntries) {
+      const oldest = memoTimes.keys().next().value;
+      memoTimes.delete(oldest);
+      delete memo[oldest];
+    }
     if (!storage) return;
     dirty = true;
     scheduleFlush();
@@ -141,13 +152,20 @@ export function createFetchQueue({
 
   function fetchJson(url) {
     if (Object.prototype.hasOwnProperty.call(memo, url)) {
-      return Promise.resolve(memo[url]);
+      const savedAt = memoTimes.get(url);
+      if (now() - savedAt < memoTtlMs) {
+        memoTimes.delete(url);
+        memoTimes.set(url, savedAt);
+        return Promise.resolve(memo[url]);
+      }
+      delete memo[url];
+      memoTimes.delete(url);
     }
     if (inFlight.has(url)) return inFlight.get(url);
 
     const p = acquireSlot(() => doFetch(url))
       .then((json) => {
-        writeMemo(url, json);
+        if (shouldMemoize(json)) writeMemo(url, json);
         return json;
       })
       .finally(() => {
@@ -160,12 +178,10 @@ export function createFetchQueue({
 
   function clearMemo() {
     memo = {};
+    memoTimes.clear();
     dirty = false;
     if (storage) storage.removeItem(MEMO_KEY);
   }
-
-  // `now` reserved for future TTL on the memo; referenced to keep the signature honest.
-  void now;
 
   return { fetchJson, clearMemo };
 }

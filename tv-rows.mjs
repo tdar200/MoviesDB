@@ -1,10 +1,7 @@
 // tv-rows.mjs — the pure row model behind the TV home screen.
 //
-// The old TV home sliced one trending page into seven "rows", so the same titles
-// reappeared in every rail. This module instead names genuinely distinct TMDB
-// feeds and dedupes titles across the whole screen, so a title shows in exactly
-// one row (its first, most specific one). Fetching lives in the browser; this
-// stays pure and testable.
+// Defines distinct category feeds, weighted rating order, and dedupe helpers.
+// Complete category fetching lives in tv-catalog.mjs; presentation in tv-ui.js.
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 
@@ -116,6 +113,72 @@ export function rowSourcesAtPage(def, page) {
   return rowSources(def).map(src => ({ ...src, url: /[?&]page=\d+/.test(src.url) ? src.url.replace(/([?&]page=)\d+/, `$1${page}`) : `${src.url}${src.url.includes('?') ? '&' : '?'}page=${page}` }));
 }
 
+// How a row is ordered. Only "best of" rows rank by rating (complete membership, sorted
+// by the weighted rating below). Rows that mean "what is hot / new right now" are SHORT
+// feeds kept in their own order: fetching 500 pages of Trending and rating them made it
+// a second Top Rated, and ranking now_playing by stars put its old theatrical
+// re-releases (Shawshank, Endgame) at the top of "New Releases".
+//   feed        TMDB's own rank (trending)
+//   popularity  most popular first, movies and series mixed
+//   recent      films released in the last RECENT_DAYS + series on the air, most popular first
+//   raw         highest plain average rating first (no vote weighting)
+export const RECENT_DAYS = 120;
+const FEED_ROWS = {
+  trending:    { order: 'feed',       maxPages: 5, freshMs: 3 * 3600_000 },
+  popular:     { order: 'popularity', maxPages: 5, freshMs: 6 * 3600_000 },
+  now_playing: { order: 'recent',     maxPages: 4, freshMs: 6 * 3600_000 },
+  // TMDB's own average rating, unweighted: a different ranking from "Highest Weighted Rating".
+  top_rated:   { order: 'raw',        maxPages: 10, freshMs: 3 * 24 * 3600_000 },
+};
+
+// "Newly released" for the weighted New row: released since the start of the month
+// NEW_MONTHS ago. Month granularity keeps the feed URL (and so its cache key) stable
+// for a month instead of changing every day.
+export const NEW_MONTHS = 6;
+export function newSinceDate(now = Date.now(), months = NEW_MONTHS) {
+  const d = new Date(now);
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() - months);
+  return d.toISOString().slice(0, 10);
+}
+// Two rows whose pool is big but whose rank is the weighted rating: the recent releases
+// that people actually rated well, and the best-rated titles of all time.
+const WEIGHTED_ROWS = {
+  new_weighted: { maxPages: 5, freshMs: 12 * 3600_000 },
+  weighted_top: { maxPages: 15, freshMs: 7 * 24 * 3600_000 },
+};
+
+const movieDate = item => item.release_date || '';
+// Daily talk, news and soap shows top every popularity / "on the air" feed simply because they
+// air every day (Late Night, the evening news). They are not what you pick for tonight, so the
+// hot/new rows leave them out; the rating rows and the Live tab are unaffected.
+const NOISE_GENRES = [10763, 10766, 10767]; // News, Soap, Talk
+const isNoise = item => (item.genre_ids || []).some(id => NOISE_GENRES.includes(id));
+export function orderFeedItems(def = {}, items = [], now = Date.now()) {
+  const order = def.order || 'rating';
+  if (order !== 'rating') items = items.filter(item => !isNoise(item));
+  if (order === 'feed') return items;
+  const byPopularity = list => list
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (Number(b.item.popularity) || 0) - (Number(a.item.popularity) || 0) || a.index - b.index)
+    .map(entry => entry.item);
+  if (order === 'popularity') return byPopularity(items);
+  if (order === 'raw') {
+    return items
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => (Number(b.item.vote_average) || 0) - (Number(a.item.vote_average) || 0) || (Number(b.item.vote_count) || 0) - (Number(a.item.vote_count) || 0) || a.index - b.index)
+      .map(entry => entry.item);
+  }
+  if (order === 'recent') {
+    const cutoff = new Date(now - RECENT_DAYS * 864e5).toISOString().slice(0, 10);
+    const isSeries = item => item.media_type === 'tv' || (item.name && !item.title);
+    // A series on the air is "new episodes" whatever its premiere date; a film is new only if it
+    // was actually released recently (now_playing also lists old theatrical re-releases).
+    return byPopularity(items.filter(item => isSeries(item) || (movieDate(item) && movieDate(item) >= cutoff)));
+  }
+  return sortItemsByRating(items);
+}
+
 function allRowDefs(q, base) {
   const src = (path, mediaType) => ({ url: `${base}/${path}${path.includes('?') ? '&' : '?'}${q}&page=1`, mediaType });
   const both = (key, title, movie, tv) => {
@@ -124,12 +187,20 @@ function allRowDefs(q, base) {
     if (tv) sources.push(src(`discover/tv?sort_by=vote_average.desc&${tv}`, 'tv'));
     return { key, title, url: sources[0].url, sources };
   };
+  const since = newSinceDate();
+  const pool = (key, title, movie, tv, extra) => {
+    const sources = [src(`discover/movie?${movie}`, 'movie'), src(`discover/tv?${tv}`, 'tv')];
+    return { key, title, url: sources[0].url, sources, ...extra };
+  };
   const rows = [
-    { key: 'trending', title: 'Trending This Week', url: `${base}/trending/all/week?${q}&page=1` },
-    { key: 'popular', title: 'Popular Now', sources: [src('movie/popular', 'movie'), src('tv/popular', 'tv')] },
-    { key: 'top_rated', title: 'Top Rated', sources: [src('movie/top_rated', 'movie'), src('tv/top_rated', 'tv')] },
-    { key: 'now_playing', title: 'New Releases & Episodes', sources: [src('movie/now_playing', 'movie'), src('tv/on_the_air', 'tv')] },
-    both('highly_rated', 'Critically Acclaimed', 'vote_count.gte=1500', 'vote_count.gte=800'),
+    { key: 'trending', title: 'Trending This Week', url: `${base}/trending/all/week?${q}&page=1`, ...FEED_ROWS.trending },
+    { key: 'now_playing', title: 'New Releases & Episodes', sources: [src('movie/now_playing', 'movie'), src('tv/on_the_air', 'tv')], ...FEED_ROWS.now_playing },
+    // Newly released AND well rated: a big recent pool, ranked by the weighted rating.
+    pool('new_weighted', 'Best New Releases', `sort_by=popularity.desc&vote_count.gte=100&primary_release_date.gte=${since}`, `sort_by=popularity.desc&vote_count.gte=50&first_air_date.gte=${since}`, WEIGHTED_ROWS.new_weighted),
+    { key: 'popular', title: 'Popular Now', sources: [src('movie/popular', 'movie'), src('tv/popular', 'tv')], ...FEED_ROWS.popular },
+    { key: 'top_rated', title: 'Top Rated', sources: [src('movie/top_rated', 'movie'), src('tv/top_rated', 'tv')], ...FEED_ROWS.top_rated },
+    // The weighted rating as a category of its own: the most-voted titles, ranked by it.
+    pool('weighted_top', 'Highest Weighted Rating', 'sort_by=vote_count.desc&vote_count.gte=2000', 'sort_by=vote_count.desc&vote_count.gte=500', WEIGHTED_ROWS.weighted_top),
   ];
   rows.forEach(r => { if (r.sources) r.url = r.sources[0].url; });
   // Award lists are films only by nature (Oscars, Cannes, AFI).
@@ -139,7 +210,7 @@ function allRowDefs(q, base) {
 }
 
 // The curated, media-kind-aware home. `kind` is 'all' | 'movie' | 'tv'. Every row
-// is a distinct TMDB feed; each paginates endlessly in the UI. Personal rows
+// is a distinct TMDB feed, loaded completely before rendering. Personal rows
 // (Continue Watching, My List) and Recommended are added by the caller.
 export function catalogRowDefs(apiKey, base = TMDB_BASE, kind = 'all') {
   const q = `api_key=${apiKey}`;
@@ -148,17 +219,24 @@ export function catalogRowDefs(apiKey, base = TMDB_BASE, kind = 'all') {
   const mediaType = type; // stamp movie/tv-only feeds so playback picks the right path
   const trendingScope = kind === 'all' ? 'all' : type;
   const newRow = type === 'tv'
-    ? { key: 'now_playing', title: 'New Episodes', url: `${base}/tv/on_the_air?${q}&page=1`, mediaType }
-    : { key: 'now_playing', title: 'New Releases', url: `${base}/movie/now_playing?${q}&page=1`, mediaType };
+    ? { key: 'now_playing', title: 'New Episodes', url: `${base}/tv/on_the_air?${q}&page=1`, mediaType, ...FEED_ROWS.now_playing }
+    : { key: 'now_playing', title: 'New Releases', url: `${base}/movie/now_playing?${q}&page=1`, mediaType, ...FEED_ROWS.now_playing };
   // Category rows run highest-rated first. The vote floor keeps a title rated 10
   // by three people from leading a row; series get a lower floor (fewer votes).
   const disc = (extra) => `${base}/discover/${type}?${q}&sort_by=vote_average.desc&vote_count.gte=${type === 'tv' ? 200 : 500}&${extra}&page=1`;
+  // Newly released AND well rated (recent pool, weighted rank), and the weighted rating
+  // as a category of its own (the most-voted titles, weighted rank).
+  const since = newSinceDate();
+  const dateField = type === 'tv' ? 'first_air_date' : 'primary_release_date';
+  const newWeighted = { key: 'new_weighted', title: type === 'tv' ? 'Best New Shows' : 'Best New Releases', url: `${base}/discover/${type}?${q}&sort_by=popularity.desc&vote_count.gte=${type === 'tv' ? 50 : 100}&${dateField}.gte=${since}&page=1`, mediaType, ...WEIGHTED_ROWS.new_weighted };
+  const weightedTop = { key: 'weighted_top', title: 'Highest Weighted Rating', url: `${base}/discover/${type}?${q}&sort_by=vote_count.desc&vote_count.gte=${type === 'tv' ? 500 : 2000}&page=1`, mediaType, ...WEIGHTED_ROWS.weighted_top };
   const rows = [
-    { key: 'trending', title: 'Trending This Week', url: `${base}/trending/${trendingScope}/week?${q}&page=1`, ...(kind === 'all' ? {} : { mediaType }) },
-    { key: 'popular', title: kind === 'tv' ? 'Popular Shows' : 'Popular Movies', url: `${base}/${type}/popular?${q}&page=1`, mediaType },
-    { key: 'top_rated', title: 'Top Rated', url: `${base}/${type}/top_rated?${q}&page=1`, mediaType },
+    { key: 'trending', title: 'Trending This Week', url: `${base}/trending/${trendingScope}/week?${q}&page=1`, ...(kind === 'all' ? {} : { mediaType }), ...FEED_ROWS.trending },
     newRow,
-    { key: 'highly_rated', title: 'Critically Acclaimed', url: `${base}/discover/${type}?${q}&sort_by=vote_average.desc&vote_count.gte=1500&page=1`, mediaType },
+    newWeighted,
+    { key: 'popular', title: kind === 'tv' ? 'Popular Shows' : 'Popular Movies', url: `${base}/${type}/popular?${q}&page=1`, mediaType, ...FEED_ROWS.popular },
+    { key: 'top_rated', title: 'Top Rated', url: `${base}/${type}/top_rated?${q}&page=1`, mediaType, ...FEED_ROWS.top_rated },
+    weightedTop,
   ];
   // Award/prestige rows (curated lists — film awards). Skipped under the TV tab
   // since these lists are movies; shown under All and Movies. `list: true` tells the

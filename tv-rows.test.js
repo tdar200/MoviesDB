@@ -180,7 +180,12 @@ test('category rows are fetched highest-rated first, with a vote floor so obscur
     for (const d of catalogRowDefs('KEY', 'https://api.themoviedb.org/3', kind)) {
       for (const src of rowSources(d).filter(x => /\/discover\//.test(x.url))) {
         const q = new URL(src.url).searchParams;
-        assert.equal(q.get('sort_by'), 'vote_average.desc', `${kind}: ${d.title}`);
+        // The two weighted rows fetch a bounded POOL (recent by popularity, all-time by vote
+        // count) and rank it by the weighted rating afterwards; every other category is
+        // fetched highest-rated first. All of them have a vote floor.
+        if (d.key === 'new_weighted') assert.equal(q.get('sort_by'), 'popularity.desc', `${kind}: ${d.title}`);
+        else if (d.key === 'weighted_top') assert.equal(q.get('sort_by'), 'vote_count.desc', `${kind}: ${d.title}`);
+        else assert.equal(q.get('sort_by'), 'vote_average.desc', `${kind}: ${d.title}`);
         assert.ok(Number(q.get('vote_count.gte')) >= 3, `${kind}: ${d.title} has a vote floor`);
       }
     }
@@ -205,7 +210,7 @@ test('All tab: each category is one row mixing films and shows, not separate fil
     for (const s of rowSources(row)) assert.match(s.url, new RegExp(`/discover/${s.mediaType}\\?`), `${t} ${s.mediaType}`);
   }
   // Core rails mix too; Trending is already mixed at the source.
-  for (const key of ['popular', 'top_rated', 'now_playing', 'highly_rated']) {
+  for (const key of ['popular', 'top_rated', 'now_playing', 'weighted_top']) {
     assert.deepEqual(rowSources(all.find(d => d.key === key)).map(s => s.mediaType).sort(), ['movie', 'tv'], key);
   }
   assert.match(all.find(d => d.key === 'trending').url, /\/trending\/all\//);
