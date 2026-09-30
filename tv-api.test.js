@@ -515,6 +515,131 @@ test('rejects a spin-off returned under the parent series lookup', async () => {
  assert.equal(matchesSeriesTitle({filename:'[Group] Rick.&.Morty.S01E01.mkv'},['Rick and Morty']),true);
  assert.equal(matchesSeriesTitle({filename:'S01E01.mkv'},['Rick and Morty']),true);
 });
+test('release names may drop or add apostrophes without losing the show', async () => {
+ const { matchesSeriesTitle } = await import('./tv-api.mjs');
+ assert.equal(matchesSeriesTitle({filename:'RuPauls.Drag.Race.S01E01.WEBRip.1080p-WOWRip.mp4'},["RuPaul's Drag Race"]),true);
+ assert.equal(matchesSeriesTitle({filename:"RuPaul's.Drag.Race.S01E01.1080p.mkv"},["RuPaul's Drag Race"]),true);
+ assert.equal(matchesSeriesTitle({filename:'Greys.Anatomy.S01E01.720p.mkv'},["Grey's Anatomy"]),true);
+ // Scene releases also write the possessive as its own token ("Marvel.s.Agents..."), which
+ // the pre-apostrophe-fix matcher accepted; both spellings must keep working.
+ assert.equal(matchesSeriesTitle({filename:'Marvel.s.Agents.of.S.H.I.E.L.D.S01E01.720p.mkv'},["Marvel's Agents of S.H.I.E.L.D."]),true);
+ assert.equal(matchesSeriesTitle({filename:'Marvels.Agents.of.S.H.I.E.L.D.S01E01.720p.mkv'},["Marvel's Agents of S.H.I.E.L.D."]),true);
+ assert.equal(matchesSeriesTitle({filename:'Conan.S01E01.720p.mkv'},['Conan']),true);
+ assert.equal(matchesSeriesTitle({filename:'ConMan.S01E01.720p.mkv'},['Conan']),false);
+});
+
+test('accepts the name every release uses when TMDB words the title differently', async () => {
+ const { filterSeriesTitle } = await import('./tv-api.mjs');
+ const rel = (filename) => ({ filename, title: filename });
+ // TMDB calls the show "Lioness"; the index is queried by IMDb id and its releases are
+ // named "Special Ops Lioness". A different show that merely starts with the word stays out.
+ const lioness = [1, 2, 3, 4, 5, 6].map((n) => rel(`Special.Ops.Lioness.S01E01.${n}080p.x264.mkv`))
+  .concat(rel('Lioness.Hunting.Documentary.S01E01.1080p.x264.mkv'));
+ const kept = filterSeriesTitle(lioness, ['Lioness', 'Lioness']);
+ assert.equal(kept.length, 6);
+ assert.ok(kept.every((s) => /Special\.Ops/.test(s.filename)));
+ // The other direction: TMDB carries the decoration, releases drop it.
+ assert.equal(filterSeriesTitle([1, 2, 3].map((n) => rel(`Jack.Ryan.S01E01.${n}.mkv`)), ["Tom Clancy's Jack Ryan"]).length, 3);
+});
+
+test('an index that agrees on an unrelated name is still rejected', async () => {
+ const { filterSeriesTitle } = await import('./tv-api.mjs');
+ const rel = (filename) => ({ filename, title: filename });
+ const many = (name, n = 5) => Array.from({ length: n }, (_, i) => rel(`${name}.S01E01.${i}.1080p.mkv`));
+ // A dominant wrong show must never become an alias: these are real index answers the
+ // filter correctly refused (Conan -> ConMan, Shadow Hunter -> Shadowhunters, Once -> an unrelated series).
+ assert.equal(filterSeriesTitle(many('ConMan'), ['Conan']).length, 0);
+ assert.equal(filterSeriesTitle(many('Shadowhunters'), ['Shadow Hunter']).length, 0);
+ assert.equal(filterSeriesTitle(many('Jack.of.All.Trades.Party.of.None'), ['Once']).length, 0);
+ // A spin-off that extends the title at the END is not a decorated copy of it, however common.
+ assert.equal(filterSeriesTitle(many('Rick.and.Morty.The.Anime'), ['Rick and Morty']).length, 0);
+ assert.equal(filterSeriesTitle(many('The.Walking.Dead.World.Beyond'), ['The Walking Dead']).length, 0);
+});
+
+test('one or two releases are not enough evidence to rename a show', async () => {
+ const { filterSeriesTitle } = await import('./tv-api.mjs');
+ const rel = (filename) => ({ filename, title: filename });
+ // Live case: TMDB "Conan" (the talk show) -> an index answering ConMan + "Detective Conan"
+ // (an anime). "Detective Conan" ends with "conan", so only the evidence bar keeps it out.
+ assert.equal(filterSeriesTitle([rel('ConMan.S01E01.1080p.mkv'), rel('Detective.Conan.S01E01.mp4')], ['Conan']).length, 0);
+ assert.equal(filterSeriesTitle([rel('Detective.Conan.S01E01.a.mkv'), rel('Detective.Conan.S01E01.b.mkv'), rel('ConMan.S01E01.mkv')], ['Conan']).length, 0);
+ // A name shared by only a minority of a mixed pool does not qualify either.
+ const mixed = [1, 2].map((n) => rel(`Special.Ops.Lioness.S01E01.${n}.mkv`)).concat([1, 2, 3].map((n) => rel(`Other.Show.S01E01.${n}.mkv`)));
+ assert.equal(filterSeriesTitle(mixed, ['Lioness']).length, 0);
+});
+
+test('fetchTvSources keeps every source when releases use a longer show name than TMDB', async () => {
+ clearTvCache();
+ const fake = async () => res(streams([
+  { infoHash: 'a'.repeat(40), behaviorHints: { filename: 'Special.Ops.Lioness.S01E01.1080p.WEB.x264.mkv' }, title: 'Special Ops Lioness\n👤 182' },
+  { infoHash: 'b'.repeat(40), behaviorHints: { filename: 'Special Ops Lioness S01E01.mp4' }, title: 'Special Ops Lioness\n👤 142' },
+  { infoHash: 'c'.repeat(40), behaviorHints: { filename: 'Special.Ops.Lioness.S01E01.720p.x264.mkv' }, title: 'Special Ops Lioness\n👤 20' },
+ ]));
+ const out = await fetchTvSources('tt13111078', 1, 1, { fetchImpl: fake, title: 'Lioness', originalTitle: 'Lioness', year: 2023, country: 'US' });
+ assert.equal(out.length, 3);
+});
+
+test('a lookup that lost an index is retried soon instead of cached for the full TTL', async () => {
+ // Live case: one lookup right after a helper restart lost Torrentio, and the Comet-only
+ // pool (private-tracker swarms with no reachable peers) then stuck for 30 minutes.
+ clearTvCache();
+ let now = 1_000_000;
+ let bUp = false;
+ const calls = [];
+ const fake = async (url) => {
+  calls.push(url);
+  if (url.startsWith('https://b.test')) {
+   if (!bUp) throw new Error('connect timeout');
+   return res(streams([{ infoHash: 'b'.repeat(40), behaviorHints: { filename: 'Show.S01E01.1080p.x264.mp4' }, title: 'Show\n👤 300' }]));
+  }
+  return res(streams([{ infoHash: 'a'.repeat(40), behaviorHints: { filename: 'Show.S01E01.1080p.x264.mkv' }, title: 'Show\n👤 40' }]));
+ };
+ const opts = { fetchImpl: fake, now: () => now, retries: 0, indexUrls: [{ name: 'A', url: 'https://a.test' }, { name: 'B', url: 'https://b.test' }] };
+
+ const degraded = await fetchTvSources('tt9', 1, 1, opts);
+ assert.deepEqual(degraded.map((s) => s.hash), ['a'.repeat(40)], 'only the index that answered contributes');
+ const callsAfterFirst = calls.length;
+
+ now += 5_000; // inside the short window: served from cache, the dead index is not hammered
+ await fetchTvSources('tt9', 1, 1, opts);
+ assert.equal(calls.length, callsAfterFirst);
+
+ bUp = true;
+ now += 25_000; // 30 s in: far short of the 30 min TTL, but the degraded entry has expired
+ const healed = await fetchTvSources('tt9', 1, 1, opts);
+ assert.ok(healed.some((s) => s.hash === 'b'.repeat(40)), 'the recovered index is picked up on the next request');
+ assert.equal(healed[0].hash, 'b'.repeat(40), 'and its better-seeded copy ranks first');
+});
+
+test('a fully healthy lookup is still cached for the whole TTL', async () => {
+ clearTvCache();
+ let now = 1_000_000;
+ let calls = 0;
+ const fake = async () => { calls++; return res(streams([{ infoHash: 'a'.repeat(40), behaviorHints: { filename: 'Show.S01E01.1080p.x264.mp4' }, title: 'Show\n👤 40' }])); };
+ const opts = { fetchImpl: fake, now: () => now, retries: 0, indexUrls: [{ name: 'A', url: 'https://a.test' }, { name: 'B', url: 'https://b.test' }] };
+ await fetchTvSources('tt8', 1, 1, opts);
+ const first = calls;
+ now += 10 * 60 * 1000;
+ await fetchTvSources('tt8', 1, 1, opts);
+ assert.equal(calls, first, 'no index is re-queried after 10 minutes');
+});
+
+test('a retry of an index that just failed is short, so a dead index cannot stall every lookup', async () => {
+ clearTvCache();
+ let now = 1_000_000;
+ const timeouts = [];
+ const fake = async (url, init) => {
+  if (url.startsWith('https://b.test')) { timeouts.push(init && init.signal ? 'signal' : 'none'); throw new Error('connect timeout'); }
+  return res(streams([{ infoHash: 'a'.repeat(40), behaviorHints: { filename: 'Show.S01E01.1080p.x264.mkv' }, title: 'Show\n👤 40' }]));
+ };
+ const opts = { fetchImpl: fake, now: () => now, retries: 1, retryDelayMs: 1, indexUrls: [{ name: 'A', url: 'https://a.test' }, { name: 'B', url: 'https://b.test' }] };
+ await fetchTvSources('tt7', 1, 1, opts);
+ assert.equal(timeouts.length, 2, 'first lookup: the failing index gets its normal retry');
+ now += 25_000;
+ await fetchTvSources('tt7', 1, 1, opts);
+ assert.equal(timeouts.length, 3, 're-lookup: the index that just failed gets ONE quick attempt, not another full retry cycle');
+});
+
 test('a single file explicitly naming a different episode is not a fallback', () => {
  assert.equal(pickEpisodeFile([{name:'Show.S01E02.mp4',length:100}],1,1),null);
 });
@@ -700,4 +825,49 @@ test('verified Windsors season-one packs expose selectable 1080p AV1 and H.264 s
   assert.equal(sources[1].remux, true);
   assert.deepEqual(supplementalTvSources('tt5692740', 2, 1), []);
   assert.deepEqual(supplementalTvSources('tt0000000', 1, 1), []);
+});
+
+// ---- Which source starts FAST (measured on 160 live sources, 20 titles) ----
+// The index's seed count is only as honest as the scraper behind it. Measured: every Comet|Ygg
+// (private tracker) source failed to fetch metadata (0 of 7) while claiming 54+ seeds; TorBox-scraped
+// rows managed about half. A fake "1080p" movie of 60 MB carried 281 seeds and ranked first.
+const live = (filename, seeds, scraper, extra = {}) => ({
+  hash: Math.random().toString(16).slice(2).padEnd(40, '0').slice(0, 40), filename, seeds, sizeBytes: 1.2e9, provider: 'Comet',
+  title: `${filename}\n👤 ${seeds} 💾 1.2 GB 🔎 ${scraper}`, ...extra,
+});
+
+test('a private-tracker scraper (Ygg) never outranks a reachable public swarm, however many seeds it claims', async () => {
+  const { rankTvSources, sourceScraper } = await import('./tv-api.mjs');
+  const ygg = live('Show.S01E01.1080p.WEB.x264.mkv', 182, 'Comet|Ygg API');
+  const tpb = live('Show.S01E01.1080p.WEB.x264-GRP.mkv', 40, 'Comet|The Pirate Bay');
+  assert.equal(sourceScraper(ygg), 'comet|ygg api');
+  assert.equal(sourceScraper({ title: 'Name\nfile.mp4\n👤 142 💾 1.1 GB ⚙️ 1337x' }), '1337x');
+  const out = rankTvSources([ygg, tpb]);
+  assert.equal(out[0].hash, tpb.hash);
+  assert.equal(out.length, 2, 'the Ygg copy stays available as a last resort');
+});
+
+test('TorBox-scraped seed counts are discounted: a modest public swarm beats a bigger TorBox number', async () => {
+  const { rankTvSources } = await import('./tv-api.mjs');
+  const torbox = live('Show.S01E01.1080p.WEB.x264.mkv', 50, 'TorBox|Knaben');
+  const tpb = live('Show.S01E01.1080p.WEB.x264-GRP.mkv', 20, 'Comet|The Pirate Bay');
+  assert.equal(rankTvSources([torbox, tpb])[0].hash, tpb.hash);
+});
+
+test('a tiny file claiming 1080p is demoted behind a plausible one (the 60 MB Dune Part Two with 281 seeds)', async () => {
+  const { rankTvSources } = await import('./tv-api.mjs');
+  const fake = live('Dune.Part.Two.2024.1080p.BluRay.x264.mkv', 281, 'TorBox|unknown', { sizeBytes: 60e6, title: 'Dune Part Two\n👤 281 💾 60 MB 🔎 TorBox|unknown' });
+  const real = live('Dune.Part.Two.2024.1080p.WEB.x264-GRP.mkv', 30, 'Comet|The Pirate Bay', { sizeBytes: 1.5e9, title: 'Dune Part Two\n👤 30 💾 1.5 GB 🔎 Comet|The Pirate Bay' });
+  assert.equal(rankTvSources([fake, real])[0].hash, real.hash);
+  // A small but plausible TV episode is not touched.
+  const small = live('Show.S01E01.1080p.x264.mkv', 40, 'Comet|The Pirate Bay', { sizeBytes: 140e6, title: 'Show\n👤 40 💾 140 MB 🔎 Comet|The Pirate Bay' });
+  const big = live('Show.S01E01.1080p.WEB.x264-GRP.mkv', 40, 'Comet|The Pirate Bay', { sizeBytes: 900e6, title: 'Show\n👤 40 💾 900 MB 🔎 Comet|The Pirate Bay' });
+  assert.equal(rankTvSources([big, small])[0].hash, small.hash, 'the lighter plausible episode still leads');
+});
+
+test('trust only reorders within the existing rules: 1080p still comes first', async () => {
+  const { rankTvSources } = await import('./tv-api.mjs');
+  const y1080 = live('Show.S01E01.1080p.WEB.x264.mkv', 182, 'Comet|Ygg API');
+  const p720 = live('Show.S01E01.720p.WEB.x264-GRP.mkv', 60, 'Comet|The Pirate Bay');
+  assert.equal(rankTvSources([p720, y1080])[0].quality, '1080p');
 });

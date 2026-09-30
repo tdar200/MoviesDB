@@ -69,6 +69,12 @@ export function indexStreamUrl(index, mediaType, item, debrid) {
 }
 
 export const TV_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+// A lookup where an index failed is missing that index's releases (Comet alone is mostly
+// private-tracker swarms with no reachable peers), so it must not stick for the full TTL.
+export const TV_DEGRADED_TTL_MS = 20 * 1000;
+// Re-trying an index that just failed gets one short attempt: a healthy index answers in
+// well under a second, and a dead one must not stall every lookup for its full timeout.
+const QUICK_RETRY_TIMEOUT_MS = 5000;
 
 // key `imdb:season:episode:year:country` -> { sources, at }
 const cache = new Map();
@@ -159,8 +165,42 @@ const QUALITY_RANK = { '1080p': 0, '720p': 1, '480p': 2, unknown: 3, '2160p': 4 
 // were near-dead). Below this seed count a "direct" copy is too risky to bank on, so
 // a healthy transcode copy is the better bet.
 const HEALTHY_SEEDS = 8;
+
+// The scraper an index says a release came from: Torrentio prints "⚙️ 1337x", Comet
+// "🔎 Comet|Ygg API" (scraper family | site). Lower-cased; '' when the text names none.
+export function sourceScraper(source) {
+  const m = /(?:🔎|⚙️?)\s*([^\n]+)/u.exec(String(source?.title || ''));
+  return m ? m[1].trim().toLowerCase() : '';
+}
+
+// How far an index's seed number can be believed, by scraper. MEASURED on 160 live sources
+// (20 titles): every Comet|Ygg (private tracker) source failed to fetch metadata (0 of 7) while
+// claiming 54+ seeds, TorBox-scraped rows got metadata for about half, and the knaben/peerflix
+// family for about half; TPB / 1337x / EZTV / TorrentGalaxy gave 77-91%. A source the client
+// cannot reach is worth nothing however many seeds it advertises.
+export function seedTrust(source) {
+  const scraper = sourceScraper(source);
+  if (/\b(ygg|yggtorrent|sharewood)\b/.test(scraper)) return 0;
+  if (/^torbox\b/.test(scraper)) return 0.3;
+  if (/\b(knaben|peerflix|besttorrents)\b|^ext$/.test(scraper)) return 0.5;
+  return 1;
+}
+export const effectiveSeeds = (s) => Math.round((Number(s.seeds) || 0) * seedTrust(s));
+
+// A "1080p" movie of 60 MB carrying 281 seeds is a fake, and so is a 40 MB episode: demote a file far
+// too small for the quality it claims. Sizes are the FILE size the index reports (0/unknown = no verdict).
+const EPISODE_TAG = /s\d{1,2}[\s._-]*e\d{1,3}|\d{1,2}x\d{1,3}/i;
+const MIN_MOVIE_BYTES = { '2160p': 600e6, '1080p': 300e6, '720p': 120e6 };
+const MIN_EPISODE_BYTES = 50e6;
+function isImplausiblySmall(s, quality) {
+  const bytes = sourceBytes(s);
+  if (!bytes || s.debrid) return false;
+  if (EPISODE_TAG.test(String(s.filename || ''))) return bytes < MIN_EPISODE_BYTES;
+  return bytes < (MIN_MOVIE_BYTES[quality] || 0);
+}
+
 function playTier(s) {
-  const healthy = s.debrid || (Number(s.seeds) || 0) >= HEALTHY_SEEDS;
+  const healthy = s.debrid || effectiveSeeds(s) >= HEALTHY_SEEDS;
   if (!s.transcode) return healthy ? 0 : 2; // direct play: first choice when seeded
   return healthy ? 1 : 3;                    // transcode: a fallback for when it is not
 }
@@ -217,6 +257,11 @@ export function rankTvSources(sources) {
       if (q !== 0) return q;
       const lang = languagePenalty(a) - languagePenalty(b);
       if (lang !== 0) return lang;
+      // Sources that cannot be reached or cannot be genuine go behind everything else of
+      // this quality: no seed count or size advantage can rescue them.
+      const unreliable = (s) => Number(seedTrust(s) === 0 || isImplausiblySmall(s, s.quality));
+      const u = unreliable(a) - unreliable(b);
+      if (u !== 0) return u;
       // Bandwidth fit comes before codec preference. A compact HEVC episode that
       // the local GPU can transcode is safer than a multi-gigabyte H.264 file
       // whose bitrate exceeds the connection, even though H.264 is direct-play.
@@ -232,7 +277,7 @@ export function rankTvSources(sources) {
       const aBytes = sourceBytes(a);
       const bBytes = sourceBytes(b);
       if (aBytes && bBytes && aBytes !== bBytes) return aBytes - bBytes;
-      return (Number(b.seeds) || 0) - (Number(a.seeds) || 0);
+      return effectiveSeeds(b) - effectiveSeeds(a);
     });
 }
 
@@ -356,20 +401,75 @@ function normalizeCountry(country) {
 // Compare the release's series prefix, not just its S/E marker (e.g. reject
 // "Rick and Morty: The Anime" when the selected series is "Rick and Morty").
 export function matchesSeriesTitle(source, titles = []) {
-  const normalize = text => String(text || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|and)\b/g, ' ').trim().replace(/\s+/g, ' ');
-  const wanted = titles.map(normalize).filter(Boolean);
-  if (!wanted.length) return true;
+  if (!titles.some(title => normalizeSeriesTitle(title))) return true;
+  if (!releasePrefix(source)) return true; // no S/E marker or no name: index identity is the only usable information
+  // Try both apostrophe spellings and accept either, so a release that matched before
+  // the apostrophe handling existed can never stop matching.
+  return APOSTROPHE_SPELLINGS.some(dropApostrophes => {
+    const prefix = releasePrefix(source, dropApostrophes);
+    return titles.map(title => normalizeSeriesTitle(title, dropApostrophes)).filter(Boolean).some(title => {
+      if (prefix === title) return true;
+      if (!prefix.startsWith(title + ' ')) return false;
+      return TAGS_ONLY.test(prefix.slice(title.length).trim());
+    });
+  });
+}
+
+// Year / country / "complete" tags a release may append to the show name.
+const TAG = '(?:(?:19|20)\\d{2}|us|usa|uk|au|complete)';
+const TAGS_ONLY = new RegExp(`^${TAG}(?: ${TAG})*$`);
+const TRAILING_TAGS = new RegExp(`(?: ${TAG})+$`);
+
+// Releases spell a possessive two ways: "RuPauls.Drag.Race" (apostrophe gone) and
+// "Marvel.s.Agents" (apostrophe became a separator). Normalizing only one way loses the
+// other, so titles and prefixes are compared under both.
+const APOSTROPHE_SPELLINGS = [false, true]; // dropApostrophes
+const normalizeSeriesTitle = (text, dropApostrophes = false) => String(text || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/['\u2019`]/g, dropApostrophes ? '' : ' ').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|and)\b/g, ' ').trim().replace(/\s+/g, ' ');
+
+// A release is "<show name> <S/E marker> <quality...>"; this is the normalized show name.
+// null when the release carries no marker to split on.
+function releasePrefix(source, dropApostrophes = false) {
   const name = String(source.filename || source.title || '').split('\n')[0].replace(/\[[^\]]*\]/g, '');
   const marker = /(?:^|[ ._-])(?:s\d{1,2}(?:e\d{1,3})?|\d{1,2}x\d{1,3}|season[ ._-]*\d)/i.exec(name);
-  if (!marker) return true; // index identity is the only usable information
-  const prefix = normalize(name.slice(0, marker.index));
-  if (!prefix) return true;
-  return wanted.some(title => {
-    if (prefix === title) return true;
-    if (!prefix.startsWith(title + ' ')) return false;
-    const suffix = prefix.slice(title.length).trim();
-    return /^(?:(?:19|20)\d{2}|us|usa|uk|au|complete)(?: (?:(?:19|20)\d{2}|us|usa|uk|au|complete))*$/.test(suffix);
-  });
+  return marker ? normalizeSeriesTitle(name.slice(0, marker.index), dropApostrophes) : null;
+}
+
+// TMDB and the release scene often word a show differently (TMDB "Lioness", releases
+// "Special Ops Lioness"; TMDB "Tom Clancy's Jack Ryan", releases "Jack Ryan"). The index
+// was queried by IMDb id, so what its releases overwhelmingly call the show IS the show.
+// A release-name prefix becomes an alias only when a clear majority of the releases use
+// it (and at least ALIAS_MIN_COUNT of them: one stray "Detective Conan" is not evidence
+// about "Conan") AND it is a decorated or shortened form of a wanted title (one ends with
+// the other). That keeps wrong shows out: an index that agrees on "ConMan" for "Conan",
+// or on a spin-off that EXTENDS the title ("Rick and Morty The Anime"), never qualifies.
+const ALIAS_MIN_SHARE = 0.5;
+const ALIAS_MIN_COUNT = 3;
+const endsWithWords = (text, tail) => text === tail || text.endsWith(' ' + tail);
+export function seriesTitleAliases(sources, titles = []) {
+  const aliases = new Set();
+  for (const dropApostrophes of APOSTROPHE_SPELLINGS) {
+    const wanted = titles.map(title => normalizeSeriesTitle(title, dropApostrophes)).filter(Boolean);
+    if (!wanted.length) continue;
+    const counts = new Map();
+    let total = 0;
+    for (const source of sources) {
+      const prefix = releasePrefix(source, dropApostrophes);
+      if (!prefix) continue;
+      const base = prefix.replace(TRAILING_TAGS, ''); // "special ops lioness 2023" groups with "special ops lioness"
+      total++;
+      counts.set(base, (counts.get(base) || 0) + 1);
+    }
+    for (const [base, n] of counts) {
+      if (base && n >= ALIAS_MIN_COUNT && n / total >= ALIAS_MIN_SHARE
+        && wanted.some(title => endsWithWords(base, title) || endsWithWords(title, base))) aliases.add(base);
+    }
+  }
+  return [...aliases];
+}
+
+export function filterSeriesTitle(sources, titles = []) {
+  const accepted = [...titles, ...seriesTitleAliases(sources, titles)];
+  return sources.filter(source => matchesSeriesTitle(source, accepted));
 }
 
 // Some broad indexes search a title as well as its IMDb id. Reject an explicitly
@@ -399,6 +499,8 @@ async function fetchIndexedSources(imdb, season, episode, {
   fetchImpl = resolvingFetch,
   timeoutMs = 15000,
   ttlMs = TV_CACHE_TTL_MS,
+  degradedTtlMs = TV_DEGRADED_TTL_MS,
+  onIndexError = () => {},
   retries = 1,
   retryDelayMs = 1200,
   now = () => Date.now(),
@@ -412,9 +514,11 @@ async function fetchIndexedSources(imdb, season, episode, {
 } = {}) {
   const key = `${mediaType}:${imdb}:${season}:${episode}:${year || ''}:${normalizeCountry(country)}:${title || ''}:${originalTitle || ''}:${debrid ? debrid.service : ''}`;
   const hit = cache.get(key);
-  if (hit && now() - hit.at < ttlMs) return hit.sources;
+  if (hit && now() - hit.at < (hit.ttlMs || ttlMs)) return hit.sources;
+  const previouslyFailed = (hit && hit.failed) || [];
 
   const errors = [];
+  const failed = [];
   let anyIndexResponded = false;
   // Every index that answers contributes. Returning the first non-empty one meant
   // Comet (which answers fastest) hid Torrentio's public-tracker torrents, and
@@ -425,13 +529,14 @@ async function fetchIndexedSources(imdb, season, episode, {
     const item = mediaType === 'movie' ? encodeURIComponent(imdb) : `${encodeURIComponent(imdb)}:${season}:${episode}`;
     const url = indexStreamUrl(index, mediaType, item, debrid);
     let lastErr = null;
+    const quick = previouslyFailed.includes(index.name);
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= (quick ? 0 : retries); attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
       try {
         const res = await fetchImpl(url, {
           headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: AbortSignal.timeout(quick ? Math.min(timeoutMs, QUICK_RETRY_TIMEOUT_MS) : timeoutMs),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await res.json();
@@ -443,7 +548,6 @@ async function fetchIndexedSources(imdb, season, episode, {
             // HTTP url, no infohash). Everything else is unstreamable here.
             .filter((source) => /^[a-f0-9]{40}$/.test(source.hash) || source.debrid)
             .filter((source) => matchesSeriesHints(source, { year, country }))
-            .filter((source) => matchesSeriesTitle(source, [title, originalTitle]))
             .filter((source) => mediaType === 'movie' || !/s\d{1,2}e\d{1,3}|\d{1,2}x\d{1,3}/i.test(source.filename) || matchesEpisode(source.filename, season, episode))
         );
         lastErr = null;
@@ -452,27 +556,36 @@ async function fetchIndexedSources(imdb, season, episode, {
         lastErr = err;
       }
     }
-    if (lastErr) errors.push(`${index.name}: ${lastErr?.message || lastErr}`);
+    if (lastErr) {
+      errors.push(`${index.name}: ${lastErr?.message || lastErr}`);
+      failed.push(index.name);
+      onIndexError(index.name, lastErr);
+    }
   }
+  // An entry missing an index's releases expires fast so the next request retries it.
+  const entry = (sources) => ({ sources, at: now(), ttlMs: failed.length ? degradedTtlMs : ttlMs, failed });
 
-  if (collected.length) {
+  // Judged on the pooled candidates, not per item, so the releases can vouch for the
+  // show's real release name (see seriesTitleAliases).
+  const matched = filterSeriesTitle(collected, [title, originalTitle]);
+  if (matched.length) {
     // Rank BEFORE dedupe. Indexes describe the same infohash with different
     // quality: one may omit the codec (reads as unplayable) or the seed count
     // (reads as dead) while another describes it correctly. Filtering first and
     // then keeping the best-ranked copy of each hash means a torrent is only
     // dropped when NO index could vouch for it.
     const seen = new Set();
-    const sources = rankTvSources(collected).filter((s) => {
+    const sources = rankTvSources(matched).filter((s) => {
       const id = s.hash || s.url; // debrid sources have no hash; key them by url
       return id && !seen.has(id) && seen.add(id);
     });
-    cache.set(key, { sources, at: now() });
+    cache.set(key, entry(sources));
     return sources;
   }
 
   if (anyIndexResponded) {
     const sources = [];
-    cache.set(key, { sources, at: now() });
+    cache.set(key, entry(sources));
     return sources;
   }
 

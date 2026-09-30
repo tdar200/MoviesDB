@@ -30,11 +30,12 @@ import WebTorrent from 'webtorrent';
 import { createYtsHandler } from './catalog-handlers.mjs';
 import { fetchYtsMovie } from './yts-api.mjs';
 import { isSubtitleFile, subtitleLabel, srtToVtt, decodeSubtitle, shiftVtt, cleanSubtitleVtt } from './subtitles.js';
-import { fetchMovieSources, fetchTvSources, isRemuxableTvFile, isTranscodableTvFile, pickEpisodeFile, pickEpisodeVideoFile, pickMovieFileByIndex } from './tv-api.mjs';
+import { effectiveSeeds, fetchMovieSources, fetchTvSources, isRemuxableTvFile, isTranscodableTvFile, pickEpisodeFile, pickEpisodeVideoFile, pickMovieFileByIndex } from './tv-api.mjs';
 import { createResolvingFetch, fetchViaPublicDns } from './dns-fetch.js';
 import { pieceWindow } from './stream-window.mjs';
 import { helperRequestAllowed, isPrivateStaticPath } from './helper-auth.js';
 import { clampReadyTimeout, deferFailedSources, rememberSourceFailure } from './tv-fallback.js';
+import { createStartupBoost, createSourceProber, orderByProbe, startupVerdict, scaleCheckpoints, STARTUP_CHECKPOINTS } from './startup-guard.mjs';
 import { lanBaseUrl } from './lan-info.mjs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -213,6 +214,44 @@ const client = new WebTorrent({
   uploadLimit: Number.isFinite(UPLOAD_LIMIT) ? UPLOAD_LIMIT : 262144,
   downloadLimit: Number.isFinite(DOWNLOAD_LIMIT) ? DOWNLOAD_LIMIT : 1572864,
 });
+
+// While a source is STARTING nothing is being uploaded to the TV yet, so the download cap can be lifted for
+// the burst that fills the startup buffer (a 3 MB read needs whole 8 MB pieces; 16 MB at the 1.5 MB/s steady
+// cap is ~11 s, at 6 MB/s ~3 s). The cap comes back the moment the playlist is published, or after 60 s.
+// TORRENT_STARTUP_LIMIT=-1 (or anything not above the steady cap) turns the boost off.
+const STARTUP_LIMIT = Number.parseInt(process.env.TORRENT_STARTUP_LIMIT ?? '6291456', 10);
+const startupBoost = createStartupBoost({
+  throttle: (rate) => client.throttleDownload(rate),
+  baseLimit: Number.isFinite(DOWNLOAD_LIMIT) ? DOWNLOAD_LIMIT : 1572864,
+  boostLimit: Number.isFinite(STARTUP_LIMIT) ? STARTUP_LIMIT : 0,
+});
+
+// Destroying a torrent right after its metadata landed can crash the whole process: a peer that was still
+// finishing the ut_metadata transfer emits 'metadata' AFTER destroy(), and webtorrent's listener calls
+// torrent._debug() with client === null ("Cannot read properties of null (reading '_debugId')", uncaught).
+// Seen in testing the moment the source probe started closing losing torrents. Detach those listeners first.
+function destroyTorrentSafely(torrent, opts = { destroyStore: true }) {
+  try {
+    for (const wire of torrent.wires || []) if (wire.ut_metadata) wire.ut_metadata.removeAllListeners();
+  } catch { /* best effort */ }
+  try { torrent.destroy(opts); } catch { /* already destroyed */ }
+}
+// Last line of defence for the same webtorrent race elsewhere (idle eviction, stream-stop): swallow exactly that
+// failure and keep serving; anything else still ends the process as before.
+process.on('uncaughtException', (err) => {
+  if (err && /_debugId/.test(String(err.message)) && /webtorrent[\\/]lib[\\/]torrent\.js/.test(String(err.stack))) {
+    console.warn('[torrent] ignored webtorrent destroy race:', err.message);
+    return;
+  }
+  // A uTP peer connection that resets is a per-connection event (utp-native re-emits it with no listener
+  // attached); it says nothing about the process. Observed killing a measurement client mid-download.
+  if (err && /^UTP_/.test(String(err.code))) {
+    console.warn('[torrent] ignored uTP connection error:', err.code);
+    return;
+  }
+  console.error(err);
+  process.exit(1);
+});
 // Keep the 30 min default. A 3 min sweep was tried (27 Sep 2026) and reverted:
 // an older TV bundle was seen with a paused player sending no keep-alive pings,
 // and a short sweep would delete the session under a paused movie. The current
@@ -297,6 +336,7 @@ const VERIFIED_TORRENT_METADATA = new Map([
 ]);
 function getTorrent(hash, name, readyTimeoutMs = READY_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
+    adoptProbe(hash); // a swarm the source probe already opened keeps its metadata
     const existing = torrents.get(hash);
     if (existing) {
       if (existing.ready) return resolve(existing);
@@ -359,6 +399,83 @@ function getTorrent(hash, name, readyTimeoutMs = READY_TIMEOUT_MS) {
   });
 }
 
+// ---- Candidate health probe ---------------------------------------------------------------
+// Before the TV is sent to a source, open the top few candidates metadata-only (deselected, fast extension
+// off: no payload at all) and see which swarms are alive. MEASURED on 160 live sources: 29% never returned
+// metadata at all (every Comet|Ygg one, about half of the TorBox-scraped ones, most with under 10 seeds),
+// and rank 1-6 of the static ranking were no better than the rest. Skipping a dead top pick here costs a
+// few seconds; finding out by playing it cost 12-90 s per dead source.
+const probeTorrents = new Map(); // hash -> torrent opened only to confirm the swarm is alive
+function adoptProbe(hash) {
+  const t = probeTorrents.get(hash);
+  if (!t || torrents.has(hash)) return false;
+  probeTorrents.delete(hash);
+  torrents.set(hash, t);
+  torrentAccess.set(hash, Date.now());
+  return true;
+}
+function openProbe(hash) {
+  // A torrent already in the client (playing, or opened by a concurrent probe of the same title) is shared, not
+  // added twice - webtorrent rejects a duplicate infohash. Its owner closes it; this handle never does.
+  const shared = torrents.get(hash) || probeTorrents.get(hash);
+  if (shared) {
+    return {
+      whenReady: () => (shared.ready ? Promise.resolve(true) : new Promise((resolve) => {
+        shared.once('ready', () => resolve(true));
+        shared.once('error', () => resolve(false));
+        shared.once('close', () => resolve(false));
+      })),
+      peers: () => shared.numPeers,
+      pieceLength: () => shared.pieceLength,
+      destroy() {},
+    };
+  }
+  const t = client.add(magnetFromHash(hash, ''), { path: TORRENT_DIR, deselect: true });
+  probeTorrents.set(hash, t);
+  let destroyed = false;
+  const ready = new Promise((resolve) => {
+    t.once('ready', () => { try { t.deselect(0, t.pieces.length - 1); } catch { /* ignore */ } resolve(!destroyed); });
+    t.once('error', () => { probeTorrents.delete(hash); resolve(false); });
+  });
+  return {
+    whenReady: () => ready,
+    peers: () => t.numPeers,
+    pieceLength: () => t.pieceLength,
+    destroy() {
+      destroyed = true;
+      // Adopted into the real map (or requested meanwhile): it is playback's now.
+      if (torrents.get(hash) === t || !probeTorrents.has(hash)) return;
+      probeTorrents.delete(hash);
+      destroyTorrentSafely(t);
+    },
+  };
+}
+const SOURCE_PROBE_ENABLED = process.env.TV_SOURCE_PROBE !== '0';
+const sourceProber = createSourceProber({
+  open: openProbe,
+  adopt: (hash) => adoptProbe(hash),
+  weight: effectiveSeeds, // a big, trusted swarm is worth waiting for
+  budgetMs: Number.parseInt(process.env.TV_PROBE_BUDGET_MS ?? '3500', 10) || 3500,
+});
+// Probe the top of a ranked list and reorder it by what was found. Dead swarms are remembered (so a second
+// lookup needs no probe) using the same deferral the playback-failure path uses.
+async function probeRankedSources(sources) {
+  if (!SOURCE_PROBE_ENABLED || !sources.length || sources[0].debrid) return sources;
+  try {
+    const results = await sourceProber.probe(sources);
+    // 'slow' only counts against a source when another one answered (see createSourceProber).
+    const anyAlive = [...results.values()].some((r) => r.state === 'alive');
+    for (const [hash, r] of results) {
+      if (r.state === 'dead') rememberSourceFailure(failedTvSources, hash, Date.now(), 10 * 60000);
+      else if (r.state === 'slow' && anyAlive) rememberSourceFailure(failedTvSources, hash, Date.now(), 3 * 60000);
+    }
+    return orderByProbe(sources, results);
+  } catch (err) {
+    console.warn(`[tv] source probe skipped: ${err.message}`);
+    return sources;
+  }
+}
+
 // Per-torrent access tracking so idle torrents can be evicted. Torrents were only
 // ever freed on an explicit /stream-stop; without this the webtorrent client grows
 // unbounded over a session (measured at 6.5 GB), which starves the remux and turns
@@ -388,11 +505,7 @@ function destroyTorrent(hash) {
   if (!t) return;
   torrents.delete(hash);
   for (const key of embeddedVttCache.keys()) if (key.startsWith(hash + ':')) embeddedVttCache.delete(key);
-  try {
-    t.destroy({ destroyStore: true });
-  } catch {
-    /* ignore */
-  }
+  destroyTorrentSafely(t);
 }
 
 // A torrent is safe to free only when nothing is reading it (no live /stream or
@@ -508,10 +621,12 @@ async function handleTvTorrents(res, url) {
       country,
       title: url.searchParams.get('title'),
       originalTitle: url.searchParams.get('originalTitle'),
+      onIndexError: (name, err) => console.warn(`[tv] ${imdb} S${season}E${episode}: index ${name} failed (${err?.message || err}); result not cached for long`),
     });
-    const sources = deferFailedSources(rankedSources, failedTvSources);
+    const sources = await probeRankedSources(deferFailedSources(rankedSources, failedTvSources));
     const provider = sources[0]?.provider ? ` via ${sources[0].provider}` : '';
-    console.log(`[tv] ${imdb} S${season}E${episode} -> ${sources.length} streamable source(s)${provider}`);
+    const health = sources[0]?.health ? ` [top ${sources[0].health}]` : '';
+    console.log(`[tv] ${imdb} S${season}E${episode} -> ${sources.length} streamable source(s)${provider}${health}`);
     res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
     res.end(JSON.stringify({ sources }));
   } catch (err) {
@@ -806,6 +921,25 @@ function prioritizeTorrentFile(torrent, file, start = 0) {
     torrent.critical(w.critical.from, w.critical.to);
     torrent.critical(w.tail.from, w.tail.to);
   } catch { /* WebTorrent internals vary; the read stream still selects its range */ }
+}
+
+// Watches one starting torrent until its /hls/start settles. The clock starts when the episode's FILE is first
+// selected (metadata already in hand), so a slow metadata fetch is not counted against the swarm; it is judged
+// on bytes of that file. Trips onTrip(reason) at most once. Returns the interval (clear it when done).
+function watchTorrentStartup(hash, onTrip, byteScale = 1) {
+  const checkpoints = byteScale === 1 ? STARTUP_CHECKPOINTS : scaleCheckpoints(STARTUP_CHECKPOINTS, byteScale);
+  let watched = null;
+  let startedAt = 0;
+  const timer = setInterval(() => {
+    const t = torrents.get(hash);
+    const file = t && t.ready ? priorityFileByTorrent.get(t) : null;
+    if (!file) return;
+    if (file !== watched) { watched = file; startedAt = Date.now(); }
+    const verdict = startupVerdict({ elapsedMs: Date.now() - startedAt, usefulBytes: file.downloaded, checkpoints });
+    if (verdict) { clearInterval(timer); console.log(`[tv] startup watchdog ${hash.slice(0, 8)}: ${verdict.reason} (${(file.downloaded / 1048576).toFixed(1)} MB in ${Math.round((Date.now() - startedAt) / 1000)} s)`); onTrip(verdict.reason); }
+  }, 1000);
+  if (timer.unref) timer.unref();
+  return timer;
 }
 
 // Chrome cannot parse Matroska. Compatible TV releases are remuxed to a
@@ -1473,7 +1607,10 @@ function handleStreamStatus(res, url) {
     const file = t.ready ? pickVideoFile(t) : null;
     body.state = t.ready ? 'ready' : 'connecting';
     body.peers = t.numPeers;
-    body.progress = t.progress;
+    // Progress of the file being PLAYED once known: a season pack's whole-torrent fraction stays ~0 for minutes
+    // (and ticks up from unrelated pieces), which made the client's "no data yet" watchdog blind on packs.
+    const playing = t.ready ? priorityFileByTorrent.get(t) : null;
+    body.progress = playing ? playing.progress : t.progress;
     body.downloadSpeed = t.downloadSpeed;
     if (file) {
       body.name = file.name;
@@ -1528,6 +1665,11 @@ const server = http.createServer(async (req, res) => {
       res.once('close', () => { if (!res.writableEnded) controller.abort(); });
       let inputUrl;
       let sessionHash = hash;
+      // Startup only: lift the download cap until the playlist is published, and give up on a torrent that is
+      // not delivering bytes of ITS file (the client's own watchdog only sees whole-torrent peers/progress).
+      const releaseBoost = debridSrc ? () => {} : startupBoost.begin();
+      let watchdogReason = '';
+      const watchdog = debridSrc ? null : watchTorrentStartup(hash, (reason) => { watchdogReason = reason; controller.abort(); }, transcode ? 0.5 : 1);
       try {
         if (debridSrc) {
           inputUrl = await resolveDebridInput(debridSrc, controller.signal);
@@ -1574,7 +1716,10 @@ const server = http.createServer(async (req, res) => {
           console.log(`[tv] temporarily deferring failed source ${hash.slice(0, 8)}`);
         }
         res.writeHead(504, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-        return res.end(JSON.stringify({ error: error.message }));
+        return res.end(JSON.stringify({ error: watchdogReason ? `This source ${watchdogReason}.` : error.message }));
+      } finally {
+        clearInterval(watchdog);
+        releaseBoost();
       }
     }
     if (url.pathname === '/hls/stop') {
@@ -1593,7 +1738,7 @@ const server = http.createServer(async (req, res) => {
       const imdb = url.searchParams.get('imdb') || '';
       if (!/^tt\d+$/.test(imdb)) { res.writeHead(400); return res.end('invalid IMDb ID'); }
       try {
-        const sources = await fetchMovieSources(imdb, { year: Number(url.searchParams.get('year')) || undefined, title: url.searchParams.get('title') });
+        const sources = await probeRankedSources(deferFailedSources(await fetchMovieSources(imdb, { year: Number(url.searchParams.get('year')) || undefined, title: url.searchParams.get('title') }), failedTvSources));
         res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
         return res.end(JSON.stringify({ sources }));
       } catch {
