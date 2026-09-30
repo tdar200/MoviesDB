@@ -1,0 +1,53 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolveTemplates, mergeCatalog, CATEGORY_ORDER } from './live-catalog.mjs';
+
+// The channel lists are hand-maintained data (channels/*.json). These guard the invariants the
+// catalog relies on, so a bad edit cannot silently blank or mis-file channels on the TV.
+const files = readdirSync('channels').filter((f) => f.endsWith('.json') && !f.includes('excluded'));
+const lists = files.map((f) => ({ file: f, entries: JSON.parse(readFileSync(`channels/${f}`, 'utf8')) }));
+const all = lists.flatMap((l) => l.entries);
+
+test('every channel has a unique id, a known category and official=true; Pluto entries also carry a measured height', () => {
+  for (const { file, entries } of lists) {
+    const seen = new Set();
+    for (const e of entries) {
+      assert.ok(e.id && !seen.has(e.id), `${file}: duplicate or missing id ${e.id}`);
+      seen.add(e.id);
+      assert.ok(e.name, `${file}: ${e.id} has no name`);
+      assert.ok(CATEGORY_ORDER.includes(e.category), `${file}: ${e.name} has category "${e.category}" (falls into General)`);
+      assert.equal(e.official, true, `${file}: ${e.name} is not marked official`);
+      // The loader tolerates a missing height (the live probe fills it in), but Pluto entries are measured.
+      if (String(e.id).startsWith('pluto:')) assert.ok(Number(e.height) > 0, `${file}: ${e.name} has no measured height`);
+      assert.ok(e.url || e.urlTemplate, `${file}: ${e.name} has no url`);
+    }
+  }
+});
+
+test('Pluto channels use the session template and resolve to their own channel id', () => {
+  const pluto = all.filter((e) => String(e.id).startsWith('pluto:'));
+  assert.ok(pluto.length >= 140, `expected the Pluto UK set, got ${pluto.length}`);
+  const resolved = resolveTemplates(pluto, { plutoSession: { stitcherParams: 'appName=web', sessionToken: 'tok.en' } });
+  assert.equal(resolved.length, pluto.length, 'every Pluto entry must resolve with a session');
+  for (const e of resolved) {
+    const id = e.id.slice('pluto:'.length);
+    assert.ok(e.url.includes(`/channel/${id}/master.m3u8`), `${e.name}: url does not carry its own channel id`);
+    assert.ok(!/\{[A-Za-z]+\}/.test(e.url), `${e.name}: unresolved placeholder`);
+  }
+});
+
+test('the merged catalog keeps every Pluto channel that has no twin on another platform', () => {
+  const merged = mergeCatalog(lists.map((l) => l.entries));
+  const pluto = all.filter((e) => String(e.id).startsWith('pluto:'));
+  const keptIds = new Set(merged.map((e) => e.id));
+  // Entries listed but merged away by the category+name dedupe are pure duplicates; none should be silently
+  // dropped for any other reason (denied host, bare IP, non-http).
+  const droppedWithoutTwin = pluto.filter((e) => !keptIds.has(e.id)
+    && !merged.some((m) => m.category === e.category && String(m.name).toLowerCase().trim() === String(e.name).toLowerCase().trim()));
+  assert.deepEqual(droppedWithoutTwin.map((e) => e.name), []);
+});
+
+test('no adult channels are listed', () => {
+  assert.deepEqual(all.filter((e) => /erotica|\bxxx\b|porn|playboy/i.test(e.name)).map((e) => e.name), []);
+});
