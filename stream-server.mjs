@@ -48,7 +48,7 @@ import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHe
 import { measureTsHeight } from './live-measure.mjs';
 import { createHighflyAdapter } from './live-source-highfly.mjs';
 import { mergeCatalog, createCatalogFeed, resolveTemplates, catalogChannelPayload } from './live-catalog.mjs';
-import { probeYoutubeLive } from './live-youtube.mjs';
+import { probeYoutubeLive, resolveYoutubeLiveVideo } from './live-youtube.mjs';
 import { probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
@@ -1394,6 +1394,22 @@ if (liveCatalog.size()) {
   setInterval(refreshCatalog, 30 * 60_000).unref();
 }
 
+// The stream a catalog YouTube channel is broadcasting right now, for the TV to open in its YouTube app. Only channels
+// that are in our own catalog are answered (this is not a general YouTube lookup), and answers are cached for a minute.
+const youtubeLiveCache = new Map();
+async function handleLiveYoutube(res, url) {
+  const channel = url.searchParams.get('channel') || '';
+  if (!/^UC[\w-]{22}$/.test(channel)) return liveJson(res, 400, { error: 'invalid channel id' });
+  if (!catalogEntries.some(e => e.youtube === channel)) return liveJson(res, 404, { error: 'unknown channel' });
+  const hit = youtubeLiveCache.get(channel);
+  let live = hit && Date.now() - hit.at < 60_000 ? hit.live : undefined;
+  if (live === undefined) {
+    live = await resolveYoutubeLiveVideo(channel, { fetchImpl: liveFetch });
+    youtubeLiveCache.set(channel, { at: Date.now(), live });
+  }
+  return live ? liveJson(res, 200, live) : liveJson(res, 404, { error: 'not live' });
+}
+
 function handleLiveCatalog(res) {
   liveJson(res, 200, { categories: liveCatalog.categories().map(c => ({
     name: c.name,
@@ -1756,6 +1772,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/live/matches') return await handleLiveMatches(res);
     if (url.pathname === '/live/streams') return await handleLiveStreams(res, url);
     if (url.pathname === '/live/catalog') return handleLiveCatalog(res);
+    if (url.pathname === '/live/yt') return await handleLiveYoutube(res, url);
     if (url.pathname === '/live/ch') return await handleLiveChannel(req, res, url);
     if (url.pathname === '/live/channels') return await handleLiveChannels(res);
     if (url.pathname === '/live/hls') return await handleLiveHls(req, res, url);

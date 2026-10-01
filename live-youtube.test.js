@@ -53,3 +53,18 @@ test('embed and live URLs are built from the channel id only', () => {
   assert.equal(u.searchParams.get('autoplay'), '1');
   assert.throws(() => youtubeEmbedUrl('not-a-channel'));
 });
+
+import { resolveYoutubeLiveVideo } from './live-youtube.mjs';
+
+test('a channel that is opened in the YouTube app only needs to be live: blocked embedding does not hide it', async () => {
+  assert.equal((await probeYoutubeLive({ youtube: 'UC1234567890123456789012', via: 'app' }, { fetchImpl: ok(page(NO_EMBED)) })).status, 'ok');
+  assert.equal((await probeYoutubeLive({ youtube: 'UC1234567890123456789012', via: 'app' }, { fetchImpl: ok(page(OFFLINE)) })).status, 'offline', 'but it still has to be live');
+  assert.equal((await probeYoutubeLive({ youtube: 'UC1234567890123456789012', via: 'embed' }, { fetchImpl: ok(page(NO_EMBED)) })).status, 'no-embed');
+});
+
+test('resolveYoutubeLiveVideo returns the id of the stream that is live now, or null', async () => {
+  assert.deepEqual(await resolveYoutubeLiveVideo('UC_vt34wimdCzdkrzVejwX9g', { fetchImpl: ok(page(NO_EMBED)) }), { videoId: 'abcdefghijk' });
+  assert.equal(await resolveYoutubeLiveVideo('UC_vt34wimdCzdkrzVejwX9g', { fetchImpl: ok(page(OFFLINE)) }), null);
+  assert.equal(await resolveYoutubeLiveVideo('UC_vt34wimdCzdkrzVejwX9g', { fetchImpl: async () => { throw new TypeError('fetch failed'); } }), null);
+  await assert.rejects(() => resolveYoutubeLiveVideo('not-a-channel', { fetchImpl: ok(page(LIVE)) }), /channel id/);
+});

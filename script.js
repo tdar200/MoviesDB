@@ -4118,6 +4118,26 @@ function openLivePlayer(session) {
 
 // A channel whose only official free stream is a live broadcast on the broadcaster's own YouTube channel (HUM, Geo, ARY,
 // Express ...): shown in the embed player like an embed provider. closePlayer() clears the iframe, which ends the stream.
+// Owners such as Geo, ARY and HUM refuse embedded playback (YouTube error 150), but the TV's own YouTube app plays what
+// they allow on YouTube. The helper resolves the stream that is live now; the channel's /live page is the fallback.
+let youtubeLaunching = false;
+async function openInYouTubeApp(channelId) {
+  if (youtubeLaunching) return; // OK held down must not stack launches
+  youtubeLaunching = true;
+  try {
+    let target = `https://www.youtube.com/channel/${channelId}/live`;
+    try {
+      const live = await fetchLiveJson(`/live/yt?channel=${encodeURIComponent(channelId)}`, 8000);
+      if (live && /^[\w-]{11}$/.test(live.videoId || '')) target = `https://www.youtube.com/watch?v=${live.videoId}`;
+    } catch { /* not live right now, or the helper is slow: let YouTube resolve the channel's live page */ }
+    if (typeof PalmServiceBridge === 'function') {
+      new PalmServiceBridge().call('luna://com.webos.applicationManager/launch', JSON.stringify({ id: 'youtube.leanback.v4', params: { contentTarget: target } }));
+    } else {
+      window.open(target, '_blank', 'noopener');
+    }
+  } finally { setTimeout(() => { youtubeLaunching = false; }, 3000); }
+}
+
 function openEmbedChannel(session) {
   stopYtsStream();
   livePlayer.stop();
@@ -4428,7 +4448,8 @@ function liveStatusText(matchesRes, channelsRes) {
 
 // Matches open the details screen; channels play straight away (Task 12's player).
 let onLiveSelect = card => {
-  if (card.kind === 'channel' && card.raw.embed) openEmbedChannel({ title: card.title, embed: card.raw.embed });
+  if (card.kind === 'channel' && card.raw.youtubeApp) openInYouTubeApp(card.raw.youtubeApp);
+  else if (card.kind === 'channel' && card.raw.embed) openEmbedChannel({ title: card.title, embed: card.raw.embed });
   else if (card.kind === 'channel') openLivePlayer({ title: card.title, streams: [{ label: card.title, play: card.raw.play }], startIndex: 0, refresh: async () => [{ label: card.title, play: card.raw.play }] });
   else liveDetails.open(card.raw);
 };

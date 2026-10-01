@@ -141,3 +141,10 @@ test('YouTube channels that are live are listed in the Pakistan row; ones that a
   const pak = feed.categories().find(c => c.name === 'Pakistan');
   assert.deepEqual(pak.channels.map(c => c.name), ['Live News']);
 });
+
+test('catalogChannelPayload: a channel opened in the YouTube app carries its channel id (the TV resolves the live video when you press OK)', () => {
+  const p = catalogChannelPayload({ id: 'youtube:UC_vt34wimdCzdkrzVejwX9g', name: 'Geo News', logo: null, height: 0, category: 'News', youtube: 'UC_vt34wimdCzdkrzVejwX9g', via: 'app' });
+  assert.equal(p.youtubeApp, 'UC_vt34wimdCzdkrzVejwX9g');
+  assert.equal(p.embed, undefined);
+  assert.equal(p.play, undefined);
+});

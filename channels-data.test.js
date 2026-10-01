@@ -64,6 +64,7 @@ test('YouTube live channels: valid channel ids, Pakistani, urls derived from the
     assert.equal(e.url, `https://www.youtube.com/channel/${e.youtube}/live`, `${e.name}: url must be the channel live page`);
     assert.equal(e.country, 'PK', `${e.name}: goes in the Pakistan row`);
     assert.equal(e.official, true);
+    assert.ok(['embed', 'app'].includes(e.via), `${e.name}: via must be embed (plays in the app) or app (opens in the TV's YouTube app)`);
     assert.ok(!ids.has(e.youtube), `${e.name}: duplicate channel`);
     ids.add(e.youtube);
   }
@@ -71,4 +72,13 @@ test('YouTube live channels: valid channel ids, Pakistani, urls derived from the
   for (const n of ['Geo News', 'ARY News', 'Express News', 'Samaa TV', 'Dawn News', 'Dunya News', 'HUM TV', 'Geo Super']) assert.ok(names.includes(n), `${n} is listed`);
   // ARY Digital is live on YouTube but ARY disabled embedding, so it cannot play here: it must not be listed.
   assert.ok(!names.some(n => /ARY Digital/i.test(n)));
+});
+
+// Which channels play inside the app was measured on the TV with the real player: owners that disallow embedding
+// (YouTube error 150) must be `via: app`, otherwise the tile opens to a grey error screen.
+test('YouTube live channels: the ones measured as embeddable on the TV play in-app, the blocked ones open in the YouTube app', () => {
+  const yt = JSON.parse(readFileSync('channels/youtube.json', 'utf8'));
+  const via = Object.fromEntries(yt.map(e => [e.name, e.via]));
+  for (const n of ['24 News HD', 'Dawn News', 'Neo News', 'GNN']) assert.equal(via[n], 'embed', `${n} plays in-app`);
+  for (const n of ['Geo News', 'ARY News', 'Express News', 'Samaa TV', 'Dunya News', 'Aaj News', 'BOL News', 'Such News', 'Geo Super', 'PTV Sports']) assert.equal(via[n], 'app', `${n} blocks embedding`);
 });

@@ -228,3 +228,42 @@ test('Channels: a YouTube live channel opens in the embed player; Back closes it
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
+
+// Broadcasters that disallow embedding (Geo News, ARY, HUM ...) open in the TV's own YouTube app, on the stream that is
+// live now. webOS exposes the launcher as PalmServiceBridge; a desktop browser falls back to window.open.
+for (const resolves of [true, false]) {
+  test(`Channels: a YouTube-app channel launches the TV's YouTube app (live video lookup ${resolves ? 'works' : 'fails -> channel live page'})`, { skip: !process.env.TV_E2E }, async () => {
+    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+      const errors = [];
+      page.on('pageerror', e => errors.push(e.message));
+      await page.addInitScript(() => {
+        window.__luna = [];
+        window.PalmServiceBridge = function () { this.call = (uri, params) => { window.__luna.push({ uri, params: JSON.parse(params) }); }; };
+      });
+      await page.route('**/live/catalog**', r => r.fulfill({ json: { categories: [{ name: 'Pakistan', channels: [
+        { id: 'youtube:UC_vt34wimdCzdkrzVejwX9g', name: 'Geo News', logo: null, height: 0, category: 'News', youtubeApp: 'UC_vt34wimdCzdkrzVejwX9g' },
+      ] }] } }));
+      await page.route('**/live/yt**', r => resolves ? r.fulfill({ json: { videoId: 'abcdefghijk' } }) : r.fulfill({ status: 404, json: { error: 'not live' } }));
+      await page.route('https://api.themoviedb.org/**', r => r.fulfill({ json: { results: [], page: 1, total_pages: 1, total_results: 0 } }));
+      await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+      await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?helperkey=k&helper=${encodeURIComponent(process.env.TV_TEST_URL || 'http://127.0.0.1:8123')}`);
+      await page.waitForSelector('.tv-kind-tab[data-kind="channels"]');
+      await page.locator('.tv-kind-tab[data-kind="channels"]').focus();
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('[data-tv-row="Pakistan"] .tv-card');
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => window.__luna.length > 0, null, { timeout: 15000 });
+      const calls = await page.evaluate(() => window.__luna);
+      assert.equal(calls.length, 1, 'one launch, not one per key press');
+      assert.equal(calls[0].uri, 'luna://com.webos.applicationManager/launch');
+      assert.equal(calls[0].params.id, 'youtube.leanback.v4');
+      assert.equal(calls[0].params.params.contentTarget, resolves ? 'https://www.youtube.com/watch?v=abcdefghijk' : 'https://www.youtube.com/channel/UC_vt34wimdCzdkrzVejwX9g/live');
+      assert.equal(await page.locator('#player-modal').isVisible(), false, 'our own player does not open');
+      assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'ch:youtube:UC_vt34wimdCzdkrzVejwX9g', 'focus stays on the tile');
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+}

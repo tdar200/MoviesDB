@@ -155,9 +155,10 @@ export function resolveTemplates(entries, { plexToken = '', plutoSession = null 
 }
 
 // What /live/catalog sends the TV for one channel. HLS channels play through the signed relay (/live/ch); a channel
-// that is only an official YouTube live stream has nothing to relay, so it carries the embed url the TV shows in its
-// embed player instead.
+// that is only an official YouTube live stream has nothing to relay: it carries the embed url when its owner allows
+// embedding (played in the TV's embed player), or its channel id when not (opened in the TV's YouTube app).
 export function catalogChannelPayload(e) {
   const base = { id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0, category: e.category || null };
+  if (e.youtube && e.via === 'app') return { ...base, youtubeApp: e.youtube };
   return e.youtube ? { ...base, embed: youtubeEmbedUrl(e.youtube) } : { ...base, play: `/live/ch?id=${encodeURIComponent(e.id)}` };
 }

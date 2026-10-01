@@ -36,6 +36,8 @@ export function parseYoutubeLivePage(html) {
 }
 
 // Same contract as the HLS probes in the catalog feed: { status: 'ok', height } keeps the entry listed.
+// A channel that opens in the TV's YouTube app (via: 'app') only has to be live; one that plays in our embed player
+// also has to be embeddable.
 export async function probeYoutubeLive(entry, { fetchImpl = fetch, timeoutMs = 10000 } = {}) {
   let url;
   try { url = youtubeLiveUrl(entry && entry.youtube); } catch { return { status: 'error' }; }
@@ -44,6 +46,19 @@ export async function probeYoutubeLive(entry, { fetchImpl = fetch, timeoutMs = 1
     if (!res.ok) return { status: 'error' }; // rate limited or blocked: not proof that it is offline
     const page = parseYoutubeLivePage(await res.text());
     if (!page.live) return { status: 'offline' };
-    return page.embeddable ? { status: 'ok', height: Number(entry.height) || 0 } : { status: 'no-embed' };
+    if (entry.via === 'app' || page.embeddable) return { status: 'ok', height: Number(entry.height) || 0 };
+    return { status: 'no-embed' };
   } catch { return { status: 'error' }; }
+}
+
+// The id of the stream the channel is broadcasting right now (it changes when the broadcaster restarts the stream),
+// for opening it in the YouTube app. null when the channel is not live or YouTube cannot be reached.
+export async function resolveYoutubeLiveVideo(channelId, { fetchImpl = fetch, timeoutMs = 10000 } = {}) {
+  const url = youtubeLiveUrl(channelId); // throws for anything that is not a channel id
+  try {
+    const res = await fetchImpl(url, { headers: HEADERS, signal: AbortSignal.timeout(timeoutMs), redirect: 'follow' });
+    if (!res.ok) return null;
+    const page = parseYoutubeLivePage(await res.text());
+    return page.live && page.videoId ? { videoId: page.videoId } : null;
+  } catch { return null; }
 }
