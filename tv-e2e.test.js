@@ -419,7 +419,10 @@ test('TV focus returns to the same deep card after details, and rapid Right keep
     await page.waitForSelector('.tv-card[data-movie-id="5000"]');
     await page.keyboard.press('ArrowDown'); // hero Play
     assert.equal(await page.evaluate(() => document.activeElement.className), 'tv-play');
-    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown'); // six rows deep
+    // Go down to the 20-title feed row this test walks, by NAME (counting rows broke when a curated row was added above it).
+    const rowTitle = () => page.evaluate(() => (document.activeElement.closest('.tv-row') || { dataset: {} }).dataset.tvRow);
+    for (let i = 0; i < 14 && (await rowTitle()) !== 'Highest Weighted Rating'; i++) await page.keyboard.press('ArrowDown');
+    assert.equal(await rowTitle(), 'Highest Weighted Rating');
     for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight'); // eight cards across
     await page.waitForTimeout(350); // let the rail's glide (and the page's smooth scroll) settle before measuring
     const indexInRow = () => page.evaluate(() => [...document.activeElement.closest('.tv-rail-track').children].indexOf(document.activeElement));

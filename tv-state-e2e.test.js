@@ -378,3 +378,63 @@ test('a row change does no tile building inside the key press; far rows are empt
     }, null, { timeout: 8000 });
   } finally { await browser.close(); }
 });
+
+// ---- Franchises: one tile per film series; it opens to every part, in order -----------------------------------------
+import { FRANCHISES } from './franchises.js';
+const FF = FRANCHISES.find(f => f.title === 'Fast & Furious');
+
+test('Franchises row: a tile opens the series with numbered parts; Back unwinds part details -> series -> the tile', { skip: !process.env.TV_E2E, timeout: 120000 }, async () => {
+  const { browser, page, errors } = await openApp();
+  try {
+    const titles = await page.evaluate(() => [...document.querySelectorAll('#main .tv-row')].map(r => r.dataset.tvRow));
+    assert.ok(titles.includes('Franchises'), `the Franchises row is on the home (${titles.join(' | ')})`);
+    assert.ok(titles.indexOf('Franchises') > titles.indexOf('Popular Now'), 'it sits below the top category rows, not above Trending');
+    // walk to the Fast & Furious tile (the row draws a window of tiles at a time)
+    await page.locator('[data-tv-row="Franchises"] .tv-card').first().focus();
+    for (let i = 0; i < 20 && (await page.evaluate(() => document.activeElement.getAttribute('aria-label') || '')).indexOf('Fast & Furious') < 0; i++) await page.keyboard.press('ArrowRight');
+    const tile = await page.evaluate(() => ({ label: document.activeElement.getAttribute('aria-label'), id: document.activeElement.dataset.movieId, badge: (document.activeElement.querySelector('.tv-card-badge') || {}).textContent }));
+    assert.match(tile.label, /Fast & Furious/);
+    assert.equal(tile.id, FF.id);
+    assert.equal(tile.badge, `${FF.parts.length} films`, 'the tile says how many films it holds, not a star rating');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.tv-franchise:not([hidden])');
+    assert.equal(await page.locator('.tv-franchise .tv-details-title').textContent(), 'Fast & Furious');
+    assert.match(await page.locator('.tv-franchise .tv-details-meta').textContent(), new RegExp(`^${FF.parts.length} films`));
+    const parts = await page.evaluate(() => [...document.querySelectorAll('.tv-franchise .tv-card')].map(c => ({ id: c.dataset.movieId, n: (c.querySelector('.tv-card-rank') || {}).textContent })));
+    assert.deepEqual(parts.map(p => p.id), FF.parts.map(p => String(p.id)), 'every part, in release order');
+    assert.deepEqual(parts.slice(0, 3).map(p => p.n), ['1', '2', '3'], 'numbered Part 1, 2, 3');
+    const wide = await page.evaluate(() => [...document.querySelectorAll('.tv-franchise .tv-card')].map(c => c.classList.contains('tv-card-ranked-wide')));
+    assert.deepEqual(wide, FF.parts.map((_, i) => i + 1 >= 10), 'two-digit part numbers get extra room so they do not run into the title');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.movieId), String(FF.parts[0].id), 'opens on Part 1 when nothing is watched');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.movieId), String(FF.parts[1].id), 'Right moves to Part 2');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.tv-details:not(.tv-franchise):not([hidden])');
+    assert.equal(await page.locator('.tv-franchise').getAttribute('hidden'), '', 'the series screen steps aside for the film');
+    assert.equal(await page.locator('.tv-details:not(.tv-franchise) .tv-details-title').textContent(), FF.parts[1].title);
+    await page.keyboard.press('Escape'); // Back from the film
+    await page.waitForSelector('.tv-franchise:not([hidden])');
+    await page.waitForFunction(id => document.activeElement && document.activeElement.dataset.movieId === id, String(FF.parts[1].id)); // focus is restored one tick after the screen changes
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.movieId), String(FF.parts[1].id), 'back on Part 2 in the series');
+    await page.keyboard.press('Escape'); // Back from the series
+    await page.waitForSelector('.tv-franchise', { state: 'hidden' });
+    await page.waitForFunction(id => document.activeElement && document.activeElement.dataset.movieId === id, FF.id, { timeout: 5000 });
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.movieId), FF.id, 'focus returns to the Franchises tile');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('Franchises row: on the Movies tab, not on the TV tab', { skip: !process.env.TV_E2E, timeout: 120000 }, async () => {
+  const { browser, page } = await openApp();
+  try {
+    const rows = () => page.evaluate(() => [...document.querySelectorAll('#main .tv-row')].map(r => r.dataset.tvRow));
+    for (const [kind, expected] of [['movie', true], ['tv', false]]) {
+      await page.locator(`.tv-kind-tab[data-kind="${kind}"]`).focus();
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(k => document.querySelector(`.tv-kind-tab[data-kind="${k}"]`).classList.contains('active'), kind);
+      await page.waitForFunction(() => document.querySelectorAll('#main .tv-row .tv-card').length > 12);
+      await page.waitForTimeout(800);
+      assert.equal((await rows()).includes('Franchises'), expected, `${kind} tab`);
+    }
+  } finally { await browser.close(); }
+});

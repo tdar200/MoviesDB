@@ -1,5 +1,6 @@
 import { orderRowItems, sortItemsByRating, weightedRating } from './tv-rows.mjs';
 import { createLiveCard } from './live-ui.js';
+import { franchiseSpan } from './tv-franchises.mjs';
 
 // TV presentation shares the existing catalogue, preferences, and player.
 // Cards open a details screen (onSelect); the hero can also play directly (onPlay).
@@ -42,7 +43,9 @@ export function createTvCard(movie, onSelect, options = {}) {
   card.dataset.rating = String(Number(movie.vote_average) || 0);
   card.dataset.score = String(weightedRating(movie)); // row order; the star shows the plain rating
   const score = Number(movie.vote_average) > 0 ? Number(movie.vote_average).toFixed(1) : '';
-  const facts = [yearOf(movie), kindOf(movie), genreOf(movie), score && `${score} stars`].filter(Boolean);
+  // A franchise tile holds several films: it says how many (and over which years), not a star rating.
+  const franchise = movie.franchise ? franchiseSpan(movie.franchise) : null;
+  const facts = franchise ? ['franchise', franchise.label.replace(/\s+·\s+/g, ', ')] : [yearOf(movie), kindOf(movie), genreOf(movie), score && `${score} stars`].filter(Boolean);
   card.setAttribute('aria-label', [titleOf(movie), ...facts].join(', '));
   const visual = element('span', 'tv-card-visual');
   const image = element('img', 'tv-card-art');
@@ -55,9 +58,14 @@ export function createTvCard(movie, onSelect, options = {}) {
   else if (movie.poster_path) image.src = art + 'w500' + movie.poster_path;
   image.onerror = () => { card.classList.add('tv-card-noart'); };
   visual.append(image);
-  if (isNewRelease(movie)) visual.append(element('span', 'tv-card-new', 'NEW'));
+  if (franchise) visual.append(element('span', 'tv-card-badge', `${franchise.count} ${franchise.count === 1 ? 'film' : 'films'}`));
+  else if (isNewRelease(movie)) visual.append(element('span', 'tv-card-new', 'NEW'));
   else if (score) visual.append(element('span', 'tv-card-badge', `★ ${score}`));
-  if (options.rank) { card.classList.add('tv-card-ranked'); visual.append(element('span', 'tv-card-rank', String(options.rank))); }
+  if (options.rank) {
+    card.classList.add('tv-card-ranked');
+    if (options.rank >= 10) card.classList.add('tv-card-ranked-wide'); // two digits need a wider gutter before the title
+    visual.append(element('span', 'tv-card-rank', String(options.rank)));
+  }
   if (options.progress > 0) {
     const bar = element('span', 'tv-card-progress');
     const fill = element('span');
@@ -70,7 +78,7 @@ export function createTvCard(movie, onSelect, options = {}) {
   const kicker = [kindOf(movie), genreOf(movie)].filter(Boolean).join('  ·  ');
   caption.append(
     element('span', 'tv-card-title', titleOf(movie)),
-    element('span', 'tv-card-kicker', [yearOf(movie), kicker].filter(Boolean).join('  ·  ')),
+    element('span', 'tv-card-kicker', franchise ? franchise.label : [yearOf(movie), kicker].filter(Boolean).join('  ·  ')),
   );
   card.append(caption);
   card.addEventListener('click', () => onSelect(movie));

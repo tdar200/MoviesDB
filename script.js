@@ -8,6 +8,9 @@ import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow, ensureTvHero, 
 import { createTvDetails, mergeTitleRecommendations } from './tv-details.js';
 import { rankTrailerVideos } from './tv-trailers.js';
 import { catalogRowDefs, dedupeAcrossRows, dedupeItems, titleKey, signalRows, staticHomeRows } from './tv-rows.mjs';
+import { franchiseRow } from './tv-franchises.mjs';
+import { FRANCHISES } from './franchises.js';
+import { createTvFranchise } from './tv-franchise.js';
 import { fetchTmdbJson } from './tmdb-queue.js';
 import { fetchCompleteTvRow } from './tv-catalog.mjs';
 import { createTvCatalogCache } from './tv-catalog-cache.mjs';
@@ -4185,12 +4188,33 @@ function watchEmbedForRefusal(fallbackChannel) {
   stopWatchingEmbed = () => { window.removeEventListener('message', onMessage); frame.onload = null; stopWatchingEmbed = null; };
 }
 
+// Franchises: a tile groups a film series. It opens the franchise screen (every part, numbered, in release order); choosing a
+// part opens that film's details and Back returns to the franchise screen on the same part. `franchiseReturn` is that marker:
+// like detailsReturnMovie it is set AFTER openDetails (which clears it), so only a part chosen there returns.
+let franchiseReturn = null;
+const franchiseScreen = TV_MODE ? createTvFranchise({
+  getProgress: movie => watchedFraction(movie),
+  onSelectPart: (part, franchise) => { franchiseScreen.close(); openDetails(part); franchiseReturn = { franchise, id: part.id }; },
+}) : null;
+
 // A card opens details first; the hero's Play button still plays immediately.
 function openDetails(movie) {
+  franchiseReturn = null; // opened from the home (or elsewhere): Back goes there
+  if (movie.franchise && franchiseScreen) { franchiseScreen.open(movie.franchise); return; }
   if (tvDetails) tvDetails.open(movie);
   else openPlayer(movie);
 }
-if (TV_MODE) document.addEventListener('tv-close-details', () => { if (tvDetails) tvDetails.close(); liveDetails.close(); });
+if (TV_MODE) document.addEventListener('tv-close-details', () => {
+  if (franchiseScreen && franchiseScreen.isOpen()) { franchiseReturn = null; franchiseScreen.close(); return; } // Back from the series
+  const filmWasOpen = !!(tvDetails && tvDetails.isOpen());
+  if (tvDetails) tvDetails.close();
+  liveDetails.close();
+  if (filmWasOpen && franchiseReturn && franchiseScreen) { // Back from a part: return to its series, on that part
+    const back = franchiseReturn;
+    franchiseReturn = null;
+    franchiseScreen.open(back.franchise, { focusId: back.id });
+  }
+});
 // The web page has no remote handler, so Escape closes the live details there.
 if (!TV_MODE) document.addEventListener('keydown', event => { if (event.key === 'Escape' && liveDetails.isOpen()) liveDetails.close(); });
 
@@ -4308,6 +4332,16 @@ async function renderTvHome(seed) {
     }
   }
 
+  // Franchises (Fast & Furious, The Matrix, Shrek, Marvel ...): one tile per film series, on the All and Movies homes. It sits
+  // right below Popular, in curated order (not re-sorted by rating), and bypasses cross-row dedupe like the other curated rows.
+  const franchiseSections = [];
+  {
+    const holder = document.createElement('div');
+    const row = franchiseRow(kind, FRANCHISES);
+    const section = row && appendTvRow(holder, { ...row, virtual: true }, onSelect);
+    if (section) franchiseSections.push(section);
+  }
+
   // Recommended row: use the same aggregate taste engine as the full recommendation
   // page. Every watched title contributes; no single recent film can dictate the rail.
   // A profile with no taste signal (fresh device, cleared storage) gets only the
@@ -4416,6 +4450,7 @@ async function renderTvHome(seed) {
       status.textContent = 'Loading category…';
       placeholder.append(heading, status);
       main.append(placeholder);
+      if (def.key === 'popular') franchiseSections.splice(0).forEach(section => main.append(section));
       if (def.key === 'weighted_top') staticSections.splice(0).forEach(section => main.append(section));
       return { def, placeholder };
     });
@@ -4439,7 +4474,10 @@ async function renderTvHome(seed) {
   };
   loadingMore = true;
   try { await loadRows(TV_HOME_ROW_LIMIT); } finally { loadingMore = false; }
-  if (isCurrent()) staticSections.splice(0).forEach(section => main.append(section)); // safety: never drop them
+  if (isCurrent()) { // safety: never drop them
+    franchiseSections.splice(0).forEach(section => main.append(section));
+    staticSections.splice(0).forEach(section => main.append(section));
+  }
   requestMoreTvCategories(document.activeElement);
 }
 

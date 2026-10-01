@@ -200,7 +200,8 @@ export function installTvRemote() {
   };
   document.addEventListener('focusin', event => {
     const t = event.target;
-    if (t && t.classList && t.classList.contains('tv-card')) {
+    // Not a tile inside an overlay (More Like This, a franchise's parts): focus is restored to the card that OPENED the overlay.
+    if (t && t.classList && t.classList.contains('tv-card') && !t.closest('.tv-details')) {
       lastCardFocus = t;
       const section = t.closest('.tv-row');
       if (section && section.dataset.tvRow) rowMemory.set(section.dataset.tvRow, { id: t.dataset.movieId, index: cardsOf(section).indexOf(t) });
