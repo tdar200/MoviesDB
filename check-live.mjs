@@ -7,7 +7,10 @@ import { createHighflyAdapter } from './live-source-highfly.mjs';
 import { createSourceRegistry } from './live-sources.mjs';
 import { createChannelFeed } from './live-channels.mjs';
 
-export async function runLiveCheck({ fetchImpl = fetch, log = console.log } = {}) {
+const MATCHES_TO_TRY = 12;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+export async function runLiveCheck({ fetchImpl = fetch, log = console.log, pauseMs = 400 } = {}) {
   const registry = createSourceRegistry([createHighflyAdapter({ fetchImpl }), createNuvioAdapter({ fetchImpl })]);
   const sources = {};
   for (const adapter of registry.list()) {
@@ -15,9 +18,18 @@ export async function runLiveCheck({ fetchImpl = fetch, log = console.log } = {}
     try {
       const matches = await adapter.listMatches();
       r.matches = matches.length;
-      if (matches.length) r.streams = (await adapter.streamsFor(matches[0].sourceId)).length;
+      // Feeds list upcoming matches first and those have no stream yet, so one match proves nothing: look until a
+      // match has a stream (the first one used to report a healthy source as BAD).
+      let tried = 0;
+      let lastError = null;
+      for (const match of matches.slice(0, MATCHES_TO_TRY)) {
+        if (tried) await sleep(pauseMs); // a burst of lookups gets the source's rate limit (HTTP 429), which is not an outage
+        tried += 1;
+        try { r.streams = (await adapter.streamsFor(match.sourceId)).length; } catch (err) { lastError = err; r.streams = 0; }
+        if (r.streams > 0) break;
+      }
       r.ok = matches.length > 0 && r.streams > 0;
-      if (!r.ok) r.error = matches.length ? 'first match has no streams' : 'no matches listed';
+      if (!r.ok) r.error = !matches.length ? 'no matches listed' : lastError ? `no stream in ${tried} match${tried === 1 ? '' : 'es'} tried, last error: ${String(lastError.message || lastError)}` : `no stream in the first ${tried} match${tried === 1 ? '' : 'es'}`;
     } catch (err) { r.error = String(err.message || err); }
     sources[adapter.name] = r;
     log(`${adapter.name.padEnd(8)} ${r.ok ? 'ok ' : 'BAD'} matches=${r.matches} streams=${r.streams}${r.error ? ' error=' + r.error : ''}`);
