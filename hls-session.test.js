@@ -90,3 +90,34 @@ test('HLS converts MP4 video when its first NAL length resembles an Annex B star
   assert.equal(JSON.parse(probe.stdout).streams[0].height, 180);
  } finally { await sessions.close(); await rm(dir,{recursive:true,force:true}); }
 });
+
+// A release can list a foreign language FIRST (ITA-ENG MULTI: Italian, then English). The HLS must carry the English one.
+// The two tracks differ in sample rate so the segment itself proves which track was mapped: Italian 22.05 kHz, English 48 kHz.
+test('HLS carries the ENGLISH audio track of a multi-audio file, not simply the first one', { timeout: 90000 }, async () => {
+ const dir = await mkdtemp(join(tmpdir(), 'movies-hls-lang-'));
+ const sessions = new HlsSessions();
+ try {
+  const source = join(dir, 'multi.mkv');
+  await exec('ffmpeg', ['-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=25','-f','lavfi','-i','sine=frequency=440:sample_rate=22050','-f','lavfi','-i','sine=frequency=880:sample_rate=48000',
+    '-t','40','-map','0:v','-map','1:a','-map','2:a','-c:v','libx264','-preset','ultrafast','-g','50','-c:a','aac','-metadata:s:a:0','language=ita','-metadata:s:a:0','title=Italian','-disposition:a:0','default',
+    '-metadata:s:a:1','language=eng','-metadata:s:a:1','title=English','-disposition:a:1','0','-y',source]);
+  const { id } = await sessions.start({ inputUrl: source, hash: 'lang' });
+  const location = sessions.sessions.get(id).directory;
+  const { stdout } = await exec('ffprobe', ['-v','error','-select_streams','a','-show_entries','stream=sample_rate','-of','json',join(location,'segment000000.ts')]);
+  const rates = JSON.parse(stdout).streams.map(s => Number(s.sample_rate));
+  assert.deepEqual(rates, [48000], 'one audio track, and it is the English (48 kHz) one, not the Italian (22.05 kHz) one that comes first');
+ } finally { await sessions.close(); await rm(dir,{recursive:true,force:true}); }
+});
+
+test('HLS keeps the first audio track when the file has no English one (nothing better to choose)', { timeout: 90000 }, async () => {
+ const dir = await mkdtemp(join(tmpdir(), 'movies-hls-nolang-'));
+ const sessions = new HlsSessions();
+ try {
+  const source = join(dir, 'foreign.mkv');
+  await exec('ffmpeg', ['-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=25','-f','lavfi','-i','sine=frequency=440:sample_rate=22050','-f','lavfi','-i','sine=frequency=880:sample_rate=48000',
+    '-t','40','-map','0:v','-map','1:a','-map','2:a','-c:v','libx264','-preset','ultrafast','-g','50','-c:a','aac','-metadata:s:a:0','language=ita','-metadata:s:a:1','language=fra','-y',source]);
+  const { id } = await sessions.start({ inputUrl: source, hash: 'nolang' });
+  const { stdout } = await exec('ffprobe', ['-v','error','-select_streams','a','-show_entries','stream=sample_rate','-of','json',join(sessions.sessions.get(id).directory,'segment000000.ts')]);
+  assert.deepEqual(JSON.parse(stdout).streams.map(s => Number(s.sample_rate)), [22050]);
+ } finally { await sessions.close(); await rm(dir,{recursive:true,force:true}); }
+});

@@ -48,6 +48,7 @@ import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHe
 import { measureTsHeight } from './live-measure.mjs';
 import { createHighflyAdapter } from './live-source-highfly.mjs';
 import { mergeCatalog, createCatalogFeed, resolveTemplates, catalogChannelPayload } from './live-catalog.mjs';
+import { probeAudioIndex } from './audio-track.mjs';
 import { probeYoutubeLive, resolveYoutubeLiveVideo } from './live-youtube.mjs';
 import { probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 import {
@@ -1563,6 +1564,9 @@ async function handleTranscode(req, res, url) {
     inputUrl = input.href;
   }
 
+  // English is the default: a MULTi / Dual release may list another language first (see audio-track.mjs).
+  const { index: audioIndex } = await probeAudioIndex(inputUrl);
+
   let child = null;
   let done = false;
   const cleanup = () => { done = true; try { child?.kill('SIGKILL'); } catch { /* already gone */ } };
@@ -1579,7 +1583,7 @@ async function handleTranscode(req, res, url) {
     // (avc1.640029). fragmented MP4 (empty_moov init segment + moof/mdat frags)
     // is what the client feeds into MediaSource.
     const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-rw_timeout', '30000000',
-      ...pre, '-i', inputUrl, '-map', '0:v:0', '-map', '0:a:0?',
+      ...pre, '-i', inputUrl, '-map', '0:v:0', '-map', `0:a:${audioIndex}?`,
       '-c:v', encoder, '-preset', encoder.includes('nvenc') ? 'p4' : 'veryfast', '-profile:v', 'high', '-level', '4.1',
       '-b:v', process.env.TRANSCODE_BITRATE || '4M', '-maxrate', process.env.TRANSCODE_MAXRATE || '6M', '-bufsize', '8M',
       '-c:a', 'aac', '-ac', '2', '-b:a', '160k', '-sn',

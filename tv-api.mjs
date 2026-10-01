@@ -215,13 +215,40 @@ function isHeavySource(s) {
   return bytes > HEAVY_SIZE_BYTES;
 }
 
-// A release explicitly tagged as a foreign-language dub should not beat an
-// English/untagged copy merely because its tracker reports more seeds. MULTi is
-// deliberately exempt because those releases normally include English audio.
-const FOREIGN_ONLY = /\b(truefrench|french|vostfr|vfq|italian|ita|german|ger|spanish|latino|hindi|hungarian|hun|russian|rus|ukrainian|polish|dutch|turkish|arabic)\b/i;
-function languagePenalty(s) {
-  const details = `${s.filename || ''} ${s.title || ''}`;
-  return /\bmulti\b/i.test(details) ? 0 : Number(FOREIGN_ONLY.test(details));
+// ---- Language: English is the default ----------------------------------------------------------------------------
+// A release you cannot understand must never be chosen over one you can, whatever its quality or seed count. A release is
+//   'english'  no foreign marker (untagged releases are English), or only subtitle languages,
+//   'mixed'    carries a foreign marker or MULTi / Dual audio next to English: playable, because the helper then selects the
+//              English audio track (a MULTi release often lists Italian or Spanish FIRST), so it ranks by quality but
+//              behind a pure English copy of the same quality,
+//   'foreign'  foreign-only: ranked behind everything else, debrid included.
+// Language markers sit AFTER the title (the year, SxxEyy or the resolution), so a film called "The Italian Job" or "French Kiss"
+// is not a foreign release; and a language that follows "sub" is a subtitle, not the audio.
+const FOREIGN_WORDS = ['truefrench', 'french', 'vff', 'vfi', 'vfq', 'vostfr', 'italian', 'ita', 'german', 'deutsch', 'ger', 'spanish', 'espa(?:ñ|n)ol', 'castellano',
+  'latino', 'spa', 'esp', 'portuguese', 'brazilian', 'dublado', 'ptbr', 'hindi', 'tamil', 'telugu', 'malayalam', 'kannada', 'punjabi', 'urdu', 'bengali',
+  'marathi', 'korean', 'kor', 'japanese', 'jpn', 'chinese', 'mandarin', 'cantonese', 'thai', 'vietnamese', 'indonesian', 'russian', 'rus', 'ukrainian',
+  'ukr', 'polish', 'pol', 'lektor', 'dutch', 'nld', 'turkish', 'tur', 'arabic', 'ara', 'hebrew', 'greek', 'swedish', 'swe', 'norwegian', 'danish',
+  'finnish', 'czech', 'romanian', 'bulgarian', 'serbian', 'croatian', 'hungarian', 'hun', 'fre', 'fra'];
+const FOREIGN_TAG = new RegExp(`\\b(?:${FOREIGN_WORDS.join('|')})\\b`, 'i');
+const ENGLISH_TAG = /\b(?:eng|english|en)\b/i;
+const MULTI_TAG = /\b(?:multi|multi[ ._-]?audio|dual|dual[ ._-]?audio)\b/i;
+const LANGUAGE_WORD = `(?:${FOREIGN_WORDS.join('|')}|eng|english|en)`;
+const SUBTITLE_LANGUAGES = new RegExp(`\\b(?:hard|soft)?-?subs?(?:bed|titles?)?\\b[ ._:-]*(?:${LANGUAGE_WORD}\\b[ ._,&+/-]*)+`, 'gi');
+const TITLE_END = /(?:^|[^a-z0-9])(?:19\d\d|20\d\d|s\d{1,2}(?:e\d{1,3})?|\d{1,2}x\d{2}|(?:2160|1080|720|576|480)p)(?:[^a-z0-9]|$)/i;
+
+function releaseTags(s) {
+  const lines = `${s.filename || ''}\n${s.title || ''}`.split(/\r?\n/);
+  const tags = lines.map((line) => { const i = line.search(TITLE_END); return i < 0 ? '' : line.slice(i); }).join(' ').trim();
+  return (tags || lines.join(' ')).replace(SUBTITLE_LANGUAGES, ' ');
+}
+
+export function languageOf(s) {
+  const tags = releaseTags(s);
+  const foreign = FOREIGN_TAG.test(tags);
+  const english = ENGLISH_TAG.test(tags);
+  const multi = MULTI_TAG.test(tags);
+  if (foreign && !english && !multi) return 'foreign';
+  return foreign || multi ? 'mixed' : 'english';
 }
 
 function sourceBytes(s) {
@@ -249,14 +276,20 @@ export function rankTvSources(sources) {
       ...s,
       quality: detectQuality(s.filename, s.title),
       remux: isRemuxableTvFile(s.filename, s.title),
+      language: languageOf(s),
     }))
     .sort((a, b) => {
+      // A release in a language you cannot follow goes behind EVERYTHING, before debrid and before quality: a cached 1080p
+      // you cannot understand is worth less than a 480p you can.
+      const foreign = Number(a.language === 'foreign') - Number(b.language === 'foreign');
+      if (foreign !== 0) return foreign;
       // Debrid (cached, instant, no peers to find) always outranks a torrent.
       if (Boolean(a.debrid) !== Boolean(b.debrid)) return a.debrid ? -1 : 1;
       const q = (QUALITY_RANK[a.quality] ?? 3) - (QUALITY_RANK[b.quality] ?? 3);
       if (q !== 0) return q;
-      const lang = languagePenalty(a) - languagePenalty(b);
-      if (lang !== 0) return lang;
+      // At equal quality a pure English copy beats MULTi / Dual / ITA-ENG ones (their audio order is a gamble).
+      const mixed = Number(a.language === 'mixed') - Number(b.language === 'mixed');
+      if (mixed !== 0) return mixed;
       // Sources that cannot be reached or cannot be genuine go behind everything else of
       // this quality: no seed count or size advantage can rescue them.
       const unreliable = (s) => Number(seedTrust(s) === 0 || isImplausiblySmall(s, s.quality));

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
+import { probeAudioIndex } from './audio-track.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -81,6 +82,10 @@ export class HlsSessions {
     try {
       session.directory = await mkdtemp(join(this.tmpDir, 'moviesdb-hls-'));
       if (signal?.aborted || session.stopped) throw new Error('Playback cancelled');
+      // English is the default: a MULTi / Dual release may list another language first, so pick the English track by its tag.
+      const audio = await probeAudioIndex(inputUrl);
+      if (signal?.aborted || session.stopped) throw new Error('Playback cancelled');
+      if (audio.index > 0) console.log(`[hls] audio: playing track ${audio.index + 1} of ${audio.streams.length} (English); the file lists ${(audio.streams[0].tags || {}).language || 'another language'} first`);
       const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
       // A torrent reader can legitimately pause while WebTorrent fetches the next
       // piece. FFmpeg's 30-second HTTP read timeout turned that pause into a cleanly
@@ -106,7 +111,7 @@ export class HlsSessions {
       // Do not rely on MPEG-TS auto-detection: an MP4 whose first NAL is a
       // one-byte SEI starts with 00 00 00 01 and is mistaken for Annex B.
       // Explicit conversion preserves the H.264 headers and packet framing.
-      args.push('-i', inputUrl, '-map', '0:v:0', '-map', '0:a:0?',
+      args.push('-i', inputUrl, '-map', '0:v:0', '-map', `0:a:${audio.index}?`,
         ...videoCodec, '-bsf:v', 'h264_mp4toannexb', '-c:a', 'aac', '-ac', '2', '-b:a', '160k', '-sn',
         '-avoid_negative_ts', 'make_zero', '-f', 'hls', '-hls_time', '8',
         '-hls_list_size', '0', '-hls_playlist_type', 'event',

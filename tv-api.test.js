@@ -125,12 +125,20 @@ test('prefers English or untagged audio over an explicit foreign-only release', 
   assert.doesNotMatch(out[0].filename, /FRENCH/);
 });
 
-test('does not penalize MULTi releases because they normally include English audio', () => {
-  const out = rankTvSources([
+test('MULTi releases rank above foreign-only ones (they normally include English audio), but behind a pure English copy of the same quality', () => {
+  // MULTi.FRENCH is playable (the helper selects the English track); a FRENCH-only release is not.
+  const vsForeign = rankTvSources([
+    src('Show.S01E01.720p.FRENCH.x264.mkv', 300, { title: 'Show FRENCH 👤 300 💾 500 MB' }),
+    src('Show.S01E01.720p.MULTi.FRENCH.x264.mkv', 20, { title: 'Show MULTi FRENCH 👤 20 💾 500 MB' }),
+  ]);
+  assert.match(vsForeign[0].filename, /MULTi/);
+  // English is the default: at the same quality the plain English release wins even though the MULTi one is lighter.
+  // (A MULTi release often lists Italian, Spanish or Polish audio FIRST; the English copy has no such gamble.)
+  const vsEnglish = rankTvSources([
     src('Show.S01E01.720p.MULTi.FRENCH.x264.mkv', 20, { title: 'Show MULTi FRENCH 👤 20 💾 500 MB' }),
     src('Show.S01E01.720p.x264.mkv', 20, { title: 'Show 👤 20 💾 700 MB' }),
   ]);
-  assert.match(out[0].filename, /MULTi/);
+  assert.doesNotMatch(vsEnglish[0].filename, /MULTi/);
 });
 
 test('reports the quality it detected, and unknown when absent', () => {
@@ -870,4 +878,65 @@ test('trust only reorders within the existing rules: 1080p still comes first', a
   const y1080 = live('Show.S01E01.1080p.WEB.x264.mkv', 182, 'Comet|Ygg API');
   const p720 = live('Show.S01E01.720p.WEB.x264-GRP.mkv', 60, 'Comet|The Pirate Bay');
   assert.equal(rankTvSources([p720, y1080])[0].quality, '1080p');
+});
+
+// ---- language: English is the default ----------------------------------------------------------------------------------
+// Real releases (Silo S01E01): an ITA-ENG MULTI pack puts Italian FIRST, a "Dual" pack Spanish first, an "ENG-Lektor PL" release
+// Polish first; a Castellano release was not recognised as foreign at all. English must win, foreign-only must come last.
+const rel = (name, seeds = 200, extra = {}) => src(`${name}.mkv`, seeds, { title: name, sizeBytes: 1.2e9, ...extra });
+const order = list => rankTvSources(list).map(s => s.title);
+
+test('language: an English or untagged release beats a foreign-only one even at a LOWER quality and with far fewer seeds', () => {
+  const out = order([
+    rel('Movie.2020.1080p.BluRay.x264.ITA-GRP', 5000),
+    rel('Movie.2020.720p.WEB-DL.x264-GRP', 40),
+  ]);
+  assert.deepEqual(out, ['Movie.2020.720p.WEB-DL.x264-GRP', 'Movie.2020.1080p.BluRay.x264.ITA-GRP'], 'quality used to be compared first, so the Italian 1080p won');
+});
+
+test('language: foreign-only goes last even against a debrid source (a cached instant copy you cannot understand is no use)', () => {
+  const out = rankTvSources([
+    { ...rel('Movie.2020.1080p.WEB-DL.x264.FRENCH-GRP', 100), debrid: 'rd', url: 'https://cdn.example/a.mkv' },
+    rel('Movie.2020.1080p.WEB-DL.x264-GRP', 100),
+  ]).map(s => s.title);
+  assert.equal(out[0], 'Movie.2020.1080p.WEB-DL.x264-GRP');
+});
+
+test('language: a pure English 1080p beats a MULTI / ITA-ENG / Dual 1080p, which still beat any foreign-only copy', () => {
+  const out = order([
+    rel('Show.S01E01.1080p.WEB-DL.x264.SPANISH-GRP', 3000),
+    rel('Show.S01E01.1080p.WEB-DL.x264.ITA-ENG.MULTI-GRP', 900),
+    rel('Show.S01E01.1080p.WEB-DL.x264.Dual.Audio-GRP', 800),
+    rel('Show.S01E01.1080p.WEB-DL.x264-GRP', 50),
+  ]);
+  assert.equal(out[0], 'Show.S01E01.1080p.WEB-DL.x264-GRP', 'pure English first, however few seeds');
+  assert.equal(out[3], 'Show.S01E01.1080p.WEB-DL.x264.SPANISH-GRP', 'foreign-only last');
+});
+
+test('language: a mixed release still ranks by quality (the English track is selected at play time), so 1080p MULTI beats 720p English', () => {
+  const out = order([rel('Show.S01E01.720p.WEB-DL.x264-GRP', 500), rel('Show.S01E01.1080p.WEB-DL.x264.ITA-ENG.MULTI-GRP', 500)]);
+  assert.equal(out[0], 'Show.S01E01.1080p.WEB-DL.x264.ITA-ENG.MULTI-GRP');
+});
+
+test('language: tags the old list missed are foreign (Castellano, Lektor, Korean, Portuguese, Tamil ...), but subtitle languages are not', () => {
+  for (const tag of ['Castellano', 'Latino', 'Lektor.PL', 'Korean', 'PORTUGUESE', 'Tamil', 'Telugu', 'JPN', 'Rus', 'Ger', 'FRENCH', 'Hindi']) {
+    const out = order([rel(`Movie.2020.1080p.WEB-DL.x264.${tag}-GRP`, 900), rel('Movie.2020.480p.WEB-DL.x264-GRP', 3)]);
+    assert.equal(out[0], 'Movie.2020.480p.WEB-DL.x264-GRP', `${tag} is foreign-only`);
+  }
+  // Italian SUBTITLES on an English release do not make it Italian.
+  const subs = order([rel('Movie.2020.1080p.WEB-DL.x264.ENG.SUB.ITA-GRP', 100), rel('Movie.2020.1080p.WEB-DL.x264.Hardsub.Italian-GRP', 100), rel('Movie.2020.720p.WEB-DL.x264-GRP', 100)]);
+  assert.ok(subs.indexOf('Movie.2020.720p.WEB-DL.x264-GRP') > 0, 'the 720p is not promoted above the subtitled 1080p releases');
+});
+
+test('language: a film whose TITLE is a language word is not a foreign release ("The Italian Job", "French Kiss")', () => {
+  for (const title of ['The.Italian.Job', 'French.Kiss', 'The.German.Doctor', 'Spanish.Princess']) {
+    const out = order([
+      rel(`${title}.2003.1080p.BluRay.x264.ITA-GRP`, 900),
+      rel(`${title}.2003.1080p.BluRay.x264-GRP`, 100),
+    ]);
+    assert.equal(out[0], `${title}.2003.1080p.BluRay.x264-GRP`, `${title}: the untagged copy is English, the ITA-tagged one is not`);
+  }
+  // And the title alone, with no tag, is never demoted behind a different untagged release of equal quality that is lighter.
+  const only = rankTvSources([rel('The.Italian.Job.2003.1080p.BluRay.x264-GRP', 100)]);
+  assert.equal(only[0].language, 'english', 'exposed on the source for the UI and for debugging');
 });
