@@ -1,5 +1,8 @@
 import { installProviderControls } from './tv-provider-controls.js';
 import { createTvPlayer, setHudButton } from './tv-player.js';
+import { virtualizeRows, hydrateRow } from './tv-ui.js';
+
+const ROW_UPKEEP_DELAY_MS = 140;
 // Spatial focus navigation for LG's D-pad, keyboard, and pointer remote.
 const selector = 'button:not(:disabled), a[href], input:not([type="hidden"]):not(:disabled), select:not(:disabled), [tabindex="0"], video[controls]';
 const visible = node => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
@@ -160,6 +163,29 @@ export function installTvRemote() {
   // happened to be in. Keyed by row title: the rows of one tab have unique titles.
   const rowMemory = new Map();
   const cardsOf = section => Array.from(section.querySelectorAll('.tv-card'));
+  // Row upkeep (draw the rows ahead, empty the ones far behind) runs ONLY once the user has paused for a moment,
+  // one row per idle slice, and is cancelled by the next key press. On the TV, drawing a row is ~30-50 ms.
+  let upkeepTimer = 0;
+  let upkeepIdle = 0;
+  const whenIdle = fn => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 600 }) : setTimeout(fn, 40));
+  const cancelUpkeep = () => {
+    clearTimeout(upkeepTimer);
+    if (upkeepIdle && window.cancelIdleCallback) window.cancelIdleCallback(upkeepIdle);
+    upkeepIdle = 0;
+  };
+  const upkeepStep = () => {
+    upkeepIdle = 0;
+    const main = document.getElementById('main');
+    const active = document.activeElement;
+    const section = active && active.closest ? active.closest('.tv-row') : null;
+    if (!main || !section || detailsOpen()) return;
+    if (virtualizeRows(main, section, 1) > 0) upkeepIdle = whenIdle(upkeepStep);
+  };
+  const scheduleRowUpkeep = () => {
+    cancelUpkeep();
+    upkeepTimer = setTimeout(() => { upkeepIdle = whenIdle(upkeepStep); }, ROW_UPKEEP_DELAY_MS);
+  };
+
   const rememberedCard = section => {
     const cards = cardsOf(section);
     const memo = rowMemory.get(section.dataset.tvRow);
@@ -278,6 +304,7 @@ export function installTvRemote() {
         const want = Math.round(window.innerHeight * 0.3);
         const delta = section.getBoundingClientRect().top - want;
         if (Math.abs(delta) > 6) window.scrollTo({ top: Math.max(0, window.scrollY + delta), behavior: 'smooth' });
+        scheduleRowUpkeep(); // keep the page small however deep you go (once you pause, never inside the key press)
       }
     } else {
       lastFocusedRow = null;
@@ -367,6 +394,7 @@ export function installTvRemote() {
     const key = event.key || ({ 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown', 13: 'Enter' })[event.keyCode];
     const active = document.activeElement;
     const editing = /INPUT|TEXTAREA|SELECT/.test(active?.tagName || '');
+    if (upkeepTimer || upkeepIdle) scheduleRowUpkeep(); // a key press postpones row upkeep until the user pauses again
     if (tvPlayer.handleKey(event, key, !!picker)) { event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (backKeys.includes(key) || event.keyCode === 461) {
       event.preventDefault();
@@ -445,9 +473,21 @@ export function installTvRemote() {
       const section = active.closest('.tv-row');
       const rows = Array.from(document.querySelectorAll('#main .tv-row'));
       const rowIndex = rows.indexOf(section);
-      const targetRow = rows[rowIndex + sign];
+      // The nearest row with tiles. A row with none is still loading (skipped: Down used to do NOTHING on it, which
+      // looked like a slow remote) or failed (its Retry button takes focus, so a failed row is not a dead end).
+      let targetRow = null;
+      let retry = null;
+      for (let k = rowIndex + sign; k >= 0 && k < rows.length; k += sign) {
+        const candidate = rows[k];
+        if (candidate.__dry || candidate.querySelector('.tv-card')) { targetRow = candidate; break; }
+        const button = candidate.querySelector('button');
+        if (button) { retry = button; break; }
+      }
       if (targetRow) {
+        hydrateRow(targetRow); // a no-op unless it was emptied
         focus(rememberedCard(targetRow));
+      } else if (retry) {
+        focus(retry);
       } else if (sign < 0) {
         focus(document.querySelector('.tv-play') || homeAnchor());
       }

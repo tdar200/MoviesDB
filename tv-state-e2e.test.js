@@ -41,7 +41,7 @@ async function openApp({ progress = null, path = '/tv.html?source=111Movies', be
       const base = 10000 + h * 100;
       const results = Array.from({ length: 20 }, (_, i) => item(base + i));
       if (/trending\/all/.test(path)) results.unshift(show(), longShow());
-      body = { results, page: 1, total_pages: 1, total_results: results.length };
+      body = { results, items: results, page: 1, total_pages: 1, total_results: results.length }; // `items` = the /list/ endpoints
     }
     await route.fulfill({ json: body });
   });
@@ -276,5 +276,105 @@ test('the trailer is shown only once it is playing, falls back when a candidate 
     await page.waitForSelector('.tv-details', { state: 'hidden' });
     assert.equal(await playing(), false);
     await page.waitForFunction(() => !document.querySelector('.tv-details-trailer iframe'), null, { timeout: 8000 });
+  } finally { await browser.close(); }
+});
+
+const focusedRowIndex = page => page.evaluate(() => {
+  const rows = [...document.querySelectorAll('#main .tv-row')].filter(r => r.querySelector('.tv-card') || r.__dry);
+  const a = document.activeElement; const row = a && a.closest && a.closest('.tv-row');
+  return { index: row ? rows.indexOf(row) : -1, rows: rows.length };
+});
+const walkDown = async (page, target) => {
+  for (let i = 0; i < 160; i++) {
+    const { index, rows } = await focusedRowIndex(page);
+    if (index >= target) return index;
+    if (index >= rows - 1) await page.waitForFunction(n => [...document.querySelectorAll('#main .tv-row')].filter(r => r.querySelector('.tv-card') || r.__dry).length > n, rows, { timeout: 20000 }).catch(() => {});
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(120);
+  }
+  return (await focusedRowIndex(page)).index;
+};
+
+test('going deep down the home keeps the page small: far rows are emptied to same-height placeholders and refill on the way back', { skip: !process.env.TV_E2E, timeout: 180000 }, async () => {
+  const { browser, page, errors } = await openApp();
+  try {
+    await page.locator('#main .tv-row .tv-card').first().focus();
+    const heightAtTop = await page.evaluate(() => document.documentElement.scrollHeight);
+    const reached = await walkDown(page, 30);
+    assert.ok(reached >= 30, `walked down to row ${reached + 1}`);
+    await page.waitForFunction(() => document.querySelectorAll('#main .tv-card').length <= 240, null, { timeout: 20000 }); // upkeep runs once you pause, one row per idle slice
+    const deep = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('#main .tv-row')].filter(r => r.__total);
+      return {
+        tiles: document.querySelectorAll('#main .tv-card').length,
+        dry: rows.filter(r => r.__dry).length,
+        rows: rows.length,
+        broken: rows.filter(r => r.querySelectorAll('.tv-card').length + (r.__rest || []).length !== r.__total).map(r => r.dataset.tvRow),
+        heightDeep: document.documentElement.scrollHeight,
+      };
+    });
+    assert.ok(deep.dry >= 10, `${deep.dry} of ${deep.rows} rows are emptied`);
+    assert.ok(deep.tiles <= 240, `only the rows near you stay drawn: ${deep.tiles} tiles, not ${deep.rows * 12}`);
+    assert.deepEqual(deep.broken, [], 'every row still knows all of its titles (drawn + waiting = total)');
+    assert.ok(deep.heightDeep >= heightAtTop, 'the page did not collapse');
+    // Back up: rows refill before you reach them, focus is never lost, and each row keeps the position you left it at.
+    let lost = 0;
+    for (let i = 0; i < 24; i++) {
+      await page.keyboard.press('ArrowUp');
+      await page.waitForTimeout(90);
+      if (!await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('tv-card'))) lost++;
+    }
+    assert.equal(lost, 0, 'focus stayed on a tile for every Up press');
+    assert.ok((await focusedRowIndex(page)).index < reached - 15);
+    const driedAgain = await page.evaluate(() => [...document.querySelectorAll('#main .tv-row')].filter(r => r.__dry).length);
+    assert.ok(driedAgain >= 1, 'rows far from the new position are emptied again');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('an emptied row comes back where you left it (card and rail position)', { skip: !process.env.TV_E2E, timeout: 180000 }, async () => {
+  const { browser, page } = await openApp();
+  try {
+    const [A] = await page.evaluate(() => [...document.querySelectorAll('#main .tv-row')].filter(r => r.querySelector('.tv-card')).map(r => r.dataset.tvRow));
+    await page.locator(`[data-tv-row="${A}"] .tv-card`).first().focus();
+    for (let i = 0; i < 7; i++) await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(300);
+    const before = await page.evaluate(a => { const r = document.querySelector(`[data-tv-row="${a}"]`); const f = document.activeElement; return { id: f.dataset.movieId, index: [...r.querySelectorAll('.tv-card')].indexOf(f), tx: r.querySelector('.tv-rail-track').dataset.tx }; }, A);
+    await walkDown(page, 16);
+    await page.waitForFunction(a => !!document.querySelector(`[data-tv-row="${a}"]`).__dry, A, { timeout: 15000 });
+    assert.equal(await page.evaluate(a => !!document.querySelector(`[data-tv-row="${a}"]`).__dry, A), true, 'the first row is emptied while you are far away');
+    // Jump back with Up presses.
+    for (let i = 0; i < 20; i++) { await page.keyboard.press('ArrowUp'); await page.waitForTimeout(90); if ((await focusedRowIndex(page)).index === 0 || await page.evaluate(a => document.activeElement.closest('.tv-row') && document.activeElement.closest('.tv-row').dataset.tvRow === a, A)) break; }
+    await page.waitForFunction(a => document.activeElement && document.activeElement.closest('.tv-row') && document.activeElement.closest('.tv-row').dataset.tvRow === a, A);
+    const after = await page.evaluate(a => { const r = document.querySelector(`[data-tv-row="${a}"]`); const f = document.activeElement; return { id: f.dataset.movieId, index: [...r.querySelectorAll('.tv-card')].indexOf(f), tx: r.querySelector('.tv-rail-track').dataset.tx, dry: !!r.__dry }; }, A);
+    assert.equal(after.dry, false);
+    assert.equal(after.id, before.id, 'the same card');
+    assert.equal(after.index, before.index);
+    assertSameTx(after.tx, before.tx, 'the rail is where you left it');
+  } finally { await browser.close(); }
+});
+
+test('a row change does no tile building inside the key press; far rows are emptied / refilled once you pause', { skip: !process.env.TV_E2E, timeout: 180000 }, async () => {
+  const { browser, page } = await openApp();
+  try {
+    await page.locator('#main .tv-row .tv-card').first().focus();
+    await walkDown(page, 14);
+    // let the walk's own housekeeping finish, then check that one more press changes nothing synchronously
+    await page.waitForFunction(() => document.querySelectorAll('#main .tv-row').length > 0 && !window.__pendingRows, null, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+    const sync = await page.evaluate(() => {
+      const tiles = () => document.querySelectorAll('#main .tv-card').length;
+      const dry = () => [...document.querySelectorAll('#main .tv-row')].filter(r => r.__dry).length;
+      const before = { tiles: tiles(), dry: dry() };
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+      return { before, during: { tiles: tiles(), dry: dry() } };
+    });
+    assert.deepEqual(sync.during, sync.before, 'the key press itself built/removed no tiles');
+    // ... but once the user pauses, the window moves: a row beyond the slack is emptied.
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll('#main .tv-row')].filter(r => r.__virtual || r.__dry || r.querySelector('.tv-card'));
+      const at = rows.indexOf(document.activeElement.closest('.tv-row'));
+      return rows.slice(0, Math.max(0, at - 6)).every(r => r.__dry || !r.__all) && rows.slice(at, at + 4).every(r => !r.__dry);
+    }, null, { timeout: 8000 });
   } finally { await browser.close(); }
 });

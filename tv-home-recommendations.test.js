@@ -34,8 +34,8 @@ test('All renders the complete IMDb and Emmy rails without cross-row dedupe', ()
   assert.ok(imdbStart >= 0 && imdbEnd > imdbStart, 'IMDb All-screen block is present');
   assert.match(imdbHomeBlock, /Math\.max\(IMDB_TOP_250\.length, EMMY_WINNERS\.length\)/,
     'the static rails receive their complete collections');
-  assert.match(imdbHomeBlock, /appendTvRow\(holder, row, onSelect\)/,
-    'the complete collection is rendered');
+  assert.match(imdbHomeBlock, /appendTvRow\(holder, \{ \.\.\.row, virtual: true \}, onSelect\)/,
+    'the complete collection is rendered (a far-away row may be emptied and refilled, but it keeps every title)');
   // They sit BELOW the top category rows (a first row of all-time classics read as "new
   // releases" full of Shawshank), placed right after the weighted-rating row.
   assert.match(source, /if \(def\.key === 'weighted_top'\) staticSections\.splice\(0\)\.forEach\(section => main\.append\(section\)\);/,

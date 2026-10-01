@@ -4179,7 +4179,8 @@ const tvCatalogCache = createTvCatalogCache({
   fetchRow: (def, options) => fetchCompleteTvRow(def, fetchTmdbJson, options),
   loadSnapshot: async key => {
     // Hosted production snapshots are separate from local fixture/development feeds.
-    if (!location.hostname.endsWith('.vercel.app')) return null;
+    // `?snapshots=1` lets a LAN / local copy use the same snapshots (for on-device measurements).
+    if (!location.hostname.endsWith('.vercel.app') && !/[?&]snapshots=1\b/.test(location.search)) return null;
     const response = await fetchWithTimeout(`/catalog-cache/${key}.json`, 8000, { cache: 'default' });
     return response.ok ? response.json() : null;
   },
@@ -4224,7 +4225,7 @@ async function renderTvHome(seed) {
   {
     const holder = document.createElement('div');
     for (const row of staticHomeRows(kind, staticCollections, staticCollectionLimit)) {
-      const section = appendTvRow(holder, row, onSelect);
+      const section = appendTvRow(holder, { ...row, virtual: true }, onSelect);
       if (section) staticSections.push(section);
     }
   }
@@ -4267,7 +4268,7 @@ async function renderTvHome(seed) {
         const items = dedupeItems(candidates, new Set(seen)).slice(0, TV_HOME_RECOMMENDATION_LIMIT);
         items.forEach(item => seen.add(titleKey(item)));
         const holder = document.createElement('div');
-        const section = appendTvRow(holder, { key: 'recommended', title: 'Recommended for You', items }, onSelect);
+        const section = appendTvRow(holder, { key: 'recommended', title: 'Recommended for You', items, virtual: true }, onSelect);
         if (section) recommendedPlaceholder.replaceWith(section);
         else recommendedPlaceholder.remove();
       } else if (token === tvHomeToken) recommendedPlaceholder.remove();
@@ -4295,7 +4296,7 @@ async function renderTvHome(seed) {
       // Preserve full category membership, even when another category has the
       // same title. buildRow renders only a small window of the sorted collection.
       const holder = document.createElement('div');
-      const section = appendTvRow(holder, { key: def.key, title: def.title, items: row.items, noSort: true }, onSelect);
+      const section = appendTvRow(holder, { key: def.key, title: def.title, items: row.items, noSort: true, virtual: true }, onSelect);
       if (section) {
         if (def.key === 'trending' && row.items.length) {
           if (kind === 'all') lastTrendingSeed = row.items;

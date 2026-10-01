@@ -520,7 +520,7 @@ test('TV home keeps loading category rows as focus moves down, up to the last on
     });
     await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?source=YTS%20(Torrent)`);
     await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'Highest Weighted Rating' && r.dataset.rowComplete === '1'), null, { timeout: 60000 });
-    const rowCount = () => page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')).length);
+    const rowCount = () => page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => (r.querySelector('.tv-card') || r.__dry)).length);
     const initial = await rowCount();
     await page.keyboard.press('ArrowDown');
     // Walk down the home; batches of rows arrive as focus nears the bottom.
@@ -529,8 +529,8 @@ test('TV home keeps loading category rows as focus moves down, up to the last on
       if (await page.evaluate(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+' && r.dataset.rowComplete === '1'))) break;
       const before = await rowCount();
       await page.keyboard.press('ArrowDown');
-      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')); return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
-      if (atBottom) await page.waitForFunction(n => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => r.querySelector('.tv-card')).length > n, before, { timeout: 20000 }).catch(() => {});
+      const atBottom = await page.evaluate(() => { const rows = [...document.querySelectorAll('#main [data-tv-row]')].filter(r => (r.querySelector('.tv-card') || r.__dry)); return rows.indexOf(document.activeElement.closest('[data-tv-row]')) >= rows.length - 1; });
+      if (atBottom) await page.waitForFunction(n => [...document.querySelectorAll('#main [data-tv-row]')].filter(r => (r.querySelector('.tv-card') || r.__dry)).length > n, before, { timeout: 20000 }).catch(() => {});
     }
     await page.waitForFunction(() => [...document.querySelectorAll('[data-tv-row]')].some(r => r.dataset.tvRow === 'On Paramount+' && r.dataset.rowComplete === '1'), null, { timeout: 30000 });
     const titles = await page.evaluate(() => [...document.querySelectorAll('#main [data-tv-row]')].map(r => r.dataset.tvRow));

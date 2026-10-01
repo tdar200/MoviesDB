@@ -123,11 +123,74 @@ function installRowWindowing() {
   });
 }
 
+// ---- Row virtualization ------------------------------------------------------------------
+// Walking down the home used to keep every row alive: ~70 rows, 830 tiles, 6,500 DOM nodes by the bottom, and on
+// the TV each key press grew from ~19 ms at the top to 50-100+ ms at the bottom (worst 520 ms). Rows far from the
+// one you are on are emptied to a placeholder of EXACTLY the same height (nothing moves) and refill as you
+// approach. A row always knows all its titles: drawn tiles + `__rest` = `__total`, empty or not.
+export const KEEP_ROWS_ABOVE = 3;
+export const KEEP_ROWS_BELOW = 5;
+const ROW_SLACK = 2; // hysteresis: a row is emptied only this many rows beyond the drawn range
+
+export function dehydrateRow(section) {
+  if (!section || section.__dry || !section.__virtual || !section.__all) return;
+  const rail = section.querySelector('.tv-rail');
+  const track = section.querySelector('.tv-rail-track');
+  if (!rail || !track || !track.children.length) return;
+  section.__keep = Math.max(ROW_WINDOW, track.children.length); // come back exactly as wide as it was
+  rail.style.boxSizing = 'border-box';
+  rail.style.height = rail.offsetHeight + 'px';
+  track.textContent = '';
+  section.__rest = section.__all.slice();
+  section.__dry = true;
+}
+
+export function hydrateRow(section) {
+  if (!section || !section.__dry) return;
+  const rail = section.querySelector('.tv-rail');
+  const track = section.querySelector('.tv-rail-track');
+  const count = Math.min(section.__keep || ROW_WINDOW, section.__all.length);
+  const fragment = document.createDocumentFragment();
+  section.__all.slice(0, count).forEach((movie, i) => fragment.appendChild(createTvCard(movie, section.__onSelect, tileOptions(section, i, movie))));
+  track.appendChild(fragment);
+  section.__rest = section.__all.slice(count);
+  section.__dry = false;
+  rail.style.height = '';
+  rail.style.boxSizing = '';
+}
+
+// Keep the rows around `focused` drawn and empty the ones far away. Does at most `limit` row operations (nearest
+// rows to draw first, farthest to empty first) and returns how many are still pending, so the caller can spread the
+// work over idle slices instead of spending it inside a key press.
+export function virtualizeRows(main, focused, limit = Infinity) {
+  const rows = Array.prototype.filter.call(main.children, el => el.classList && el.classList.contains('tv-row') && el.__virtual);
+  const at = rows.indexOf(focused);
+  if (at < 0) return 0;
+  const wake = [];
+  const sleep = [];
+  rows.forEach((row, i) => {
+    const distance = i - at;
+    if (distance < -(KEEP_ROWS_ABOVE + ROW_SLACK) || distance > KEEP_ROWS_BELOW + ROW_SLACK) {
+      if (!row.__dry && row.querySelector('.tv-card')) sleep.push([Math.abs(distance), row]);
+    } else if (distance >= -KEEP_ROWS_ABOVE && distance <= KEEP_ROWS_BELOW && row.__dry) {
+      wake.push([Math.abs(distance), row]);
+    }
+  });
+  wake.sort((x, y) => x[0] - y[0]);
+  sleep.sort((x, y) => y[0] - x[0]);
+  let done = 0;
+  for (const entry of wake) { if (done >= limit) break; hydrateRow(entry[1]); done += 1; }
+  for (const entry of sleep) { if (done >= limit) break; dehydrateRow(entry[1]); done += 1; }
+  return wake.length + sleep.length - done;
+}
+
 function buildRow(row, onSelect) {
   installRowWindowing();
   const name = row.title || row.key;
   const titles = orderRowItems(row);
   const section = element('section', 'tv-row');
+  section.__all = titles;
+  section.__virtual = row.virtual === true;
   section.dataset.tvRow = name;
   const rail = element('div', 'tv-rail');
   rail.setAttribute('aria-label', name);
