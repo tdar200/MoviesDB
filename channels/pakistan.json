@@ -1,0 +1,34 @@
+[
+ {
+  "id": "pk:humtv",
+  "name": "HUM TV",
+  "category": "Entertainment",
+  "url": "https://g4wlkwx8l23a-hls-live.5centscdn.com/HUM/271ddf829afeece44d8732757fba1a66.sdp/playlist_dvr.m3u8",
+  "headers": {},
+  "logo": "https://yt3.googleusercontent.com/zA-EJBUBG8nI8atakCCYgxw6c42fzoxDgIK_3bao7CRZaOR3aBc02VciNymKFMJxYPmQKnnL=s176-c-k-c0x00ffffff-no-rj",
+  "height": 720,
+  "codec": "h264",
+  "country": "PK",
+  "language": "ur",
+  "source": "broadcaster-site",
+  "official": true,
+  "host": "g4wlkwx8l23a-hls-live.5centscdn.com",
+  "evidence": "https://hum.tv/live"
+ },
+ {
+  "id": "pk:suchnews",
+  "name": "Such News",
+  "category": "News",
+  "url": "https://video.primexsports.com/suchnews/live/playlist.m3u8",
+  "headers": {},
+  "logo": "https://yt3.googleusercontent.com/ywkjqFzUtIcj3RS3ab-BCBoZkUyc8PGeiXBqxxCwBCwyRVGyxK5FTXuV_-FHrk9hJIQrbPO5Mw=s176-c-k-c0x00ffffff-no-rj",
+  "height": 1080,
+  "codec": "h264",
+  "country": "PK",
+  "language": "ur",
+  "source": "broadcaster-site",
+  "official": true,
+  "host": "video.primexsports.com",
+  "evidence": "https://suchtv.pk/live"
+ }
+]

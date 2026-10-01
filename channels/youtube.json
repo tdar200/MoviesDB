@@ -193,5 +193,18 @@
   "logo": "https://yt3.googleusercontent.com/xhE5TwIRnm8eLnjaxUnqG6hpKpnhb6QZ9yOmGgPa0vKwarMBRa9AqT5u8aQ4Hxc_af-TpUmw34s=s176-c-k-c0x00ffffff-no-rj",
   "height": 0,
   "via": "app"
+ },
+ {
+  "id": "youtube:UCe9JSDmyqNgA_l2BzGHq1Ug",
+  "name": "Geo Entertainment",
+  "category": "Entertainment",
+  "country": "PK",
+  "language": "ur",
+  "official": true,
+  "youtube": "UCe9JSDmyqNgA_l2BzGHq1Ug",
+  "url": "https://www.youtube.com/channel/UCe9JSDmyqNgA_l2BzGHq1Ug/live",
+  "logo": "https://yt3.googleusercontent.com/gmRmvRYUHVbi2YnWiM_RbJtwPMkKK_WJfsWYINioLLVutKiQ5_Yf1xbGY57qGJydAY7zNuRp6Q=s176-c-k-c0x00ffffff-no-rj",
+  "height": 0,
+  "via": "app"
  }
 ]

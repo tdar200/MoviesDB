@@ -82,3 +82,32 @@ test('YouTube live channels: the ones measured as embeddable on the TV play in-a
   for (const n of ['24 News HD', 'Dawn News', 'Neo News', 'GNN']) assert.equal(via[n], 'embed', `${n} plays in-app`);
   for (const n of ['Geo News', 'ARY News', 'Express News', 'Samaa TV', 'Dunya News', 'Aaj News', 'BOL News', 'Such News', 'Geo Super', 'PTV Sports']) assert.equal(via[n], 'app', `${n} blocks embedding`);
 });
+
+// Pakistani broadcasters whose OWN live page serves an open HLS stream to an anonymous visitor (checked from the UK, no login,
+// no workaround). These play in the app's native player and beat their YouTube twins, which most owners block from embedding.
+test('Pakistani broadcaster-site streams: official, evidenced by the broadcaster page that serves them, and preferred over the YouTube twin', () => {
+  const pk = JSON.parse(readFileSync('channels/pakistan.json', 'utf8'));
+  const names = pk.map(e => e.name);
+  for (const n of ['HUM TV', 'Such News']) assert.ok(names.includes(n), `${n} is listed`);
+  for (const e of pk) {
+    assert.equal(e.official, true);
+    assert.equal(e.country, 'PK');
+    assert.match(e.url, /^https:\/\/.+\.m3u8/, `${e.name}: an https HLS playlist`);
+    assert.ok(Number(e.height) >= 480, `${e.name}: measured height`);
+    assert.match(e.evidence, /^https:\/\/(www\.)?(hum\.tv|suchtv\.pk)\//, `${e.name}: the broadcaster's own page that serves this stream`);
+  }
+  const merged = mergeCatalog(lists.map((l) => l.entries));
+  for (const n of ['HUM TV', 'Such News']) {
+    const e = merged.find((c) => c.name === n);
+    assert.ok(e && !e.youtube, `${n}: the in-app HLS stream wins over the YouTube entry`);
+    assert.ok(e.height >= 480);
+  }
+});
+
+test('Geo Entertainment (Har Pal Geo) is listed through YouTube and opens in the YouTube app when it is live', () => {
+  const yt = JSON.parse(readFileSync('channels/youtube.json', 'utf8'));
+  const e = yt.find((c) => c.name === 'Geo Entertainment');
+  assert.ok(e, 'Geo Entertainment is in the YouTube list');
+  assert.equal(e.youtube, 'UCe9JSDmyqNgA_l2BzGHq1Ug', "Har Pal Geo's verified channel, linked from harpalgeo.tv");
+  assert.equal(e.via, 'app');
+});
