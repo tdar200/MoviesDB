@@ -47,7 +47,8 @@ import { createChannelFeed } from './live-channels.mjs';
 import { verifyUpstream, isPublicHttpUrl, relayPath, rewritePlaylist, upstreamHeaders } from './live-relay.mjs';
 import { measureTsHeight } from './live-measure.mjs';
 import { createHighflyAdapter } from './live-source-highfly.mjs';
-import { mergeCatalog, createCatalogFeed, resolveTemplates } from './live-catalog.mjs';
+import { mergeCatalog, createCatalogFeed, resolveTemplates, catalogChannelPayload } from './live-catalog.mjs';
+import { probeYoutubeLive } from './live-youtube.mjs';
 import { probeStream, createStreamHealth, BLOCKED_TARGET } from './live-health.mjs';
 import {
   parseEmbeddedSubStreams, embeddedTrackLabel,
@@ -1336,6 +1337,8 @@ function buildCatalogFeed() { return createCatalogFeed({
   // the lists were built; re-measuring ~1,600 channels every 30 min would pull
   // hundreds of MB per round on this line.
   probe: async e => {
+    // An official YouTube live channel is listed only while it is live AND embeddable (no playlist to fetch).
+    if (e.youtube) return probeYoutubeLive(e, { fetchImpl: liveFetch });
     if (!LIVE_ALLOW_PRIVATE && !isPublicHttpUrl(e.url)) return { status: 'blocked' };
     // Plex rate-limits bulk requests from one IP (every Plex channel then 429s
     // for a while, including the one being watched), so it is never bulk-probed.
@@ -1394,10 +1397,7 @@ if (liveCatalog.size()) {
 function handleLiveCatalog(res) {
   liveJson(res, 200, { categories: liveCatalog.categories().map(c => ({
     name: c.name,
-    channels: c.channels.map(e => ({
-      id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0, category: e.category || null,
-      play: `/live/ch?id=${encodeURIComponent(e.id)}`,
-    })),
+    channels: c.channels.map(catalogChannelPayload),
   })) });
 }
 

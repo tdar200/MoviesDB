@@ -51,3 +51,24 @@ test('the merged catalog keeps every Pluto channel that has no twin on another p
 test('no adult channels are listed', () => {
   assert.deepEqual(all.filter((e) => /erotica|\bxxx\b|porn|playboy/i.test(e.name)).map((e) => e.name), []);
 });
+
+// Official YouTube live channels (HUM, Geo, ARY ...): identity was confirmed from the broadcaster's own website or a
+// verified channel badge. A wrong id here would put someone else's stream in the Pakistan row, so pin the shape.
+test('YouTube live channels: valid channel ids, Pakistani, urls derived from the id, one entry per channel', () => {
+  const yt = JSON.parse(readFileSync('channels/youtube.json', 'utf8'));
+  assert.ok(yt.length >= 12, `expected the Pakistani broadcaster set, got ${yt.length}`);
+  const ids = new Set();
+  for (const e of yt) {
+    assert.match(e.youtube, /^UC[\w-]{22}$/, `${e.name}: bad channel id`);
+    assert.equal(e.id, `youtube:${e.youtube}`, `${e.name}: id must be derived from the channel id`);
+    assert.equal(e.url, `https://www.youtube.com/channel/${e.youtube}/live`, `${e.name}: url must be the channel live page`);
+    assert.equal(e.country, 'PK', `${e.name}: goes in the Pakistan row`);
+    assert.equal(e.official, true);
+    assert.ok(!ids.has(e.youtube), `${e.name}: duplicate channel`);
+    ids.add(e.youtube);
+  }
+  const names = yt.map(e => e.name);
+  for (const n of ['Geo News', 'ARY News', 'Express News', 'Samaa TV', 'Dawn News', 'Dunya News', 'HUM TV', 'Geo Super']) assert.ok(names.includes(n), `${n} is listed`);
+  // ARY Digital is live on YouTube but ARY disabled embedding, so it cannot play here: it must not be listed.
+  assert.ok(!names.some(n => /ARY Digital/i.test(n)));
+});

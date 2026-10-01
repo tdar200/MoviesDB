@@ -115,3 +115,29 @@ test('resolveTemplates fills Pluto session parameters once a session is minted',
   assert.equal(r.url, 'https://stitch.pluto.tv/channel/abc123/master.m3u8?appName=web&country=GB&sid=s1&jwt=a.b-c_d&masterJWTPassthrough=true');
   assert.equal(r.urlTemplate, undefined);
 });
+
+// ---- YouTube live channels in the catalog ----
+import { catalogChannelPayload } from './live-catalog.mjs';
+
+test('catalogChannelPayload: an HLS channel plays through the relay, a YouTube channel carries its embed url instead', () => {
+  const hls = catalogChannelPayload({ id: 'pluto:abc', name: 'Pluto One', logo: 'l.png', height: 1080, category: 'Movies' });
+  assert.deepEqual(hls, { id: 'pluto:abc', name: 'Pluto One', logo: 'l.png', height: 1080, category: 'Movies', play: '/live/ch?id=pluto%3Aabc' });
+  const yt = catalogChannelPayload({ id: 'youtube:UC_vt34wimdCzdkrzVejwX9g', name: 'Geo News', logo: null, height: 0, category: 'News', youtube: 'UC_vt34wimdCzdkrzVejwX9g' });
+  assert.equal(yt.play, undefined, 'there is nothing to relay');
+  assert.match(yt.embed, /^https:\/\/www\.youtube\.com\/embed\/live_stream\?channel=UC_vt34wimdCzdkrzVejwX9g&/);
+  assert.equal(yt.name, 'Geo News');
+});
+
+test('YouTube channels that are live are listed in the Pakistan row; ones that are offline or blocked are not', async () => {
+  const entries = mergeCatalog([[
+    { id: 'youtube:UCaaaaaaaaaaaaaaaaaaaaaa', name: 'Live News', category: 'News', country: 'PK', language: 'ur', official: true, youtube: 'UCaaaaaaaaaaaaaaaaaaaaaa', url: 'https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa/live' },
+    { id: 'youtube:UCbbbbbbbbbbbbbbbbbbbbbb', name: 'Offline TV', category: 'Entertainment', country: 'PK', language: 'ur', official: true, youtube: 'UCbbbbbbbbbbbbbbbbbbbbbb', url: 'https://www.youtube.com/channel/UCbbbbbbbbbbbbbbbbbbbbbb/live' },
+    { id: 'youtube:UCcccccccccccccccccccccc', name: 'No Embed TV', category: 'Entertainment', country: 'PK', language: 'ur', official: true, youtube: 'UCcccccccccccccccccccccc', url: 'https://www.youtube.com/channel/UCcccccccccccccccccccccc/live' },
+  ]]);
+  assert.equal(entries.length, 3, 'public https youtube.com urls pass the catalog filters');
+  const status = { UCaaaaaaaaaaaaaaaaaaaaaa: 'ok', UCbbbbbbbbbbbbbbbbbbbbbb: 'offline', UCcccccccccccccccccccccc: 'no-embed' };
+  const feed = createCatalogFeed({ entries, probe: async e => ({ status: status[e.youtube] }) });
+  await feed.refresh();
+  const pak = feed.categories().find(c => c.name === 'Pakistan');
+  assert.deepEqual(pak.channels.map(c => c.name), ['Live News']);
+});

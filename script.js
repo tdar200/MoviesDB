@@ -4116,6 +4116,27 @@ function openLivePlayer(session) {
   livePlayer.play(session);
 }
 
+// A channel whose only official free stream is a live broadcast on the broadcaster's own YouTube channel (HUM, Geo, ARY,
+// Express ...): shown in the embed player like an embed provider. closePlayer() clears the iframe, which ends the stream.
+function openEmbedChannel(session) {
+  stopYtsStream();
+  livePlayer.stop();
+  currentPlayingMovie = null;
+  currentTvData = null;
+  showPlayerVideo(false);
+  if (qualitySelect) qualitySelect.style.display = 'none';
+  if (subtitleSelect) subtitleSelect.style.display = 'none';
+  playerTitle.textContent = session.title || 'Live';
+  delete playerModal.dataset.live;
+  playerIframe.removeAttribute('srcdoc');
+  playerIframe.removeAttribute('sandbox');
+  playerIframe.removeAttribute('data-provider-origin');
+  playerIframe.src = session.embed;
+  playerModal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  playerModalOpen = true;
+}
+
 // A card opens details first; the hero's Play button still plays immediately.
 function openDetails(movie) {
   if (tvDetails) tvDetails.open(movie);
@@ -4407,7 +4428,8 @@ function liveStatusText(matchesRes, channelsRes) {
 
 // Matches open the details screen; channels play straight away (Task 12's player).
 let onLiveSelect = card => {
-  if (card.kind === 'channel') openLivePlayer({ title: card.title, streams: [{ label: card.title, play: card.raw.play }], startIndex: 0, refresh: async () => [{ label: card.title, play: card.raw.play }] });
+  if (card.kind === 'channel' && card.raw.embed) openEmbedChannel({ title: card.title, embed: card.raw.embed });
+  else if (card.kind === 'channel') openLivePlayer({ title: card.title, streams: [{ label: card.title, play: card.raw.play }], startIndex: 0, refresh: async () => [{ label: card.title, play: card.raw.play }] });
   else liveDetails.open(card.raw);
 };
 

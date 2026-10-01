@@ -190,3 +190,41 @@ for (const kind of ['live', 'cricket', 'channels']) {
     } finally { await browser.close(); }
   });
 }
+
+// A channel that is only an official YouTube live stream (HUM, Geo, ARY ...) has no HLS to relay: the catalog gives it an
+// embed url and OK opens it in the embed player; Back closes it and returns to the tile.
+test('Channels: a YouTube live channel opens in the embed player; Back closes it and restores focus', { skip: !process.env.TV_E2E }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    const embed = 'https://www.youtube.com/embed/live_stream?channel=UC_vt34wimdCzdkrzVejwX9g&autoplay=1&rel=0';
+    await page.route('**/live/catalog**', r => r.fulfill({ json: { categories: [{ name: 'Pakistan', channels: [
+      { id: 'youtube:UC_vt34wimdCzdkrzVejwX9g', name: 'Geo News', logo: null, height: 0, category: 'News', embed },
+      { id: 'hls1', name: 'Dunya News UK', logo: null, height: 720, category: 'News', play: '/live/ch?id=hls1' },
+    ] }] } }));
+    await page.route('https://api.themoviedb.org/**', r => r.fulfill({ json: { results: [], page: 1, total_pages: 1, total_results: 0 } }));
+    await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: '<html><body>stub</body></html>' }));
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?helperkey=k&helper=${encodeURIComponent(process.env.TV_TEST_URL || 'http://127.0.0.1:8123')}`);
+    await page.waitForSelector('.tv-kind-tab[data-kind="channels"]');
+    await page.locator('.tv-kind-tab[data-kind="channels"]').focus();
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('[data-tv-row="Pakistan"] .tv-card');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'ch:youtube:UC_vt34wimdCzdkrzVejwX9g');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#player-modal', { state: 'visible' });
+    assert.equal(await page.locator('#player-iframe').getAttribute('src'), embed, 'the iframe shows the channel live stream');
+    assert.equal(await page.locator('#player-video').isVisible(), false, 'no native video for an embed');
+    assert.equal(await page.locator('#player-title').textContent(), 'Geo News');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#player-modal', { state: 'hidden' });
+    assert.ok(!(await page.locator('#player-iframe').getAttribute('src')), 'the embed is torn down, so the stream stops');
+    assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'ch:youtube:UC_vt34wimdCzdkrzVejwX9g', 'Back returns to the tile');
+    // The HLS channel next to it still takes the native player.
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'ch:hls1');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});

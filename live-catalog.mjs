@@ -5,6 +5,7 @@
 // re-probes them in the background and serves only the ones that are alive.
 import { isDeniedHost } from './live-channels.mjs';
 import { isPublicHttpUrl } from './live-relay.mjs';
+import { youtubeEmbedUrl } from './live-youtube.mjs';
 
 export const CATEGORY_ORDER = [
   'News', 'General', 'Entertainment', 'Movies', 'Series', 'Documentary', 'Kids', 'Music', 'Sports',
@@ -151,4 +152,12 @@ export function resolveTemplates(entries, { plexToken = '', plutoSession = null 
     out.push({ ...rest, url });
   }
   return out;
+}
+
+// What /live/catalog sends the TV for one channel. HLS channels play through the signed relay (/live/ch); a channel
+// that is only an official YouTube live stream has nothing to relay, so it carries the embed url the TV shows in its
+// embed player instead.
+export function catalogChannelPayload(e) {
+  const base = { id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0, category: e.category || null };
+  return e.youtube ? { ...base, embed: youtubeEmbedUrl(e.youtube) } : { ...base, play: `/live/ch?id=${encodeURIComponent(e.id)}` };
 }
