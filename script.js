@@ -3,7 +3,7 @@ import { initYouTube, activateYouTube } from './youtube.js';
 import { getRecommendations, getRecommendationRows, clearRecommendationCache } from './recommendations.js';
 import { createWatchTimer } from './watch-timer.js';
 import { calculateScore, newestWeightedScore } from './scoring.js';
-import { playbackHealth, bufferRecovery } from './playback-health.js';
+import { playbackHealth, bufferRecovery, connectionVerdict } from './playback-health.js';
 import { createTvCard, renderTvBrowse, renderTvRows, appendTvRow, ensureTvHero, syncPersonalRows } from './tv-ui.js';
 import { createTvDetails, mergeTitleRecommendations } from './tv-details.js';
 import { rankTrailerVideos } from './tv-trailers.js';
@@ -1445,9 +1445,8 @@ function watchConnectionHealth(hash, recover, { noPeersMs = 13000, noDataMs = 22
     // Dead: no peers, or peers but no bytes. Too-slow: it connected and pulled data
     // but its PEAK rate can't sustain 1080p — waiting on it just buffers forever, so
     // move to a faster source (peak, not instantaneous, so one that ramps up is kept).
-    const dead = (elapsed > noPeersMs && (s.peers || 0) === 0)
-      || (elapsed > noDataMs && maxProgress <= 0.0005);
-    const tooSlow = elapsed > slowMs && maxSpeed > 0 && maxSpeed < minSustainBps;
+    // (Not applied to a torrent that is already complete: that is a local file, see connectionVerdict.)
+    const { dead, tooSlow } = connectionVerdict({ elapsed, peers: s.peers || 0, progress: s.progress || 0, maxProgress, maxSpeed, noPeersMs, noDataMs, slowMs, minSustainBps });
     if (dead || tooSlow) { clearInterval(connectionHealthTimer); recover(); }
   }, 2000);
 }
@@ -1508,6 +1507,7 @@ function watchPlaybackHealth(recover, { startupMs = 30000, stallMs = 30000, sour
         now: Date.now(), bufferedSeconds, readyState: playerVideo.readyState,
         paused: playerVideo.paused, downloadSpeed: status.downloadSpeed,
         requiredSpeed: Number(source.sizeBytes) / torrentDuration,
+        downloadComplete: Number(status.progress) >= 1, // a fully local file needs no download speed
       });
       if (starvation.recover) { clearPlaybackHealth(); recover(); }
     } catch { /* the normal stall timer remains authoritative if status is unavailable */ }
