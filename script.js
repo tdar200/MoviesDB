@@ -2890,6 +2890,7 @@ async function openPlayer(movie, target = null) {
 
 // Close video player modal
 function closePlayer() {
+  if (stopWatchingEmbed) stopWatchingEmbed();
   savePlaybackPosition(); // capture the final position before we tear the player down
   livePlayer.stop(); // after the save: stop() must never touch an on-demand position
   delete playerModal.dataset.live;
@@ -4151,10 +4152,37 @@ function openEmbedChannel(session) {
   playerIframe.removeAttribute('srcdoc');
   playerIframe.removeAttribute('sandbox');
   playerIframe.removeAttribute('data-provider-origin');
-  playerIframe.src = session.embed;
+  watchEmbedForRefusal(session.fallbackChannel);
+  playerIframe.src = `${session.embed}&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`;
   playerModal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
   playerModalOpen = true;
+}
+
+// Whether a live stream may be embedded is decided per video and a restarted stream is a new video (Neo News played, then an
+// hour later answered error 150), so no fixed list stays right. When YouTube reports that embedding is refused (101, 150, 151,
+// 153) the player closes and the TV's YouTube app opens on the same channel.
+const EMBED_REFUSED = [101, 150, 151, 153];
+let stopWatchingEmbed = null;
+function watchEmbedForRefusal(fallbackChannel) {
+  if (stopWatchingEmbed) stopWatchingEmbed();
+  const frame = playerIframe;
+  const onMessage = event => {
+    if (event.source !== frame.contentWindow) return;
+    let data = event.data;
+    if (typeof data === 'string') { try { data = JSON.parse(data); } catch { return; } }
+    if (!data || data.event !== 'onError' || !EMBED_REFUSED.includes(Number(data.info))) return;
+    closePlayer();
+    if (fallbackChannel) openInYouTubeApp(fallbackChannel);
+  };
+  window.addEventListener('message', onMessage);
+  frame.onload = () => {
+    const target = frame.contentWindow;
+    if (!target) return;
+    target.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+    ['onError', 'onStateChange'].forEach(name => target.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: [name], id: 1, channel: 'widget' }), '*'));
+  };
+  stopWatchingEmbed = () => { window.removeEventListener('message', onMessage); frame.onload = null; stopWatchingEmbed = null; };
 }
 
 // A card opens details first; the hero's Play button still plays immediately.
@@ -4448,8 +4476,8 @@ function liveStatusText(matchesRes, channelsRes) {
 
 // Matches open the details screen; channels play straight away (Task 12's player).
 let onLiveSelect = card => {
-  if (card.kind === 'channel' && card.raw.youtubeApp) openInYouTubeApp(card.raw.youtubeApp);
-  else if (card.kind === 'channel' && card.raw.embed) openEmbedChannel({ title: card.title, embed: card.raw.embed });
+  if (card.kind === 'channel' && card.raw.embed) openEmbedChannel({ title: card.title, embed: card.raw.embed, fallbackChannel: card.raw.youtubeApp });
+  else if (card.kind === 'channel' && card.raw.youtubeApp) openInYouTubeApp(card.raw.youtubeApp);
   else if (card.kind === 'channel') openLivePlayer({ title: card.title, streams: [{ label: card.title, play: card.raw.play }], startIndex: 0, refresh: async () => [{ label: card.title, play: card.raw.play }] });
   else liveDetails.open(card.raw);
 };

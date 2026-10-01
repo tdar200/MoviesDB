@@ -124,6 +124,7 @@ test('catalogChannelPayload: an HLS channel plays through the relay, a YouTube c
   assert.deepEqual(hls, { id: 'pluto:abc', name: 'Pluto One', logo: 'l.png', height: 1080, category: 'Movies', play: '/live/ch?id=pluto%3Aabc' });
   const yt = catalogChannelPayload({ id: 'youtube:UC_vt34wimdCzdkrzVejwX9g', name: 'Geo News', logo: null, height: 0, category: 'News', youtube: 'UC_vt34wimdCzdkrzVejwX9g' });
   assert.equal(yt.play, undefined, 'there is nothing to relay');
+  assert.equal(yt.youtubeApp, 'UC_vt34wimdCzdkrzVejwX9g', 'embedding can be refused later (a restarted stream is a new video): the TV falls back to the YouTube app');
   assert.match(yt.embed, /^https:\/\/www\.youtube\.com\/embed\/live_stream\?channel=UC_vt34wimdCzdkrzVejwX9g&/);
   assert.equal(yt.name, 'Geo News');
 });

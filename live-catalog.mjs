@@ -160,5 +160,5 @@ export function resolveTemplates(entries, { plexToken = '', plutoSession = null 
 export function catalogChannelPayload(e) {
   const base = { id: e.id, name: e.name, logo: e.logo || null, height: e.height || 0, category: e.category || null };
   if (e.youtube && e.via === 'app') return { ...base, youtubeApp: e.youtube };
-  return e.youtube ? { ...base, embed: youtubeEmbedUrl(e.youtube) } : { ...base, play: `/live/ch?id=${encodeURIComponent(e.id)}` };
+  return e.youtube ? { ...base, embed: youtubeEmbedUrl(e.youtube), youtubeApp: e.youtube } : { ...base, play: `/live/ch?id=${encodeURIComponent(e.id)}` };
 }

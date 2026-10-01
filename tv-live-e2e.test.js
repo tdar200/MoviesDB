@@ -215,7 +215,10 @@ test('Channels: a YouTube live channel opens in the embed player; Back closes it
     assert.equal(await page.locator(':focus').getAttribute('data-movie-id'), 'ch:youtube:UC_vt34wimdCzdkrzVejwX9g');
     await page.keyboard.press('Enter');
     await page.waitForSelector('#player-modal', { state: 'visible' });
-    assert.equal(await page.locator('#player-iframe').getAttribute('src'), embed, 'the iframe shows the channel live stream');
+    const src = new URL(await page.locator('#player-iframe').getAttribute('src'));
+    assert.equal(src.origin + src.pathname, 'https://www.youtube.com/embed/live_stream', 'the iframe shows the channel live stream');
+    assert.equal(src.searchParams.get('channel'), 'UC_vt34wimdCzdkrzVejwX9g');
+    assert.equal(src.searchParams.get('enablejsapi'), '1', 'the player reports errors back to us');
     assert.equal(await page.locator('#player-video').isVisible(), false, 'no native video for an embed');
     assert.equal(await page.locator('#player-title').textContent(), 'Geo News');
     await page.keyboard.press('Escape');
@@ -267,3 +270,49 @@ for (const resolves of [true, false]) {
     } finally { await browser.close(); }
   });
 }
+
+// Whether a live stream may be embedded is decided per video, and a restarted stream is a new video (Neo News played and an
+// hour later answered YouTube error 150). So an embed that is refused hands over to the YouTube app by itself.
+test('Channels: an embed that YouTube refuses (error 150) closes and opens the YouTube app instead', { skip: !process.env.TV_E2E }, async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.addInitScript(() => {
+      window.__luna = [];
+      window.PalmServiceBridge = function () { this.call = (uri, params) => { window.__luna.push({ uri, params: JSON.parse(params) }); }; };
+      // The embed must be tried FIRST (it is the better experience); remember that it was opened.
+      window.__embedOpened = false;
+      new MutationObserver(() => { const f = document.getElementById('player-iframe'); if (f && /live_stream/.test(f.getAttribute('src') || '')) window.__embedOpened = true; })
+        .observe(document, { subtree: true, attributes: true, attributeFilter: ['src'], childList: true });
+    });
+    const embed = 'https://www.youtube.com/embed/live_stream?channel=UC_vt34wimdCzdkrzVejwX9g&autoplay=1&rel=0';
+    await page.route('**/live/catalog**', r => r.fulfill({ json: { categories: [{ name: 'Pakistan', channels: [
+      { id: 'youtube:UC_vt34wimdCzdkrzVejwX9g', name: 'Neo News', logo: null, height: 0, category: 'News', embed, youtubeApp: 'UC_vt34wimdCzdkrzVejwX9g' },
+    ] }] } }));
+    await page.route('**/live/yt**', r => r.fulfill({ json: { videoId: 'abcdefghijk' } }));
+    await page.route('https://api.themoviedb.org/**', r => r.fulfill({ json: { results: [], page: 1, total_pages: 1, total_results: 0 } }));
+    // The embed answers the player-api handshake the way YouTube does for a video whose owner blocks embedding.
+    await page.route('https://www.youtube.com/embed/**', r => r.fulfill({ contentType: 'text/html', body: `<html><body><script>
+      window.addEventListener('message', function (e) { if (String(e.data).indexOf('"listening"') > -1) parent.postMessage(JSON.stringify({ event: 'onError', info: 150 }), '*'); });
+    </script></body></html>` }));
+    await page.route(/https:\/\/(?!api\.themoviedb\.org|www\.youtube\.com\/embed)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+    await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?helperkey=k&helper=${encodeURIComponent(process.env.TV_TEST_URL || 'http://127.0.0.1:8123')}`);
+    await page.waitForSelector('.tv-kind-tab[data-kind="channels"]');
+    await page.locator('.tv-kind-tab[data-kind="channels"]').focus();
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('[data-tv-row="Pakistan"] .tv-card');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__luna.length > 0, null, { timeout: 15000 });
+    const calls = await page.evaluate(() => window.__luna);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].params.id, 'youtube.leanback.v4');
+    assert.equal(calls[0].params.params.contentTarget, 'https://www.youtube.com/watch?v=abcdefghijk');
+    assert.equal(await page.evaluate(() => window.__embedOpened), true, 'the embed was tried first');
+    await page.waitForSelector('#player-modal', { state: 'hidden' });
+    assert.ok(!(await page.locator('#player-iframe').getAttribute('src')), 'the refused embed is torn down');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
