@@ -76,6 +76,15 @@ const playerDownBtn = document.getElementById('player-down');
 const trailerIframe = document.getElementById('trailer-iframe');
 const playerVideo = document.getElementById('player-video');
 const ytsStatusEl = document.getElementById('yts-status');
+// Declared up here, NOT beside the tab handlers: the first render can run during module evaluation (the saved tab is
+// reopened at launch), and esbuild turns bundled top-level const into var, so a late declaration reads `undefined`.
+const tabMovies = document.getElementById('tab-movies');
+const tabWatched = document.getElementById('tab-watched');
+const tabFavorites = document.getElementById('tab-favorites');
+const tabYouTube = document.getElementById('tab-youtube');
+const tabRecommended = document.getElementById('tab-recommended');
+const movieFilters = document.getElementById('movie-filters');
+const youtubeFilters = document.getElementById('youtube-filters');
 const qualitySelect = document.getElementById('quality-select');
 const subtitleSelect = document.getElementById('subtitle-select');
 const subtitleSyncControls = document.getElementById('subtitle-sync-controls');
@@ -5414,14 +5423,7 @@ initFromUrl();
 // Initialize YouTube module
 initYouTube();
 
-// Tab switching logic
-const tabMovies = document.getElementById('tab-movies');
-const tabWatched = document.getElementById('tab-watched');
-const tabFavorites = document.getElementById('tab-favorites');
-const tabYouTube = document.getElementById('tab-youtube');
-const tabRecommended = document.getElementById('tab-recommended');
-const movieFilters = document.getElementById('movie-filters');
-const youtubeFilters = document.getElementById('youtube-filters');
+// Tab switching logic (the tab/filter element refs are declared at the top of the file)
 const movieSearchForm = document.getElementById('form');
 const youtubeSearchForm = document.getElementById('yt-form');
 const top250Button = document.getElementById('top250-btn');

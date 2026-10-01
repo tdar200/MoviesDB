@@ -157,3 +157,36 @@ test('Live: after every stream fails, Retry is reachable with the arrows and res
     await browser.close();
   }
 });
+
+// The app reopens on the tab you were last on. Regression: with Live / Cricket / Channels saved, the first Live
+// render ran before `tabRecommended` was initialised (esbuild turns bundled top-level const into var, so it read
+// undefined) and the app launched to a BLANK screen with "Cannot read property 'classList' of undefined".
+for (const kind of ['live', 'cricket', 'channels']) {
+  test(`relaunch on a saved ${kind} tab opens that tab with content and no errors`, { skip: !process.env.TV_E2E }, async () => {
+    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+      const errors = [];
+      page.on('pageerror', e => errors.push(e.message));
+      const now = Date.now();
+      const matches = [
+        { id: 'espn:1', title: 'Arsenal vs Chelsea', league: 'Premier League', kickoff: new Date(now - 40 * 60_000).toISOString(), state: 'in', clock: "40'", home: { name: 'Arsenal', logo: null, score: 1 }, away: { name: 'Chelsea', logo: null, score: 0 }, broadcasters: [], sources: [{ adapter: 'nuvio', sourceId: 's1' }], hasStream: true, priority: 1, poster: null },
+        { id: 'espn:2', title: 'Western Fury vs Tasmanian Roar', league: 'National League Cricket', sport: 'cricket', kickoff: new Date(now - 30 * 60_000).toISOString(), state: 'in', clock: null, home: { name: 'Western Fury', logo: null, score: null }, away: { name: 'Tasmanian Roar', logo: null, score: null }, broadcasters: [], sources: [{ adapter: 'nuvio', sourceId: 's2' }], hasStream: true, priority: 2, poster: null },
+      ];
+      await page.addInitScript(k => localStorage.setItem('tvMediaKind', k), kind);
+      await page.route('**/live/matches**', r => r.fulfill({ json: { matches, status: { fixtures: 'ok', sources: { nuvio: 'ok' } }, generatedAt: new Date(now).toISOString() } }));
+      await page.route('**/live/channels**', r => r.fulfill({ json: { channels: [{ id: 'c1', name: 'Test Channel', logo: null, play: '/live/hls?u=ch&s=sig&ref=&org=' }], stale: false, fetchedAt: new Date(now).toISOString() } }));
+      await page.route('**/live/catalog**', r => r.fulfill({ json: { categories: [{ name: 'News', channels: [{ id: 'n1', name: 'News One', logo: null, play: '/live/hls?u=n&s=sig&ref=&org=' }] }] } }));
+      await page.route('https://api.themoviedb.org/**', r => r.fulfill({ json: { results: [], page: 1, total_pages: 1, total_results: 0 } }));
+      await page.route(/https:\/\/(?!api\.themoviedb\.org)/, r => r.fulfill({ contentType: 'text/html', body: 'x' }));
+      await page.goto(`${process.env.TV_TEST_URL || 'http://127.0.0.1:8123'}/tv.html?helperkey=k&helper=${encodeURIComponent(process.env.TV_TEST_URL || 'http://127.0.0.1:8123')}`);
+      await page.waitForFunction(() => document.querySelectorAll('#main .tv-card').length > 0, null, { timeout: 15000 });
+      assert.equal(await page.locator('.tv-kind-tab.active').getAttribute('data-kind'), kind);
+      const rows = await page.evaluate(() => [...document.querySelectorAll('#main .tv-row')].map(r => r.dataset.tvRow));
+      assert.ok(rows.length > 0, `rows are shown (${rows.join(', ')})`);
+      if (kind === 'live') assert.ok(rows.some(r => /Live now/.test(r)), rows.join(', '));
+      if (kind === 'channels') assert.deepEqual(rows, ['News']);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+}
