@@ -14,7 +14,7 @@ const MIN_VOTES = 150; // drops shorts and obscure side entries
 
 // [display name, TMDB collection search query, optional TMDB collection id (pins it when the name search picks a wrong one)]  - most popular first
 const SERIES = [
-  ['Fast & Furious', 'The Fast and the Furious Collection'], ['Harry Potter', 'Harry Potter Collection'],
+  ['Fast & Furious', 'The Fast and the Furious Collection'], ['Harry Potter', 'Harry Potter Collection'], ['Fantastic Beasts', 'Fantastic Beasts Collection'],
   ['Star Wars', 'Star Wars Collection'], ['The Matrix', 'The Matrix Collection'], ['Shrek', 'Shrek Collection'],
   ['The Lord of the Rings', 'The Lord of the Rings Collection', 119], ['The Hobbit', 'The Hobbit Collection'],
   ['Jurassic Park', 'Jurassic Park Collection'], ['Mission: Impossible', 'Mission: Impossible Collection'],
@@ -46,6 +46,36 @@ const SERIES = [
   ['Hotel Transylvania', 'Hotel Transylvania Collection'], ['Paddington', 'Paddington Collection'], ['Evil Dead', 'The Evil Dead Collection', 1960],
 ];
 
+// TMDB's collections are incomplete in three ways, found by auditing every series against an independent title search:
+//  - a sequel is simply not linked to its collection (The Matrix Resurrections has no collection at all),
+//  - a series is split into several collections (Star Trek: three; Alien: four; Planet of the Apes: old and new),
+//  - a spin-off sits in a collection of its own (Minions, Rogue One).
+// `merge`: collections to fold in, by exact name.  `include`: films to add, by TMDB id or { title, year }.
+const OPTIONS = {
+  'The Matrix': { include: [624860] },                                                       // The Matrix Resurrections
+  'Star Wars': { include: [330459, 348350, 12180] },                                         // Rogue One, Solo, The Clone Wars (2008)
+  'The Lord of the Rings': { include: [839033] },                                            // The War of the Rohirrim
+  'John Wick': { include: [{ title: 'Ballerina', year: 2025 }] },
+  'X-Men': { merge: ['The Wolverine Collection'] },                                          // Origins: Wolverine, The Wolverine, Logan
+  'Alien': { merge: ['Prometheus Collection', 'Alien: Romulus Collection', 'AVP Collection'] },
+  'Predator': { merge: ['AVP Collection'], include: [1376434] },                             // Predator: Killer of Killers
+  'Planet of the Apes': { merge: ['Planet of the Apes (Original) Collection'], include: [869] }, // 1968-1973 and Burton's 2001
+  'Transformers': { include: [698687, 667538, { title: 'Bumblebee', year: 2018 }] },
+  'Despicable Me': { merge: ['Minions Collection'] },
+  'How to Train Your Dragon': { include: [1087192] },                                        // the 2025 live-action film
+  'Madagascar': { include: [270946] },                                                       // Penguins of Madagascar
+  'The Hunger Games': { include: [695721] },                                                 // The Ballad of Songbirds & Snakes
+  'Halloween': { merge: ['Halloween (Rob Zombie Series) Collection'] },
+  'Resident Evil': { include: [460458, 1423191] },                                           // Welcome to Raccoon City, Resident Evil (2026)
+  "Ocean's": { include: [402900, 299] },                                                     // Ocean's Eight, Ocean's Eleven (1960)
+  'Men in Black': { include: [479455] },                                                     // Men in Black: International
+  'Ghostbusters': { include: [43074] },                                                      // Ghostbusters (2016)
+  'Home Alone': { include: [654974] },                                                       // Home Sweet Home Alone
+  'Star Trek': { merge: ['Star Trek: The Next Generation Collection', 'Star Trek: Alternate Reality Collection'] },
+  'Evil Dead': { include: [109428, 713704, 1212763] },                                       // Evil Dead (2013), Evil Dead Rise, Evil Dead Burn
+};
+const RENAME = { 'Spider-Man': 'Spider-Man (Sam Raimi)' };  // the Raimi trilogy, not every Spider-Man film
+
 const get = async (path, params = {}) => {
   const url = new URL(BASE + path);
   url.searchParams.set('api_key', API_KEY);
@@ -65,15 +95,46 @@ const slimPart = p => ({
   overview: p.overview || '', vote_average: Math.round((p.vote_average || 0) * 10) / 10, vote_count: p.vote_count || 0,
   genre_ids: p.genre_ids || [], media_type: 'movie',
 });
-const usable = p => !p.adult && p.release_date && p.release_date <= today && p.vote_count >= MIN_VOTES && p.poster_path;
+// A film released in the last 18 months may not have 150 votes yet; it still belongs to its series.
+const recentCutoff = new Date(Date.now() - 548 * 864e5).toISOString().slice(0, 10);
+const usable = p => !p.adult && p.release_date && p.release_date <= today && p.poster_path
+  && (p.vote_count >= MIN_VOTES || (p.release_date >= recentCutoff && p.vote_count >= 10));
 const byRelease = (a, b) => a.release_date.localeCompare(b.release_date) || a.id - b.id;
+
+async function movieById(id) {
+  const d = await get(`/movie/${id}`);
+  if (!d || !d.id) throw new Error(`movie ${id} not found`);
+  return { ...d, genre_ids: (d.genres || []).map(g => g.id) };
+}
+async function movieByTitle({ title, year }) {
+  const r = await get('/search/movie', { query: title, year: String(year) });
+  const hit = (r.results || []).find(m => m.title.toLowerCase().includes(title.toLowerCase()));
+  if (!hit) throw new Error(`"${title}" (${year}) not found`);
+  return movieById(hit.id);
+}
+async function collectionParts(id) { return ((await get(`/collection/${id}`)).parts || []); }
+async function collectionByName(name) {
+  const r = await get('/search/collection', { query: name });
+  const hit = (r.results || []).find(c => c.name.toLowerCase() === name.toLowerCase());
+  if (!hit) throw new Error(`collection "${name}" not found`);
+  return collectionParts(hit.id);
+}
 
 async function fromCollection([name, query, pinnedId]) {
   const hit = pinnedId ? { id: pinnedId } : ((await get('/search/collection', { query })).results || [])[0];
   if (!hit) return { name, error: 'no collection found' };
   const detail = await get(`/collection/${hit.id}`);
-  const parts = (detail.parts || []).filter(usable).map(slimPart).sort(byRelease);
-  return { name, tmdbName: detail.name, collectionId: detail.id, overview: detail.overview || '', backdrop_path: detail.backdrop_path, poster_path: detail.poster_path, parts };
+  const opt = OPTIONS[name] || {};
+  const raw = [...(detail.parts || [])];
+  for (const m of opt.merge || []) raw.push(...await collectionByName(m));
+  const extra = [];
+  for (const inc of opt.include || []) extra.push(typeof inc === 'number' ? await movieById(inc) : await movieByTitle(inc));
+  const seen = new Set();
+  // Explicitly included films skip the vote filter: they were chosen by hand.
+  const all = [...raw.filter(usable), ...extra.filter(p => !p.adult && p.release_date && p.release_date <= today && p.poster_path)]
+    .filter(p => !seen.has(p.id) && seen.add(p.id));
+  const parts = all.map(slimPart).sort(byRelease);
+  return { name: RENAME[name] || name, tmdbName: detail.name + ((opt.merge || []).length ? ` + ${opt.merge.length} merged` : '') + (extra.length ? ` + ${extra.length} added` : ''), collectionId: detail.id, overview: detail.overview || '', backdrop_path: detail.backdrop_path, poster_path: detail.poster_path, parts };
 }
 
 // The MCU, in release order. Marvel Studios' company list also holds shorts, specials, animation and pre-MCU films

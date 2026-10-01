@@ -938,6 +938,61 @@ export const FRANCHISES = [
   ]
  },
  {
+  "id": "franchise:435259",
+  "collectionId": 435259,
+  "title": "Fantastic Beasts",
+  "overview": "The Fantastic Beasts films are a fantasy series based on and inspired by the textbook mentioned in the Harry Potter novels by British writer J. K. Rowling. Set in the same Wizarding World franchise, they follow the adventures of Newt Scamander, a self-proclaimed magizoologist, along with Porpentina \"Tina\" Goldstein, a MACUSA auror.",
+  "backdrop_path": "/oTAuBBcUiUBNKxurftOmEAoye0a.jpg",
+  "poster_path": "/wsVseA7i3FqX24m26Z2gD3EtH4l.jpg",
+  "parts": [
+   {
+    "id": 259316,
+    "title": "Fantastic Beasts and Where to Find Them",
+    "release_date": "2016-11-16",
+    "poster_path": "/h6NYfVUyM6CDURtZSnBpz647Ldd.jpg",
+    "backdrop_path": "/8Qsr8pvDL3s1jNZQ4HK1d1Xlvnh.jpg",
+    "overview": "In 1926, Newt Scamander arrives at the Magical Congress of the United States of America with a magically expanded briefcase, which houses a number of dangerous creatures and their habitats. When the creatures escape from the briefcase, it sends the American wizarding authorities after Newt, and threatens to strain even further the state of magical and non-magical relations.",
+    "vote_average": 7.3,
+    "vote_count": 20027,
+    "genre_ids": [
+     14,
+     12
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 338952,
+    "title": "Fantastic Beasts: The Crimes of Grindelwald",
+    "release_date": "2018-11-14",
+    "poster_path": "/fMMrl8fD9gRCFJvsx0SuFwkEOop.jpg",
+    "backdrop_path": "/i3rRY0EKYhSpyOLRAQ7iB05zhAp.jpg",
+    "overview": "Gellert Grindelwald has escaped imprisonment and has begun gathering followers to his cause—elevating wizards above all non-magical beings. The only one capable of putting a stop to him is the wizard he once called his closest friend, Albus Dumbledore. However, Dumbledore will need to seek help from the wizard who had thwarted Grindelwald once before, his former student Newt Scamander, who agrees to help, unaware of the dangers that lie ahead. Lines are drawn as love and loyalty are tested, even among the truest friends and family, in an increasingly divided wizarding world.",
+    "vote_average": 6.8,
+    "vote_count": 11702,
+    "genre_ids": [
+     14,
+     12
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 338953,
+    "title": "Fantastic Beasts: The Secrets of Dumbledore",
+    "release_date": "2022-04-06",
+    "poster_path": "/3c5GNLB4yRSLBby0trHoA1DSQxQ.jpg",
+    "backdrop_path": "/zGLHX92Gk96O1DJvLil7ObJTbaL.jpg",
+    "overview": "Professor Albus Dumbledore knows the powerful, dark wizard Gellert Grindelwald is moving to seize control of the wizarding world. Unable to stop him alone, he entrusts magizoologist Newt Scamander to lead an intrepid team of wizards and witches. They soon encounter an array of old and new beasts as they clash with Grindelwald's growing legion of followers.",
+    "vote_average": 6.6,
+    "vote_count": 5277,
+    "genre_ids": [
+     14,
+     12
+    ],
+    "media_type": "movie"
+   }
+  ]
+ },
+ {
   "id": "franchise:10",
   "collectionId": 10,
   "title": "Star Wars",
@@ -1042,6 +1097,23 @@ export const FRANCHISES = [
     "media_type": "movie"
    },
    {
+    "id": 12180,
+    "title": "Star Wars: The Clone Wars",
+    "release_date": "2008-08-05",
+    "poster_path": "/iJQfixW818LUdSXlCDL3JZm0S0g.jpg",
+    "backdrop_path": "/eVA4ztLIuPEsokkgQ3NRt9rTRVh.jpg",
+    "overview": "As the Clone Wars sweep through the galaxy, Anakin Skywalker and his new Padawan learner Ahsoka Tano plunge into a dangerous mission to rescue the kidnapped son of crime lord Jabba the Hutt.",
+    "vote_average": 6.2,
+    "vote_count": 2287,
+    "genre_ids": [
+     16,
+     28,
+     878,
+     12
+    ],
+    "media_type": "movie"
+   },
+   {
     "id": 140607,
     "title": "Star Wars: The Force Awakens",
     "release_date": "2015-12-15",
@@ -1053,6 +1125,22 @@ export const FRANCHISES = [
     "genre_ids": [
      12,
      28,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 330459,
+    "title": "Rogue One: A Star Wars Story",
+    "release_date": "2016-12-14",
+    "poster_path": "/i0yw1mFbB7sNGHCs7EXZPzFkdA1.jpg",
+    "backdrop_path": "/6t8ES1d12OzWyCGxBeDYLHoaDrT.jpg",
+    "overview": "A rogue band of resistance fighters unite for a mission to steal the Death Star plans and bring a new hope to the galaxy.",
+    "vote_average": 7.5,
+    "vote_count": 16805,
+    "genre_ids": [
+     28,
+     12,
      878
     ],
     "media_type": "movie"
@@ -1070,6 +1158,22 @@ export const FRANCHISES = [
      12,
      28,
      878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 348350,
+    "title": "Solo: A Star Wars Story",
+    "release_date": "2018-05-15",
+    "poster_path": "/4oD6VEccFkorEBTEDXtpLAaz0Rl.jpg",
+    "backdrop_path": "/y9jGaGNn1dQDhPkhMumXaLize73.jpg",
+    "overview": "Through a series of daring escapades deep within a dark and dangerous criminal underworld, Han Solo meets his mighty future copilot Chewbacca and encounters the notorious gambler Lando Calrissian.",
+    "vote_average": 6.6,
+    "vote_count": 9543,
+    "genre_ids": [
+     878,
+     12,
+     28
     ],
     "media_type": "movie"
    },
@@ -1145,6 +1249,22 @@ export const FRANCHISES = [
      28,
      53,
      878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 624860,
+    "title": "The Matrix Resurrections",
+    "release_date": "2021-12-16",
+    "poster_path": "/8c4a8kE7PizaGQQnditMmI1xbRp.jpg",
+    "backdrop_path": "/eNI7PtK6DEYgZmHWP9gQNuff8pv.jpg",
+    "overview": "Plagued by strange memories, Neo's life takes an unexpected turn when he finds himself back inside the Matrix.",
+    "vote_average": 6.3,
+    "vote_count": 6754,
+    "genre_ids": [
+     878,
+     28,
+     12
     ],
     "media_type": "movie"
    }
@@ -1284,6 +1404,23 @@ export const FRANCHISES = [
     "genre_ids": [
      12,
      14,
+     28
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 839033,
+    "title": "The Lord of the Rings: The War of the Rohirrim",
+    "release_date": "2024-12-05",
+    "poster_path": "/23WCoDo6wzBfzbX7BGTNwVUqZfi.jpg",
+    "backdrop_path": "/ie8OSgIHEl6yQiGJ90dsyBWOpQA.jpg",
+    "overview": "A sudden attack by Wulf, a clever and traitorous lord of Rohan seeking vengeance for the death of his father, forces Helm Hammerhand, the King of Rohan, and his people to make a daring last stand in the ancient stronghold of the Hornburg.",
+    "vote_average": 6.5,
+    "vote_count": 952,
+    "genre_ids": [
+     16,
+     14,
+     12,
      28
     ],
     "media_type": "movie"
@@ -1670,6 +1807,22 @@ export const FRANCHISES = [
     "overview": "With the price on his head ever increasing, John Wick uncovers a path to defeating The High Table. But before he can earn his freedom, Wick must face off against a new enemy with powerful alliances across the globe and forces that turn old friends into foes.",
     "vote_average": 7.7,
     "vote_count": 8356,
+    "genre_ids": [
+     28,
+     53,
+     80
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 541671,
+    "title": "Ballerina",
+    "release_date": "2025-06-04",
+    "poster_path": "/2VUmvqsHb6cEtdfscEA6fqqVzLg.jpg",
+    "backdrop_path": "/1yktYsxkmUtUFTUnCAUaqG6FEiz.jpg",
+    "overview": "Taking place during the events of John Wick: Chapter 3 – Parabellum, Eve Macarro begins her training in the assassin traditions of the Ruska Roma.",
+    "vote_average": 7.3,
+    "vote_count": 3011,
     "genre_ids": [
      28,
      53,
@@ -2350,7 +2503,7 @@ export const FRANCHISES = [
     "backdrop_path": "/1K3JmSNUN8OpjYsCjc0Hy0SYxAb.jpg",
     "overview": "Armed with the astonishing ability to shrink in scale but increase in strength, master thief Scott Lang must embrace his inner-hero and help his mentor, Doctor Hank Pym, protect the secret behind his spectacular Ant-Man suit from a new generation of towering threats. Against seemingly insurmountable obstacles, Pym and Lang must plan and pull off a heist that will save the world.",
     "vote_average": 7.1,
-    "vote_count": 21300,
+    "vote_count": 21302,
     "genre_ids": [
      878,
      12,
@@ -2366,7 +2519,7 @@ export const FRANCHISES = [
     "backdrop_path": "/iYdgEUE2W2aJkgqfSjf1x3gFfuV.jpg",
     "overview": "Just when his time under house arrest is about to end, Scott Lang once again puts his freedom at risk to help Hope van Dyne and Dr. Hank Pym dive into the quantum realm and try to accomplish, against time and any chance of success, a very dangerous rescue mission.",
     "vote_average": 6.9,
-    "vote_count": 14554,
+    "vote_count": 14555,
     "genre_ids": [
      28,
      12,
@@ -2382,7 +2535,7 @@ export const FRANCHISES = [
     "backdrop_path": "/m8JTwHFwX7I7JY5fPe4SjqejWag.jpg",
     "overview": "Super-Hero partners Scott Lang and Hope van Dyne, along with with Hope's parents Janet van Dyne and Hank Pym, and Scott's daughter Cassie Lang, find themselves exploring the Quantum Realm, interacting with strange new creatures and embarking on an adventure that will push them beyond the limits of what they thought possible.",
     "vote_average": 6.2,
-    "vote_count": 6139,
+    "vote_count": 6140,
     "genre_ids": [
      28,
      12,
@@ -2449,6 +2602,22 @@ export const FRANCHISES = [
     "media_type": "movie"
    },
    {
+    "id": 2080,
+    "title": "X-Men Origins: Wolverine",
+    "release_date": "2009-04-28",
+    "poster_path": "/yj8LbTju1p7CUJg7US2unSBk33s.jpg",
+    "backdrop_path": "/p4GzAzjlL7lXIVGvayg7zvzGTSi.jpg",
+    "overview": "After seeking to live a normal life after 200 years, Logan sets out to avenge a death by undergoing the mutant Weapon X program and becoming Wolverine.",
+    "vote_average": 6.3,
+    "vote_count": 11576,
+    "genre_ids": [
+     12,
+     28,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
     "id": 49538,
     "title": "X-Men: First Class",
     "release_date": "2011-06-01",
@@ -2457,6 +2626,22 @@ export const FRANCHISES = [
     "overview": "Before Charles Xavier and Erik Lensherr took the names Professor X and Magneto, they were two young men discovering their powers for the first time. Before they were arch-enemies, they were closest of friends, working together with other mutants (some familiar, some new), to stop the greatest threat the world has ever known.",
     "vote_average": 7.3,
     "vote_count": 13903,
+    "genre_ids": [
+     28,
+     878,
+     12
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 76170,
+    "title": "The Wolverine",
+    "release_date": "2013-07-24",
+    "poster_path": "/t2wVAcoRlKvEIVSbiYDb8d0QqqS.jpg",
+    "backdrop_path": "/bEAQfLTykGg232kJogBlxRYaRqU.jpg",
+    "overview": "Wolverine faces his ultimate nemesis - and tests of his physical, emotional, and mortal limits - in a life-changing voyage to modern-day Japan.",
+    "vote_average": 6.4,
+    "vote_count": 10591,
     "genre_ids": [
      28,
      878,
@@ -2493,6 +2678,22 @@ export const FRANCHISES = [
      878,
      14,
      28
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 263115,
+    "title": "Logan",
+    "release_date": "2017-02-28",
+    "poster_path": "/fnbjcRDYn6YviCcePDnGdyAkYsB.jpg",
+    "backdrop_path": "/4DZxWNSAyksN6N3JkvpJ53Yq6zU.jpg",
+    "overview": "In the near future, a weary Logan cares for an ailing Professor X in a hideout on the Mexican border. But Logan's attempts to hide from the world and his legacy are upended when a young mutant arrives, pursued by dark forces.",
+    "vote_average": 7.8,
+    "vote_count": 20891,
+    "genre_ids": [
+     28,
+     18,
+     878
     ],
     "media_type": "movie"
    },
@@ -2575,7 +2776,7 @@ export const FRANCHISES = [
  {
   "id": "franchise:556",
   "collectionId": 556,
-  "title": "Spider-Man",
+  "title": "Spider-Man (Sam Raimi)",
   "overview": "A superhero film series based on the Marvel Comics character Spider-Man. The series is centered on Peter Parker, an academically gifted but socially inept freelance photographer who gets bitten by a genetically modified spider and gains spider-like abilities, all of which he uses to fight crime as a spider-masked vigilante, learning for himself that with great power comes great responsibility.",
   "backdrop_path": "/waZqriYTuBE3WqXI3SDGi3kfDQE.jpg",
   "poster_path": "/bp5PqLa06QA1LsELA1SsKZ008H7.jpg",
@@ -2741,7 +2942,7 @@ export const FRANCHISES = [
     "backdrop_path": "/pyTDtQCn5sG8gi2zkM5ZylSNmtJ.jpg",
     "overview": "Diamonds are stolen only to be sold again in the international market. James Bond infiltrates a smuggling mission to find out who's guilty. The mission takes him to Las Vegas where Bond meets his archenemy Blofeld.",
     "vote_average": 6.4,
-    "vote_count": 2452,
+    "vote_count": 2453,
     "genre_ids": [
      28,
      53
@@ -3029,7 +3230,7 @@ export const FRANCHISES = [
     "backdrop_path": "/aP6Hzwi2hqPGvX9sF4GliCy55yA.jpg",
     "overview": "A cryptic message from Bond’s past sends him on a trail to uncover a sinister organization. While M battles political forces to keep the secret service alive, Bond peels back the layers of deceit to reveal the terrible truth behind SPECTRE.",
     "vote_average": 6.6,
-    "vote_count": 11509,
+    "vote_count": 11510,
     "genre_ids": [
      28,
      12,
@@ -3045,7 +3246,7 @@ export const FRANCHISES = [
     "backdrop_path": "/bz7pwNGCbV576COsDcYN9MbEACC.jpg",
     "overview": "Bond has left active service and is enjoying a tranquil life in Jamaica. His peace is short-lived when his old friend Felix Leiter from the CIA turns up asking for help. The mission to rescue a kidnapped scientist turns out to be far more treacherous than expected, leading Bond onto the trail of a mysterious villain armed with dangerous new technology.",
     "vote_average": 7.3,
-    "vote_count": 7417,
+    "vote_count": 7419,
     "genre_ids": [
      28,
      53,
@@ -3375,6 +3576,86 @@ export const FRANCHISES = [
      28
     ],
     "media_type": "movie"
+   },
+   {
+    "id": 395,
+    "title": "AVP: Alien vs. Predator",
+    "release_date": "2004-08-12",
+    "poster_path": "/2DKoPom57PVtJWcJlq7bS7JpahU.jpg",
+    "backdrop_path": "/xvq1RLaiwSdHwPHe7WUhqZa1rCA.jpg",
+    "overview": "When scientists discover something near Antarctica that appears to be a buried Pyramid, they send a research team out to investigate. Little do they know that they are about to step into a hunting ground where Aliens are grown as sport for the Predator race.",
+    "vote_average": 6,
+    "vote_count": 5159,
+    "genre_ids": [
+     12,
+     878,
+     28,
+     27
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 440,
+    "title": "Aliens vs Predator: Requiem",
+    "release_date": "2007-12-25",
+    "poster_path": "/5iTwPDNtvK6ZZF607BHBbU3HO0B.jpg",
+    "backdrop_path": "/jXntuh47VtKLeoyBQ268rv24Igw.jpg",
+    "overview": "After a horrifying PredAlien crash-lands near a small Colorado town, killing everyone it encounters and producing countless Alien offspring, a lone Predator arrives to \"clean up\" the infestation.",
+    "vote_average": 5.2,
+    "vote_count": 3452,
+    "genre_ids": [
+     28,
+     878,
+     53,
+     27
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 70981,
+    "title": "Prometheus",
+    "release_date": "2012-05-30",
+    "poster_path": "/qsYQflQhOuhDpQ0W2aOcwqgDAeI.jpg",
+    "backdrop_path": "/qDG5SlGkWNsjSJWiGTBMFI8DpzA.jpg",
+    "overview": "A team of explorers discover a clue to the origins of mankind on Earth, leading them on a journey to the darkest corners of the universe. There, they must fight a terrifying battle to save the future of the human race.",
+    "vote_average": 6.6,
+    "vote_count": 13676,
+    "genre_ids": [
+     878,
+     9648,
+     27
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 126889,
+    "title": "Alien: Covenant",
+    "release_date": "2017-05-09",
+    "poster_path": "/zecMELPbU5YMQpC81Z8ImaaXuf9.jpg",
+    "backdrop_path": "/iXXPaQPfQowpQ5UvhsHLj9BgFhe.jpg",
+    "overview": "The crew of the colony ship Covenant, bound for a remote planet on the far side of the galaxy, discovers what they think is an uncharted paradise but is actually a dark, dangerous world.",
+    "vote_average": 6.2,
+    "vote_count": 9703,
+    "genre_ids": [
+     27,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 945961,
+    "title": "Alien: Romulus",
+    "release_date": "2024-08-13",
+    "poster_path": "/2uSWRTtCG336nuBiG8jOTEUKSy8.jpg",
+    "backdrop_path": "/iYqSQaWDttQIQzsxg9xHyg0bttG.jpg",
+    "overview": "While scavenging the deep ends of a derelict space station, a group of young space colonizers come face to face with the most terrifying life form in the universe.",
+    "vote_average": 7.2,
+    "vote_count": 4931,
+    "genre_ids": [
+     27,
+     878
+    ],
+    "media_type": "movie"
    }
   ]
  },
@@ -3416,6 +3697,40 @@ export const FRANCHISES = [
      878,
      28,
      53
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 395,
+    "title": "AVP: Alien vs. Predator",
+    "release_date": "2004-08-12",
+    "poster_path": "/2DKoPom57PVtJWcJlq7bS7JpahU.jpg",
+    "backdrop_path": "/xvq1RLaiwSdHwPHe7WUhqZa1rCA.jpg",
+    "overview": "When scientists discover something near Antarctica that appears to be a buried Pyramid, they send a research team out to investigate. Little do they know that they are about to step into a hunting ground where Aliens are grown as sport for the Predator race.",
+    "vote_average": 6,
+    "vote_count": 5159,
+    "genre_ids": [
+     12,
+     878,
+     28,
+     27
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 440,
+    "title": "Aliens vs Predator: Requiem",
+    "release_date": "2007-12-25",
+    "poster_path": "/5iTwPDNtvK6ZZF607BHBbU3HO0B.jpg",
+    "backdrop_path": "/jXntuh47VtKLeoyBQ268rv24Igw.jpg",
+    "overview": "After a horrifying PredAlien crash-lands near a small Colorado town, killing everyone it encounters and producing countless Alien offspring, a lone Predator arrives to \"clean up\" the infestation.",
+    "vote_average": 5.2,
+    "vote_count": 3452,
+    "genre_ids": [
+     28,
+     878,
+     53,
+     27
     ],
     "media_type": "movie"
    },
@@ -3464,6 +3779,23 @@ export const FRANCHISES = [
      53,
      28,
      878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1376434,
+    "title": "Predator: Killer of Killers",
+    "release_date": "2025-06-05",
+    "poster_path": "/2XDQa6EmFHSA37j1t0w88vpWqj9.jpg",
+    "backdrop_path": "/3AGZKVr2DPT9H53gYtkSEC1tK1E.jpg",
+    "overview": "While three of the fiercest warriors in human history—a Viking raider, a ninja in feudal Japan, and a WWII pilot—are killers in their own right, they are merely prey for their new opponent: the ultimate killer of killers.",
+    "vote_average": 7.8,
+    "vote_count": 1348,
+    "genre_ids": [
+     16,
+     28,
+     878,
+     53
     ],
     "media_type": "movie"
    },
@@ -3647,6 +3979,101 @@ export const FRANCHISES = [
   "poster_path": "/afGkMC4HF0YtXYNkyfCgTDLFe6m.jpg",
   "parts": [
    {
+    "id": 871,
+    "title": "Planet of the Apes",
+    "release_date": "1968-02-07",
+    "poster_path": "/2r9iKnlSYEk4daQadsXfcjHfIjQ.jpg",
+    "backdrop_path": "/5t6ImiTApy90YJ2QgYOCkjeav58.jpg",
+    "overview": "Astronaut Taylor crash lands on a distant planet ruled by apes who use a primitive race of humans for experimentation and sport. Soon Taylor finds himself among the hunted, his life in the hands of a benevolent chimpanzee scientist.",
+    "vote_average": 7.7,
+    "vote_count": 4130,
+    "genre_ids": [
+     878,
+     12,
+     18,
+     28
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1685,
+    "title": "Beneath the Planet of the Apes",
+    "release_date": "1970-04-23",
+    "poster_path": "/szHCeYwi4ubewuYnlnz0YGqWnQC.jpg",
+    "backdrop_path": "/gxz2lWaekGbVu8ODCi2qeZyBX1g.jpg",
+    "overview": "The sole survivor of an interplanetary rescue mission lands on the planet of the apes, and uncovers a horrible secret beneath the surface.",
+    "vote_average": 6.2,
+    "vote_count": 1527,
+    "genre_ids": [
+     12,
+     878,
+     9648
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1687,
+    "title": "Escape from the Planet of the Apes",
+    "release_date": "1971-05-20",
+    "poster_path": "/vqD7qjBRizY7sPVIHbFRUZwgEXL.jpg",
+    "backdrop_path": "/7GVWNxz7fN0yK61NGSPjBWZPt1J.jpg",
+    "overview": "The world is shocked by the appearance of three talking chimpanzees, who arrived mysteriously in a spacecraft. Intrigued by their intelligence, humans use them for research - until the apes attempt to escape.",
+    "vote_average": 6.4,
+    "vote_count": 1280,
+    "genre_ids": [
+     28,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1688,
+    "title": "Conquest of the Planet of the Apes",
+    "release_date": "1972-06-29",
+    "poster_path": "/tzKZRY2opw5MruSkevffgT5ocun.jpg",
+    "backdrop_path": "/3yazPBvuE1u07ljHFTPRaK2AHOt.jpg",
+    "overview": "In a futuristic world that has embraced ape slavery, a chimpanzee named Caesar resurfaces after almost twenty years of hiding from the authorities, and prepares for a revolt against humanity.",
+    "vote_average": 6.2,
+    "vote_count": 1131,
+    "genre_ids": [
+     28,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1705,
+    "title": "Battle for the Planet of the Apes",
+    "release_date": "1973-06-15",
+    "poster_path": "/dP5dYjLp5p2CG103cJMio4Nj29d.jpg",
+    "backdrop_path": "/3ap6vhJN7q87mziDP6EltPGQ0hW.jpg",
+    "overview": "The fifth and final episode in the Planet of the Apes series. After the collapse of human civilization, a community of intelligent apes led by Caesar lives in harmony with a group of humans. Gorilla General Aldo tries to cause an ape civil war and a community of human mutants who live beneath a destroyed city try to conquer those whom they perceive as enemies. All leading to the finale.",
+    "vote_average": 5.7,
+    "vote_count": 1103,
+    "genre_ids": [
+     28,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 869,
+    "title": "Planet of the Apes",
+    "release_date": "2001-07-26",
+    "poster_path": "/3ZWsuP5rExMSji7erxnb1P5SK6F.jpg",
+    "backdrop_path": "/1N0MYYFvYwpM5fi3mjw4150ReoR.jpg",
+    "overview": "After a spectacular crash-landing on an uncharted planet, brash astronaut Leo Davidson finds himself trapped in a savage world where talking apes dominate the human race. Desperate to find a way home, Leo must evade the invincible gorilla army led by Ruthless General Thade.",
+    "vote_average": 5.8,
+    "vote_count": 4562,
+    "genre_ids": [
+     53,
+     878,
+     28,
+     12
+    ],
+    "media_type": "movie"
+   },
+   {
     "id": 61791,
     "title": "Rise of the Planet of the Apes",
     "release_date": "2011-08-03",
@@ -3801,6 +4228,55 @@ export const FRANCHISES = [
      878
     ],
     "media_type": "movie"
+   },
+   {
+    "id": 424783,
+    "title": "Bumblebee",
+    "release_date": "2018-11-22",
+    "poster_path": "/fw02ONlDhrYjTSZV8XO6hhU3ds3.jpg",
+    "backdrop_path": "/hMANgfPHR1tRObNp2oPiOi9mMlz.jpg",
+    "overview": "On the run in the year 1987, Bumblebee finds refuge in a junkyard in a small Californian beach town. Charlie, on the cusp of turning 18 and trying to find her place in the world, discovers Bumblebee, battle-scarred and broken.  When Charlie revives him, she quickly learns this is no ordinary yellow VW bug.",
+    "vote_average": 6.7,
+    "vote_count": 6860,
+    "genre_ids": [
+     28,
+     12,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 667538,
+    "title": "Transformers: Rise of the Beasts",
+    "release_date": "2023-06-06",
+    "poster_path": "/gPbM0MK8CP8A174rmUwGsADNYKD.jpg",
+    "backdrop_path": "/2vFuG6bWGyQUzYS9d69E5l85nIz.jpg",
+    "overview": "When a new threat capable of destroying the entire planet emerges, Optimus Prime and the Autobots must team up with a powerful faction known as the Maximals. With the fate of humanity hanging in the balance, humans Noah and Elena will do whatever it takes to help the Transformers as they engage in the ultimate battle to save Earth.",
+    "vote_average": 7.2,
+    "vote_count": 5449,
+    "genre_ids": [
+     878,
+     12,
+     28
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 698687,
+    "title": "Transformers One",
+    "release_date": "2024-09-11",
+    "poster_path": "/iRCgqpdVE4wyLQvGYU3ZP7pAtUc.jpg",
+    "backdrop_path": "/cMfokHWle5lfCreoV08cbmkKv6G.jpg",
+    "overview": "The untold origin story of Optimus Prime and Megatron, better known as sworn enemies, but once were friends bonded like brothers who changed the fate of Cybertron forever.",
+    "vote_average": 8,
+    "vote_count": 1791,
+    "genre_ids": [
+     16,
+     878,
+     12,
+     10751
+    ],
+    "media_type": "movie"
    }
   ]
  },
@@ -3848,6 +4324,23 @@ export const FRANCHISES = [
     "media_type": "movie"
    },
    {
+    "id": 211672,
+    "title": "Minions",
+    "release_date": "2015-06-17",
+    "poster_path": "/dr02BdCNAUPVU07aOodwPYv6HCf.jpg",
+    "backdrop_path": "/wKrxeY6lbu7KFBsWVcMH6M8avwr.jpg",
+    "overview": "Minions Stuart, Kevin and Bob are recruited by Scarlet Overkill, a super-villain who, alongside her inventor husband Herb, hatches a plot to take over the world.",
+    "vote_average": 6.4,
+    "vote_count": 11337,
+    "genre_ids": [
+     10751,
+     16,
+     12,
+     35
+    ],
+    "media_type": "movie"
+   },
+   {
     "id": 324852,
     "title": "Despicable Me 3",
     "release_date": "2017-06-15",
@@ -3866,6 +4359,24 @@ export const FRANCHISES = [
     "media_type": "movie"
    },
    {
+    "id": 438148,
+    "title": "Minions: The Rise of Gru",
+    "release_date": "2022-06-29",
+    "poster_path": "/wKiOkZTN9lUUUNZLmtnwubZYONg.jpg",
+    "backdrop_path": "/wZS4xSfPtk1NPQnx9zsT5R2WhCu.jpg",
+    "overview": "A fanboy of a supervillain supergroup known as the Vicious 6, Gru hatches a plan to become evil enough to join them, with the backup of his followers, the Minions.",
+    "vote_average": 7.3,
+    "vote_count": 4197,
+    "genre_ids": [
+     16,
+     35,
+     80,
+     878,
+     10751
+    ],
+    "media_type": "movie"
+   },
+   {
     "id": 519182,
     "title": "Despicable Me 4",
     "release_date": "2024-06-20",
@@ -3880,6 +4391,24 @@ export const FRANCHISES = [
      28,
      878,
      10751
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1315772,
+    "title": "Minions & Monsters",
+    "release_date": "2026-06-24",
+    "poster_path": "/4LwvU9SZc8QQzW1X1FAPhNbXnEU.jpg",
+    "backdrop_path": "/kkcwhgSFd81QDlXo8ytrpHPQjhy.jpg",
+    "overview": "This is the rambunctious, ridiculous and totally true story of how the Minions conquered Hollywood, became movie stars, lost everything, unleashed monsters onto the world and then banded together to try and save the planet from the mayhem they had just created.",
+    "vote_average": 7.6,
+    "vote_count": 1202,
+    "genre_ids": [
+     12,
+     16,
+     35,
+     10751,
+     14
     ],
     "media_type": "movie"
    }
@@ -4136,6 +4665,23 @@ export const FRANCHISES = [
      12
     ],
     "media_type": "movie"
+   },
+   {
+    "id": 1087192,
+    "title": "How to Train Your Dragon",
+    "release_date": "2025-06-06",
+    "poster_path": "/53dsJ3oEnBhTBVMigWJ9tkA5bzJ.jpg",
+    "backdrop_path": "/8J6UlIFcU7eZfq9iCLbgc8Auklg.jpg",
+    "overview": "On the rugged isle of Berk, where Vikings and dragons have been bitter enemies for generations, Hiccup stands apart, defying centuries of tradition when he befriends Toothless, a feared Night Fury dragon. Their unlikely bond reveals the true nature of dragons, challenging the very foundations of Viking society.",
+    "vote_average": 7.9,
+    "vote_count": 3150,
+    "genre_ids": [
+     14,
+     10751,
+     28,
+     12
+    ],
+    "media_type": "movie"
    }
   ]
  },
@@ -4195,6 +4741,23 @@ export const FRANCHISES = [
      10751,
      35,
      12
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 270946,
+    "title": "Penguins of Madagascar",
+    "release_date": "2014-11-22",
+    "poster_path": "/dXbpNrPDZDMEbujFoOxmMNQVMHa.jpg",
+    "backdrop_path": "/msnknPOg9dx86b0YozXOFP8PgBI.jpg",
+    "overview": "Skipper, Kowalski, Rico and Private join forces with undercover organization The North Wind to stop the villainous Dr. Octavius Brine from destroying the world as we know it.",
+    "vote_average": 6.5,
+    "vote_count": 4591,
+    "genre_ids": [
+     10751,
+     16,
+     12,
+     35
     ],
     "media_type": "movie"
    }
@@ -4331,6 +4894,21 @@ export const FRANCHISES = [
      28,
      12,
      878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 695721,
+    "title": "The Hunger Games: The Ballad of Songbirds & Snakes",
+    "release_date": "2023-11-15",
+    "poster_path": "/mBaXZ95R2OxueZhvQbcEWy2DqyO.jpg",
+    "backdrop_path": "/bk1TitfD4YIGrM6AvljonMCtfnl.jpg",
+    "overview": "64 years before he becomes the tyrannical president of Panem, Coriolanus Snow sees a chance for a change in fortunes when he mentors Lucy Gray Baird, the female tribute from District 12.",
+    "vote_average": 7,
+    "vote_count": 3702,
+    "genre_ids": [
+     878,
+     28
     ],
     "media_type": "movie"
    }
@@ -4564,7 +5142,7 @@ export const FRANCHISES = [
     "backdrop_path": "/2sE6hrwfn9IV7eDlMvpIb9q1EWy.jpg",
     "overview": "College student Beca knows she does not want to be part of a clique, but that's exactly where she finds herself after arriving at her new school. Thrust in among mean gals, nice gals and just plain weird gals, Beca finds that the only thing they have in common is how well they sing together. She takes the women of the group out of their comfort zone of traditional arrangements and into a world of amazing harmonic combinations in a fight to the top of college music competitions.",
     "vote_average": 7.3,
-    "vote_count": 7007,
+    "vote_count": 7009,
     "genre_ids": [
      35,
      10402,
@@ -5085,6 +5663,34 @@ export const FRANCHISES = [
     "media_type": "movie"
    },
    {
+    "id": 2082,
+    "title": "Halloween",
+    "release_date": "2007-08-31",
+    "poster_path": "/cD8JrfSEI4j7WVnKM1GdiYzMoUh.jpg",
+    "backdrop_path": "/uEnA2AKtrpX4LCZ98hBLwVkhJEd.jpg",
+    "overview": "The early years of young Michael Myers and the events leading up to his fateful Halloween night murder rampage in the quiet town of Haddonfield, Illinois.",
+    "vote_average": 6.2,
+    "vote_count": 2641,
+    "genre_ids": [
+     27
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 24150,
+    "title": "Halloween II",
+    "release_date": "2009-08-28",
+    "poster_path": "/vSHPM4LQDpWdQrD5KZWK6wNqSOD.jpg",
+    "backdrop_path": "/mGHfOrb2MDOvgeFb4pQVeWH6adg.jpg",
+    "overview": "Laurie Strode struggles to come to terms with her brother Michael's deadly return to Haddonfield, Illinois. Meanwhile, Michael prepares for another reunion with his sister.",
+    "vote_average": 5.3,
+    "vote_count": 1578,
+    "genre_ids": [
+     27
+    ],
+    "media_type": "movie"
+   },
+   {
     "id": 424139,
     "title": "Halloween",
     "release_date": "2018-10-18",
@@ -5246,7 +5852,7 @@ export const FRANCHISES = [
     "backdrop_path": "/8J7J7CBmapmcMaxsn9KMiaHzOU2.jpg",
     "overview": "When a virus leaks from a top-secret facility, turning all resident researchers into ravenous zombies and their lab animals into mutated hounds from hell, the government sends in an elite military task force to contain the outbreak.",
     "vote_average": 6.7,
-    "vote_count": 7203,
+    "vote_count": 7206,
     "genre_ids": [
      27,
      28,
@@ -5262,7 +5868,7 @@ export const FRANCHISES = [
     "backdrop_path": "/5PJP3NaiH9ZJRzrEHLeqSY5rNxb.jpg",
     "overview": "As the city is locked down under quarantine, Alice finds out that the people that died from the previous incident at the Umbrella Corporation have turned into zombies. She then joins a small band of elite soldiers, who are enlisted to rescue the missing daughter of the creator of the mutating T-virus.  Once lack of luck and resources happen, they begin to wage an exhilarating battle to survive and escape before the Umbrella Corporation erases its experiment from the face of the earth.",
     "vote_average": 6.4,
-    "vote_count": 4967,
+    "vote_count": 4968,
     "genre_ids": [
      27,
      28,
@@ -5327,11 +5933,43 @@ export const FRANCHISES = [
     "backdrop_path": "/sQRfWdDxH53Vk7ZJ1UqzcaBHocO.jpg",
     "overview": "Picking up immediately after the events in Resident Evil: Retribution, Alice is the only survivor of what was meant to be humanity's final stand against the undead. Now, she must return to where the nightmare began - The Hive in Raccoon City, where the Umbrella Corporation is gathering its forces for a final strike against the only remaining survivors of the apocalypse.",
     "vote_average": 6.1,
-    "vote_count": 3614,
+    "vote_count": 3616,
     "genre_ids": [
      28,
      27,
      878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 460458,
+    "title": "Resident Evil: Welcome to Raccoon City",
+    "release_date": "2021-11-24",
+    "poster_path": "/bArhvjRHl535XMaSh9VjInF2mSZ.jpg",
+    "backdrop_path": "/wYtEvBmpBRXPdwGgr1gcWiwJSI7.jpg",
+    "overview": "Once the booming home of pharmaceutical giant Umbrella Corporation, Raccoon City is now a dying Midwestern town. The company’s exodus left the city a wasteland…with great evil brewing below the surface. When that evil is unleashed, the townspeople are forever…changed…and a small group of survivors must work together to uncover the truth behind Umbrella and make it through the night.",
+    "vote_average": 5.9,
+    "vote_count": 2829,
+    "genre_ids": [
+     28,
+     27,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1423191,
+    "title": "Resident Evil",
+    "release_date": "2026-09-16",
+    "poster_path": "/i7UyjfPio0VFHB9rBUZSFyhOoM8.jpg",
+    "backdrop_path": "/3icyRAqgakNcQn6aDVz9libFmBA.jpg",
+    "overview": "Medical courier Bryan unwittingly finds himself fighting for survival as one fateful, horrifying night collapses around him in chaos.",
+    "vote_average": 7.3,
+    "vote_count": 644,
+    "genre_ids": [
+     27,
+     878,
+     12
     ],
     "media_type": "movie"
    }
@@ -5436,6 +6074,22 @@ export const FRANCHISES = [
   "poster_path": "/oHUHccvraYF8lYp6BxRoujRtH8Q.jpg",
   "parts": [
    {
+    "id": 299,
+    "title": "Ocean's Eleven",
+    "release_date": "1960-08-10",
+    "poster_path": "/A4R6u7SidBPVXMVzGSysCiRGTRz.jpg",
+    "backdrop_path": "/vJLSt7NvYP85nR4XJ8CxnMadf6G.jpg",
+    "overview": "Danny Ocean and his gang attempt to rob the five biggest casinos in Las Vegas in one night.",
+    "vote_average": 6.4,
+    "vote_count": 424,
+    "genre_ids": [
+     80,
+     35,
+     53
+    ],
+    "media_type": "movie"
+   },
+   {
     "id": 161,
     "title": "Ocean's Eleven",
     "release_date": "2001-12-07",
@@ -5477,6 +6131,22 @@ export const FRANCHISES = [
     "genre_ids": [
      80,
      53
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 402900,
+    "title": "Ocean's Eight",
+    "release_date": "2018-06-07",
+    "poster_path": "/MvYpKlpFukTivnlBhizGbkAe3v.jpg",
+    "backdrop_path": "/scQf03Fm3jeyv4FH04qvi4fp4wh.jpg",
+    "overview": "Debbie Ocean, a criminal mastermind, gathers a crew of female thieves to pull off the heist of the century at New York's annual Met Gala.",
+    "vote_average": 6.9,
+    "vote_count": 9014,
+    "genre_ids": [
+     80,
+     35,
+     28
     ],
     "media_type": "movie"
    }
@@ -5977,6 +6647,23 @@ export const FRANCHISES = [
      878
     ],
     "media_type": "movie"
+   },
+   {
+    "id": 479455,
+    "title": "Men in Black: International",
+    "release_date": "2019-06-12",
+    "poster_path": "/dPrUPFcgLfNbmDL8V69vcrTyEfb.jpg",
+    "backdrop_path": "/2FYzxgLNuNVwncilzUeCGbOQzP7.jpg",
+    "overview": "The Men in Black have always protected the Earth from the scum of the universe. In this new adventure, they tackle their biggest, most global threat to date: a mole in the Men in Black organization.",
+    "vote_average": 5.9,
+    "vote_count": 5533,
+    "genre_ids": [
+     35,
+     878,
+     28,
+     12
+    ],
+    "media_type": "movie"
    }
   ]
  },
@@ -6015,6 +6702,22 @@ export const FRANCHISES = [
     "genre_ids": [
      35,
      14
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 43074,
+    "title": "Ghostbusters",
+    "release_date": "2016-07-14",
+    "poster_path": "/wJmWliwXIgZOCCVOcGRBhce7xPS.jpg",
+    "backdrop_path": "/3KDHaahgXlUhmpXzoRZrLc7QSBM.jpg",
+    "overview": "Following a ghost invasion of Manhattan, paranormal enthusiasts Erin Gilbert and Abby Yates, nuclear engineer Jillian Holtzmann, and subway worker Patty Tolan band together to stop the otherworldly threat.",
+    "vote_average": 5.3,
+    "vote_count": 6922,
+    "genre_ids": [
+     28,
+     14,
+     35
     ],
     "media_type": "movie"
    },
@@ -6201,7 +6904,7 @@ export const FRANCHISES = [
     "backdrop_path": "/ih2xVgeMS8R5WUetYE8Mr9hVTlB.jpg",
     "overview": "Eight-year-old Kevin McCallister makes the most of the situation after his family unwittingly leaves him behind when they go on Christmas vacation. When thieves try to break into his home, he puts up a fight like no other.",
     "vote_average": 7.5,
-    "vote_count": 12893,
+    "vote_count": 12894,
     "genre_ids": [
      35,
      10751
@@ -6216,7 +6919,7 @@ export const FRANCHISES = [
     "backdrop_path": "/8fnYJPoXxwAN4valDLgz2whMGTH.jpg",
     "overview": "Instead of flying to Florida with his folks, Kevin ends up alone in New York, where he gets a hotel room with his dad's credit card—despite problems from a clerk and meddling bellboy. But when Kevin runs into his old nemeses, the Wet Bandits, he's determined to foil their plans to rob a toy store on Christmas Eve.",
     "vote_average": 6.8,
-    "vote_count": 10929,
+    "vote_count": 10930,
     "genre_ids": [
      35,
      10751,
@@ -6252,6 +6955,21 @@ export const FRANCHISES = [
      35,
      10751,
      10770
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 654974,
+    "title": "Home Sweet Home Alone",
+    "release_date": "2021-11-11",
+    "poster_path": "/fP3VvqUjEBjawxZHL4sYCq2ZdJD.jpg",
+    "backdrop_path": "/a8tH0jl37366bLVyPB08dncgqqd.jpg",
+    "overview": "After being left at home by himself for the holidays, 10-year-old Max Mercer must work to defend his home from a married couple who tries to steal back a valuable heirloom.",
+    "vote_average": 4.8,
+    "vote_count": 722,
+    "genre_ids": [
+     10751,
+     35
     ],
     "media_type": "movie"
    }
@@ -6688,6 +7406,122 @@ export const FRANCHISES = [
      53
     ],
     "media_type": "movie"
+   },
+   {
+    "id": 193,
+    "title": "Star Trek: Generations",
+    "release_date": "1994-11-18",
+    "poster_path": "/gh0ZZRwSmlzEZTIZee3ZCN9Jssx.jpg",
+    "backdrop_path": "/mNdsbVuRdsyo8eitW2IBW2BWRkU.jpg",
+    "overview": "Captain Jean-Luc Picard and the crew of the Enterprise-D find themselves at odds with the renegade scientist Soran who is destroying entire star systems. Only one man can help Picard stop Soran's scheme...and he's been dead for seventy-eight years.",
+    "vote_average": 6.5,
+    "vote_count": 1566,
+    "genre_ids": [
+     878,
+     28,
+     12,
+     53
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 199,
+    "title": "Star Trek: First Contact",
+    "release_date": "1996-11-22",
+    "poster_path": "/iqhHe893Vcf07jNkNQ31tu85dKG.jpg",
+    "backdrop_path": "/wygUDDRNpeKUnkekRGeLCZM93tA.jpg",
+    "overview": "The Borg, a relentless race of cyborgs, are on a direct course for Earth. Violating orders to stay away from the battle, Captain Picard and the crew of the newly-commissioned USS Enterprise E pursue the Borg back in time to prevent the invaders from changing Federation history and assimilating the galaxy.",
+    "vote_average": 7.3,
+    "vote_count": 2041,
+    "genre_ids": [
+     878,
+     28,
+     12,
+     53
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 200,
+    "title": "Star Trek: Insurrection",
+    "release_date": "1998-12-11",
+    "poster_path": "/xQCMAHeg5M9HpDIqanYbWdr4brB.jpg",
+    "backdrop_path": "/vsjuHP9RQZJgYUvvSlO3mjJpXkq.jpg",
+    "overview": "When an alien race and factions within Starfleet attempt to take over a planet that has \"regenerative\" properties, it falls upon Captain Picard and the crew of the Enterprise to defend the planet's people as well as the very ideals upon which the Federation itself was founded.",
+    "vote_average": 6.5,
+    "vote_count": 1413,
+    "genre_ids": [
+     878,
+     28,
+     12,
+     53
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 201,
+    "title": "Star Trek: Nemesis",
+    "release_date": "2002-12-13",
+    "poster_path": "/cldAwhvBmOv9jrd3bXWuqRHoXyq.jpg",
+    "backdrop_path": "/6z9w8eidKWDDXwZNSVNaRolAYEP.jpg",
+    "overview": "En route to the honeymoon of William Riker to Deanna Troi on her home planet of Betazed, Captain Jean-Luc Picard and the crew of the U.S.S. Enterprise receives word from Starfleet that a coup has resulted in the installation of a new Romulan political leader, Shinzon, who claims to seek peace with the human-backed United Federation of Planets. Once in enemy territory, the captain and his crew make a startling discovery: Shinzon is human, a slave from the Romulan sister planet of Remus, and has a secret, shocking relationship to Picard himself.",
+    "vote_average": 6.3,
+    "vote_count": 1657,
+    "genre_ids": [
+     878,
+     28,
+     12,
+     53
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 13475,
+    "title": "Star Trek",
+    "release_date": "2009-05-06",
+    "poster_path": "/lV5OpzAss1z06YNagOVap1I35mH.jpg",
+    "backdrop_path": "/cqXEwYFcwyKPZCKl1jAPaG3cMsl.jpg",
+    "overview": "The fate of the galaxy rests in the hands of bitter rivals. One, James Kirk, is a delinquent, thrill-seeking Iowa farm boy. The other, Spock, a Vulcan, was raised in a logic-based society that rejects all emotion. As fiery instinct clashes with calm reason, their unlikely but powerful partnership is the only thing capable of leading their crew through unimaginable danger, boldly going where no one has gone before. The human adventure has begun again.",
+    "vote_average": 7.4,
+    "vote_count": 10753,
+    "genre_ids": [
+     878,
+     28,
+     12
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 54138,
+    "title": "Star Trek Into Darkness",
+    "release_date": "2013-05-05",
+    "poster_path": "/Aim3kVNh1MPIxPEFeJrl9e9Uf1a.jpg",
+    "backdrop_path": "/npDrIM6ZbuD7nUxI7ZzNBxs4IRF.jpg",
+    "overview": "When the crew of the Enterprise is called back home, they find an unstoppable force of terror from within their own organization has detonated the fleet and everything it stands for, leaving our world in a state of crisis.  With a personal score to settle, Captain Kirk leads a manhunt to a war-zone world to capture a one man weapon of mass destruction. As our heroes are propelled into an epic chess game of life and death, love will be challenged, friendships will be torn apart, and sacrifices must be made for the only family Kirk has left: his crew.",
+    "vote_average": 7.3,
+    "vote_count": 9898,
+    "genre_ids": [
+     28,
+     12,
+     878
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 188927,
+    "title": "Star Trek Beyond",
+    "release_date": "2016-07-07",
+    "poster_path": "/wI5VghYNYLktDRPUa5rrVcVA1h7.jpg",
+    "backdrop_path": "/nkr43pY7ZzUt9b0kDFwJLVuDP8G.jpg",
+    "overview": "The USS Enterprise crew explores the furthest reaches of uncharted space, where they encounter a mysterious new enemy who puts them and everything the Federation stands for to the test.",
+    "vote_average": 6.8,
+    "vote_count": 7281,
+    "genre_ids": [
+     28,
+     12,
+     878
+    ],
+    "media_type": "movie"
    }
   ]
  },
@@ -7092,6 +7926,49 @@ export const FRANCHISES = [
      14,
      27,
      35
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 109428,
+    "title": "Evil Dead",
+    "release_date": "2013-04-05",
+    "poster_path": "/1gDV0Lm9y8ufIKzyf0h0GBgb9Zj.jpg",
+    "backdrop_path": "/6RDgtEBzjuF7W25DVziXRABchpX.jpg",
+    "overview": "Mia, a drug addict, is determined to kick the habit. To that end, she asks her brother, David, his girlfriend, Natalie and their friends Olivia and Eric to accompany her to their family's remote forest cabin to help her through withdrawal. Eric finds a mysterious Book of the Dead at the cabin and reads aloud from it, awakening an ancient demon. All hell breaks loose when the malevolent entity possesses Mia.",
+    "vote_average": 6.7,
+    "vote_count": 5377,
+    "genre_ids": [
+     27
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 713704,
+    "title": "Evil Dead Rise",
+    "release_date": "2023-04-12",
+    "poster_path": "/5ik4ATKmNtmJU6AYD0bLm56BCVM.jpg",
+    "backdrop_path": "/7bWxAsNPv9CXHOhZbJVlj2KxgfP.jpg",
+    "overview": "A reunion between two estranged sisters gets cut short by the rise of flesh-possessing demons, thrusting them into a primal battle for survival as they face the most nightmarish version of family imaginable.",
+    "vote_average": 7,
+    "vote_count": 4026,
+    "genre_ids": [
+     27,
+     53
+    ],
+    "media_type": "movie"
+   },
+   {
+    "id": 1212763,
+    "title": "Evil Dead Burn",
+    "release_date": "2026-07-07",
+    "poster_path": "/uRxrNXQWkHoENm3nwVOZDYSCx2F.jpg",
+    "backdrop_path": "/o0jkkpcN81QqSl8DMLScBCXyUH9.jpg",
+    "overview": "After her husband's abrupt death, Alice seeks solace with his remaining family — descendants of a leading researcher on demonic possession. As her in-laws transform one by one into creatures that feed on fear, she comes to discover that the vows she took in life survive even in death.",
+    "vote_average": 7.7,
+    "vote_count": 1629,
+    "genre_ids": [
+     27
     ],
     "media_type": "movie"
    }

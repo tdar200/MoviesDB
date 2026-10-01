@@ -79,3 +79,26 @@ test('franchises.js: every franchise is well formed (a wrong regeneration must f
     });
   }
 });
+
+// ---- Audited against an independent TMDB title search (TMDB's own collections are incomplete: sequels left unlinked, series
+// split in several collections). These are the counts the audit settled on; a regeneration that loses a film must fail here.
+test('franchises.js: audited film counts and the films TMDB never linked (The Matrix is 4, not 3)', () => {
+  const by = Object.fromEntries(FRANCHISES.map(f => [f.title, f]));
+  const counts = { 'The Matrix': 4, 'Star Wars': 12, 'Harry Potter': 8, 'Fantastic Beasts': 3, 'Shrek': 4, 'The Lord of the Rings': 4, 'The Hobbit': 3, 'Star Trek': 13,
+    'Halloween': 13, 'Planet of the Apes': 10, 'X-Men': 10, 'Alien': 9, 'Predator': 9, 'Transformers': 8, 'Despicable Me': 7, 'Resident Evil': 8, "Ocean's": 5,
+    'Evil Dead': 6, 'John Wick': 5, 'Marvel Cinematic Universe': 38, 'Fast & Furious': 11 };
+  for (const [title, n] of Object.entries(counts)) assert.equal(by[title] && by[title].parts.length, n, `${title} has ${n} films`);
+  const titles = t => by[t].parts.map(p => p.title);
+  assert.equal(titles('The Matrix').at(-1), 'The Matrix Resurrections', 'TMDB does not link it to the Matrix collection');
+  for (const t of ['Rogue One: A Star Wars Story', 'Solo: A Star Wars Story']) assert.ok(titles('Star Wars').includes(t), t);
+  assert.ok(titles('Star Trek').includes('Star Trek: Nemesis') && titles('Star Trek').includes('Star Trek Beyond'), 'the Next Generation and the 2009 films are folded in');
+  assert.equal(titles('Planet of the Apes')[0], 'Planet of the Apes', 'the 1968 original leads');
+  assert.ok(titles('Alien').includes('Alien: Romulus') && titles('Alien').includes('Prometheus'));
+  assert.ok(titles('X-Men').includes('Logan'));
+  assert.ok(titles('Transformers').includes('Bumblebee') && titles('Transformers').includes('Transformers One'));
+});
+
+test('franchises.js: no documentaries, TV specials, making-ofs or shorts slipped in', () => {
+  const junk = /(holiday special|return to hogwarts|making of|behind the|one-shot|assembled|a mammoth christmas|shrek the halls|scared shrekless|toy story of terror|that time forgot)/i;
+  for (const f of FRANCHISES) for (const p of f.parts) assert.ok(!junk.test(p.title), `${f.title}: "${p.title}" is not a feature film of the series`);
+});
