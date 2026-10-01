@@ -3,6 +3,7 @@ import { createTvPlayer, setHudButton } from './tv-player.js';
 import { virtualizeRows, hydrateRow } from './tv-ui.js';
 
 const ROW_UPKEEP_DELAY_MS = 140;
+const UPKEEP_MIN_SLICE_MS = 12; // another row (~10 ms to empty, 30-50 ms to draw on the TV) only if the slice still has this much
 // Spatial focus navigation for LG's D-pad, keyboard, and pointer remote.
 const selector = 'button:not(:disabled), a[href], input:not([type="hidden"]):not(:disabled), select:not(:disabled), [tabindex="0"], video[controls]';
 const visible = node => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
@@ -173,13 +174,18 @@ export function installTvRemote() {
     if (upkeepIdle && window.cancelIdleCallback) window.cancelIdleCallback(upkeepIdle);
     upkeepIdle = 0;
   };
-  const upkeepStep = () => {
+  const upkeepStep = deadline => {
     upkeepIdle = 0;
     const main = document.getElementById('main');
     const active = document.activeElement;
     const section = active && active.closest ? active.closest('.tv-row') : null;
     if (!main || !section || detailsOpen()) return;
-    if (virtualizeRows(main, section, 1) > 0) upkeepIdle = whenIdle(upkeepStep);
+    // One row operation at a time, as many as this idle slice has time for. (One per slice could not keep up on a busy
+    // TV: idle slices are scarce, every key press cancels the work, and the leftovers piled up as a bigger DOM.)
+    let pending = 0;
+    do { pending = virtualizeRows(main, section, 1); }
+    while (pending > 0 && deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() > UPKEEP_MIN_SLICE_MS);
+    if (pending > 0) upkeepIdle = whenIdle(upkeepStep);
   };
   const scheduleRowUpkeep = () => {
     cancelUpkeep();
